@@ -1,0 +1,22 @@
+.worktrees/
+node_modules/
+dist/
+*.log
+.playwright-cli/
+output/
+pictemp/
+tmp/
+# Local API exports contain plaintext API keys.
+*api-settings*.json
+*api-config*.json
+.codex-thorium-profile-*/
+test-results/
+
+# Cloudflare deployment secrets and local development state.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/

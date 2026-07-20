@@ -1,0 +1,52 @@
+{
+  "name": "sorry-im-a-cop-v2",
+  "private": true,
+  "version": "1.0.0",
+  "author": "RedCliffScribe",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RedCliffScribe/sorry-im-a-cop.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "lint": "eslint src tests --max-warnings=0",
+    "test": "vitest --exclude tests/e2e/**",
+    "test:e2e": "playwright test",
+    "test:run": "vitest run --exclude tests/e2e/**",
+    "test:npc-memory:real": "node scripts/run-npc-memory-test.mjs real",
+    "test:npc-memory:load": "node scripts/run-npc-memory-test.mjs load",
+    "test:background-evolution:real": "node scripts/run-background-evolution-test.mjs real",
+    "test:background-evolution:load": "node scripts/run-background-evolution-test.mjs load",
+    "test:long-save:real": "node scripts/run-long-save-real-api-acceptance.mjs",
+    "test:identity-rc:real": "vitest run tests/integration/identityRcRealApi.integration.test.ts",
+    "test:rc3-long-save:real": "node scripts/run-rc3-long-save-real-api.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "jsonrepair": "^3.14.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "eslint": "^10.7.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
+  }
+}

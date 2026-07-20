@@ -1,0 +1,4058 @@
+[
+  {
+    "id": "fig_hk_ent_q18697440",
+    "sourceId": "Q18697440",
+    "displayName": "敖志君",
+    "englishName": "Peter Ngor",
+    "kinds": [
+      "cinematographer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1995
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q4766290",
+    "sourceId": "Q4766290",
+    "displayName": "柏安妮",
+    "englishName": "Ann Bridgewater",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1992
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q11172667",
+    "sourceId": "Q11172667",
+    "displayName": "鲍比达",
+    "englishName": "Chris Babida",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1995
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q180029",
+    "sourceId": "Q180029",
+    "displayName": "鲍德熹",
+    "englishName": "Peter Pau",
+    "kinds": [
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q7156075",
+    "sourceId": "Q7156075",
+    "displayName": "鲍起静",
+    "englishName": "Paw Hee-ching",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1993
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q18747906",
+    "sourceId": "Q18747906",
+    "displayName": "蔡继光",
+    "englishName": "Clifford Choi Kai-kwong",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1983
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q3604925",
+    "sourceId": "Q3604925",
+    "displayName": "蔡少芬",
+    "englishName": "Ada Choi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q999296",
+    "sourceId": "Q999296",
+    "displayName": "仓田保昭",
+    "englishName": "Yasuaki Kurata",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1994
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q5084693",
+    "sourceId": "Q5084693",
+    "displayName": "曹查理",
+    "englishName": "Charlie Cho",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1992
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q709322",
+    "sourceId": "Q709322",
+    "displayName": "曹达华",
+    "englishName": "Cho Tat-wah",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1990
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q5369209",
+    "sourceId": "Q5369209",
+    "displayName": "岑建勋",
+    "englishName": "John Shum",
+    "kinds": [
+      "actor",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1990
+    },
+    "sourceCredits": 7,
+    "recognitionAliases": [
+      "岑建勳"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q1140116",
+    "sourceId": "Q1140116",
+    "displayName": "曾江",
+    "englishName": "Kenneth Tsang",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q9294845",
+    "sourceId": "Q9294845",
+    "displayName": "查传谊",
+    "englishName": "Cha Chuen-yee",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q698507",
+    "sourceId": "Q698507",
+    "displayName": "陈百祥",
+    "englishName": "Natalis Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1993
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q270672",
+    "sourceId": "Q270672",
+    "displayName": "陈冲",
+    "englishName": "Joan Chen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q700346",
+    "sourceId": "Q700346",
+    "displayName": "陈法蓉",
+    "englishName": "Monica Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1991
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q5090823",
+    "sourceId": "Q5090823",
+    "displayName": "陈观泰",
+    "englishName": "Chen Kuan-tai",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q704027",
+    "sourceId": "Q704027",
+    "displayName": "陈果",
+    "englishName": "Fruit Chan",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1993
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q713956",
+    "sourceId": "Q713956",
+    "displayName": "陈豪",
+    "englishName": "Moses Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q270688",
+    "sourceId": "Q270688",
+    "displayName": "陈慧琳",
+    "englishName": "Kelly Chen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q19850006",
+    "sourceId": "Q19850006",
+    "displayName": "陈慧楼",
+    "englishName": "Chen Hui-lou",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1985
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q711914",
+    "sourceId": "Q711914",
+    "displayName": "陈嘉上",
+    "englishName": "Gordon Chan",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q716064",
+    "sourceId": "Q716064",
+    "displayName": "陈可辛",
+    "englishName": "Peter Chan",
+    "kinds": [
+      "actor",
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q3528264",
+    "sourceId": "Q3528264",
+    "displayName": "陈岚",
+    "englishName": "Tiffany Chen",
+    "kinds": [
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q702326",
+    "sourceId": "Q702326",
+    "displayName": "陈木胜",
+    "englishName": "Benny Chan",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q709655",
+    "sourceId": "Q709655",
+    "displayName": "陈小春",
+    "englishName": "Jordan Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q850718",
+    "sourceId": "Q850718",
+    "displayName": "陈欣健",
+    "englishName": "Philip Chan",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q5490946",
+    "sourceId": "Q5490946",
+    "displayName": "陈勋奇",
+    "englishName": "Frankie Chan",
+    "kinds": [
+      "actor",
+      "composer",
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 30,
+    "recognitionAliases": [
+      "陈勳奇"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q3051400",
+    "sourceId": "Q3051400",
+    "displayName": "陈雅伦",
+    "englishName": "Ellen Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q707426",
+    "sourceId": "Q707426",
+    "displayName": "陈友",
+    "englishName": "Anthony Chan",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1992
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q9369465",
+    "sourceId": "Q9369465",
+    "displayName": "陈玉莲",
+    "englishName": "Idy Chan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1989
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q2193613",
+    "sourceId": "Q2193613",
+    "displayName": "陈自强",
+    "englishName": "Willie Chan",
+    "kinds": [
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1993
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q7497431",
+    "sourceId": "Q7497431",
+    "displayName": "成奎安",
+    "englishName": "Shing Fui-on",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q353049",
+    "sourceId": "Q353049",
+    "displayName": "仇云波",
+    "englishName": "Robin Shou",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1990
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q710875",
+    "sourceId": "Q710875",
+    "displayName": "楚原",
+    "englishName": "Chor Yuen",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q3272171",
+    "sourceId": "Q3272171",
+    "displayName": "大岛由加利",
+    "englishName": "Yukari Oshima",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "大岛由加里"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q7363087",
+    "sourceId": "Q7363087",
+    "displayName": "戴乐民",
+    "englishName": "Romeo Diaz",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1995
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q4707881",
+    "sourceId": "Q4707881",
+    "displayName": "邓光荣",
+    "englishName": "Alan Tang",
+    "kinds": [
+      "actor",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q11290365",
+    "sourceId": "Q11290365",
+    "displayName": "邓景生",
+    "englishName": "Edward Tang",
+    "kinds": [
+      "screenwriter",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q4913359",
+    "sourceId": "Q4913359",
+    "displayName": "邓衍成",
+    "englishName": "Billy Tang",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q4817589",
+    "sourceId": "Q4817589",
+    "displayName": "狄威",
+    "englishName": "Dick Wei",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1991
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q1154784",
+    "sourceId": "Q1154784",
+    "displayName": "董骠",
+    "englishName": "Bill Tung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1996
+    },
+    "sourceCredits": 18
+  },
+  {
+    "id": "fig_hk_ent_q9336020",
+    "sourceId": "Q9336020",
+    "displayName": "董玮",
+    "englishName": "Stephen Tung",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1995
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q7299188",
+    "sourceId": "Q7299188",
+    "displayName": "杜国威",
+    "englishName": "Raymond To",
+    "kinds": [
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q457890",
+    "sourceId": "Q457890",
+    "displayName": "杜可风",
+    "englishName": "Christopher Doyle",
+    "kinds": [
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q470104",
+    "sourceId": "Q470104",
+    "displayName": "杜琪峰",
+    "englishName": "Johnnie To",
+    "kinds": [
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 15,
+    "recognitionAliases": [
+      "杜琪峯"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q960141",
+    "sourceId": "Q960141",
+    "displayName": "尔冬升",
+    "englishName": "Derek Yee",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "尔冬陞"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q2007213",
+    "sourceId": "Q2007213",
+    "displayName": "樊少皇",
+    "englishName": "Louis Fan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q9145754",
+    "sourceId": "Q9145754",
+    "displayName": "方令正",
+    "englishName": "Eddie Fong",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q2837889",
+    "sourceId": "Q2837889",
+    "displayName": "方育平",
+    "englishName": "Allen Fong",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1989
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q4717006",
+    "sourceId": "Q4717006",
+    "displayName": "方中信",
+    "englishName": "Alex Fong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q839421",
+    "sourceId": "Q839421",
+    "displayName": "冯宝宝",
+    "englishName": "Petrina Fung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5368085",
+    "sourceId": "Q5368085",
+    "displayName": "冯淬帆",
+    "englishName": "Stanley Fung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1996
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q8954444",
+    "sourceId": "Q8954444",
+    "displayName": "冯克安",
+    "englishName": "Fung Hak-On",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1992
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q712725",
+    "sourceId": "Q712725",
+    "displayName": "傅声",
+    "englishName": "Alexander Fu Sheng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1983
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q16875992",
+    "sourceId": "Q16875992",
+    "displayName": "高飞",
+    "englishName": "Phillip Ko",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q6297491",
+    "sourceId": "Q6297491",
+    "displayName": "高丽虹",
+    "englishName": "Joyce Godenzi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1991
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q5336671",
+    "sourceId": "Q5336671",
+    "displayName": "高雄",
+    "englishName": "Eddy Ko",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1993
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q285769",
+    "sourceId": "Q285769",
+    "displayName": "高志森",
+    "englishName": "Clifton Ko",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q590914",
+    "sourceId": "Q590914",
+    "displayName": "葛民辉",
+    "englishName": "Eric Kot",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q150903",
+    "sourceId": "Q150903",
+    "displayName": "巩俐",
+    "englishName": "Gong Li",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1995
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q531617",
+    "sourceId": "Q531617",
+    "displayName": "古天乐",
+    "englishName": "Louis Koo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1996,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q454881",
+    "sourceId": "Q454881",
+    "displayName": "谷德昭",
+    "englishName": "Vincent Kok",
+    "kinds": [
+      "actor",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q6440933",
+    "sourceId": "Q6440933",
+    "displayName": "谷峰",
+    "englishName": "Ku Feng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 20
+  },
+  {
+    "id": "fig_hk_ent_q698537",
+    "sourceId": "Q698537",
+    "displayName": "顾嘉辉",
+    "englishName": "Joseph Koo",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 8,
+    "recognitionAliases": [
+      "顾嘉煇"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q5354311",
+    "sourceId": "Q5354311",
+    "displayName": "关海山",
+    "englishName": "Kwan Hoi-san",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1992
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q1063194",
+    "sourceId": "Q1063194",
+    "displayName": "关咏荷",
+    "englishName": "Esther Kwan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1994
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q6441867",
+    "sourceId": "Q6441867",
+    "displayName": "桂治洪",
+    "englishName": "Kuei Chih-hung",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1984
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q7183934",
+    "sourceId": "Q7183934",
+    "displayName": "郭追",
+    "englishName": "Philip Kwok",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q3099737",
+    "sourceId": "Q3099737",
+    "displayName": "何冠昌",
+    "englishName": "Leonard Ho",
+    "kinds": [
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 31
+  },
+  {
+    "id": "fig_hk_ent_q707244",
+    "sourceId": "Q707244",
+    "displayName": "何宗道",
+    "englishName": "Bruce Li",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1981
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q15927280",
+    "sourceId": "Q15927280",
+    "displayName": "胡大为",
+    "englishName": "David Wu",
+    "kinds": [
+      "actor",
+      "editor",
+      "composer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q4951020",
+    "sourceId": "Q4951020",
+    "displayName": "胡枫",
+    "englishName": "Bowie Wu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1992
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q7506997",
+    "sourceId": "Q7506997",
+    "displayName": "胡慧中",
+    "englishName": "Sibelle Hu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1989
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q15912438",
+    "sourceId": "Q15912438",
+    "displayName": "胡伟立",
+    "englishName": "Wai Lap Wu",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1994
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q7299244",
+    "sourceId": "Q7299244",
+    "displayName": "黄百鸣",
+    "englishName": "Wong Pak Ming",
+    "kinds": [
+      "actor",
+      "producer",
+      "screenwriter",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 17
+  },
+  {
+    "id": "fig_hk_ent_q4256063",
+    "sourceId": "Q4256063",
+    "displayName": "黄炳耀",
+    "englishName": "Barry Wong",
+    "kinds": [
+      "actor",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 20
+  },
+  {
+    "id": "fig_hk_ent_q381561",
+    "sourceId": "Q381561",
+    "displayName": "黄秋生",
+    "englishName": "Anthony Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q1140128",
+    "sourceId": "Q1140128",
+    "displayName": "黄日华",
+    "englishName": "Felix Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1991
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q6112880",
+    "sourceId": "Q6112880",
+    "displayName": "黄泰来",
+    "englishName": "Taylor Wong",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1994
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q2865389",
+    "sourceId": "Q2865389",
+    "displayName": "黄岳泰",
+    "englishName": "Arthur Wong",
+    "kinds": [
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 29
+  },
+  {
+    "id": "fig_hk_ent_q489938",
+    "sourceId": "Q489938",
+    "displayName": "黄正利",
+    "englishName": "Hwang Jang-lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1987
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q1743492",
+    "sourceId": "Q1743492",
+    "displayName": "黄志强",
+    "englishName": "Kirk Wong",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1994
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q698851",
+    "sourceId": "Q698851",
+    "displayName": "黄子华",
+    "englishName": "Dayo Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q964071",
+    "sourceId": "Q964071",
+    "displayName": "黄自强",
+    "englishName": "Victor Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1992
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q7234867",
+    "sourceId": "Q7234867",
+    "displayName": "惠天赐",
+    "englishName": "Austin Wai",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q707211",
+    "sourceId": "Q707211",
+    "displayName": "惠英红",
+    "englishName": "Kara Hui",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 19
+  },
+  {
+    "id": "fig_hk_ent_q6773093",
+    "sourceId": "Q6773093",
+    "displayName": "火星",
+    "englishName": "Mars",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 8,
+    "recognitionAliases": [
+      "蒋荣发",
+      "Cheung Wing Fat",
+      "Mars Cheung Wing-Fat"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q5126527",
+    "sourceId": "Q5126527",
+    "displayName": "霍耀良",
+    "englishName": "Clarence Fok",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q7308489",
+    "sourceId": "Q7308489",
+    "displayName": "简慧真",
+    "englishName": "Regina Kent",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1990
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5095208",
+    "sourceId": "Q5095208",
+    "displayName": "江生",
+    "englishName": "Chiang Sheng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1991
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q57772411",
+    "sourceId": "Q57772411",
+    "displayName": "姜兴隆",
+    "englishName": "Chiang Hsing-lung",
+    "kinds": [
+      "editor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1988
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q310252",
+    "sourceId": "Q310252",
+    "displayName": "金城武",
+    "englishName": "Takeshi Kaneshiro",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q701597",
+    "sourceId": "Q701597",
+    "displayName": "金燕玲",
+    "englishName": "Elaine Jin",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1989
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q696751",
+    "sourceId": "Q696751",
+    "displayName": "柯受良",
+    "englishName": "Blackie Ko",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1993
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q15895583",
+    "sourceId": "Q15895583",
+    "displayName": "邝志良",
+    "englishName": "Kwong Chi-Leung",
+    "kinds": [
+      "editor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q8003872",
+    "sourceId": "Q8003872",
+    "displayName": "蓝洁瑛",
+    "englishName": "Yammie Lam",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1995
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q3484398",
+    "sourceId": "Q3484398",
+    "displayName": "蓝乃才",
+    "englishName": "Lam Nai-Choi",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1992
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q6768659",
+    "sourceId": "Q6768659",
+    "displayName": "雷颂德",
+    "englishName": "Mark Lui",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q11178726",
+    "sourceId": "Q11178726",
+    "displayName": "黎大炜",
+    "englishName": "David Lai",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1994
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q9001007",
+    "sourceId": "Q9001007",
+    "displayName": "黎小田",
+    "englishName": "Michael Lai",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1991
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q1136754",
+    "sourceId": "Q1136754",
+    "displayName": "黎姿",
+    "englishName": "Gigi Lai",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q709626",
+    "sourceId": "Q709626",
+    "displayName": "李碧华",
+    "englishName": "Lilian Lee",
+    "kinds": [
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1995
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q28839642",
+    "sourceId": "Q28839642",
+    "displayName": "李海生",
+    "englishName": "Hoi Sang Lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1991
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q716564",
+    "sourceId": "Q716564",
+    "displayName": "李翰祥",
+    "englishName": "Li Han-hsiang",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1994
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q10335367",
+    "sourceId": "Q10335367",
+    "displayName": "李惠民",
+    "englishName": "Raymond Lee",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q717070",
+    "sourceId": "Q717070",
+    "displayName": "李嘉欣",
+    "englishName": "Michelle Reis",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1995
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q3228905",
+    "sourceId": "Q3228905",
+    "displayName": "李力持",
+    "englishName": "Lee Lik-chee",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q6548524",
+    "sourceId": "Q6548524",
+    "displayName": "李丽丽",
+    "englishName": "Lily Li",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1984
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q714136",
+    "sourceId": "Q714136",
+    "displayName": "李丽珍",
+    "englishName": "Rachel Lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q5043182",
+    "sourceId": "Q5043182",
+    "displayName": "李若彤",
+    "englishName": "Carman Lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q718083",
+    "sourceId": "Q718083",
+    "displayName": "李修贤",
+    "englishName": "Danny Lee",
+    "kinds": [
+      "actor",
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q65059374",
+    "sourceId": "Q65059374",
+    "displayName": "李钊",
+    "englishName": "Lee Chiu",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q8985851",
+    "sourceId": "Q8985851",
+    "displayName": "李志毅",
+    "englishName": "Li Chi-ngai",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q4260662",
+    "sourceId": "Q4260662",
+    "displayName": "李子雄",
+    "englishName": "Waise Lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q312608",
+    "sourceId": "Q312608",
+    "displayName": "历苏",
+    "englishName": "Nǃxau",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q283983",
+    "sourceId": "Q283983",
+    "displayName": "利智",
+    "englishName": "Nina Li Chi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1992
+    },
+    "sourceCredits": 8,
+    "recognitionAliases": [
+      "Nina Li"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q700175",
+    "sourceId": "Q700175",
+    "displayName": "梁家辉",
+    "englishName": "Tony Leung Ka-fai",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1995
+    },
+    "sourceCredits": 29
+  },
+  {
+    "id": "fig_hk_ent_q860948",
+    "sourceId": "Q860948",
+    "displayName": "梁家仁",
+    "englishName": "Bryan Leung",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 25
+  },
+  {
+    "id": "fig_hk_ent_q11113854",
+    "sourceId": "Q11113854",
+    "displayName": "梁家树",
+    "englishName": "Tommy Leung Ga-Shu",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1990
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q3392879",
+    "sourceId": "Q3392879",
+    "displayName": "梁普智",
+    "englishName": "Po-Chih Leong",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q706192",
+    "sourceId": "Q706192",
+    "displayName": "梁咏琪",
+    "englishName": "Gigi Leung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1995
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q712121",
+    "sourceId": "Q712121",
+    "displayName": "林保怡",
+    "englishName": "Bowie Lam",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5236302",
+    "sourceId": "Q5236302",
+    "displayName": "林德禄",
+    "englishName": "David Lam",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1993
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q6480671",
+    "sourceId": "Q6480671",
+    "displayName": "林敏怡",
+    "englishName": "Lam Manyee",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1994
+    },
+    "sourceCredits": 19
+  },
+  {
+    "id": "fig_hk_ent_q701940",
+    "sourceId": "Q701940",
+    "displayName": "林雪",
+    "englishName": "Lam Suet",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q6503795",
+    "sourceId": "Q6503795",
+    "displayName": "刘国昌",
+    "englishName": "Lawrence Ah Mon",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q16106700",
+    "sourceId": "Q16106700",
+    "displayName": "刘家荣",
+    "englishName": "Lau Kar-wing",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q10899373",
+    "sourceId": "Q10899373",
+    "displayName": "刘仕裕",
+    "englishName": "Sze Yu Lau",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1990
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q712077",
+    "sourceId": "Q712077",
+    "displayName": "刘松仁",
+    "englishName": "Damian Lau",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q715330",
+    "sourceId": "Q715330",
+    "displayName": "刘伟强",
+    "englishName": "Andrew Lau",
+    "kinds": [
+      "cinematographer",
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 24
+  },
+  {
+    "id": "fig_hk_ent_q6139246",
+    "sourceId": "Q6139246",
+    "displayName": "刘以达",
+    "englishName": "Tats Lau",
+    "kinds": [
+      "actor",
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q8991882",
+    "sourceId": "Q8991882",
+    "displayName": "刘永",
+    "englishName": "Tony Liu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1984
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q5365602",
+    "sourceId": "Q5365602",
+    "displayName": "刘镇伟",
+    "englishName": "Jeffrey Lau",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q6704261",
+    "sourceId": "Q6704261",
+    "displayName": "龙方",
+    "englishName": "Lung Fong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1991
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q9299789",
+    "sourceId": "Q9299789",
+    "displayName": "楼南光",
+    "englishName": "Billy Lau",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1991
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q701911",
+    "sourceId": "Q701911",
+    "displayName": "卢冠廷",
+    "englishName": "Lowell Lo",
+    "kinds": [
+      "actor",
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 53
+  },
+  {
+    "id": "fig_hk_ent_q838375",
+    "sourceId": "Q838375",
+    "displayName": "卢海鹏",
+    "englishName": "Lo Hoi-pang",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1988
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q1087550",
+    "sourceId": "Q1087550",
+    "displayName": "卢惠光",
+    "englishName": "Ken Lo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q1142931",
+    "sourceId": "Q1142931",
+    "displayName": "吕良伟",
+    "englishName": "Ray Lui",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1991
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q2357659",
+    "sourceId": "Q2357659",
+    "displayName": "罗大佑",
+    "englishName": "Lo Ta-yu",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1990
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q238415",
+    "sourceId": "Q238415",
+    "displayName": "罗芙洛",
+    "englishName": "Cynthia Rothrock",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "仙迪亚·罗芙洛"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q837654",
+    "sourceId": "Q837654",
+    "displayName": "罗家英",
+    "englishName": "Law Kar-ying",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q707282",
+    "sourceId": "Q707282",
+    "displayName": "罗烈",
+    "englishName": "Lo Lieh",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1991
+    },
+    "sourceCredits": 16
+  },
+  {
+    "id": "fig_hk_ent_q6663140",
+    "sourceId": "Q6663140",
+    "displayName": "罗莽",
+    "englishName": "Lo Mang",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5353614",
+    "sourceId": "Q5353614",
+    "displayName": "罗美薇",
+    "englishName": "May Lo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1991
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q704161",
+    "sourceId": "Q704161",
+    "displayName": "罗维",
+    "englishName": "Lo Wei",
+    "kinds": [
+      "producer",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1984
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q435577",
+    "sourceId": "Q435577",
+    "displayName": "罗卓瑶",
+    "englishName": "Clara Law",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1993
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q6202377",
+    "sourceId": "Q6202377",
+    "displayName": "马楚成",
+    "englishName": "Jingle Ma",
+    "kinds": [
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 20
+  },
+  {
+    "id": "fig_hk_ent_q6211057",
+    "sourceId": "Q6211057",
+    "displayName": "马伟豪",
+    "englishName": "Joe Ma",
+    "kinds": [
+      "screenwriter",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q9003896",
+    "sourceId": "Q9003896",
+    "displayName": "麦当杰",
+    "englishName": "Michael Mak",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1993
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q716344",
+    "sourceId": "Q716344",
+    "displayName": "麦嘉",
+    "englishName": "Karl Maka",
+    "kinds": [
+      "actor",
+      "producer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1991
+    },
+    "sourceCredits": 16
+  },
+  {
+    "id": "fig_hk_ent_q48825769",
+    "sourceId": "Q48825769",
+    "displayName": "麦振鸿",
+    "englishName": "Mak Chun Hung",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q2574850",
+    "sourceId": "Q2574850",
+    "displayName": "毛舜筠",
+    "englishName": "Teresa Mo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1994
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q4918748",
+    "sourceId": "Q4918748",
+    "displayName": "米雪",
+    "englishName": "Michelle Yim",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1982
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q1074429",
+    "sourceId": "Q1074429",
+    "displayName": "苗侨伟",
+    "englishName": "Michael Miu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q6795030",
+    "sourceId": "Q6795030",
+    "displayName": "莫少聪",
+    "englishName": "Max Mok",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q716027",
+    "sourceId": "Q716027",
+    "displayName": "莫文蔚",
+    "englishName": "Karen Mok",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q6918837",
+    "sourceId": "Q6918837",
+    "displayName": "牟敦芾",
+    "englishName": "Mou Tun-fei",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5169406",
+    "sourceId": "Q5169406",
+    "displayName": "缪骞人",
+    "englishName": "Cora Miao",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1985
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q4753878",
+    "sourceId": "Q4753878",
+    "displayName": "聂安达",
+    "englishName": "Anders Nelsson",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1992
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q9022083",
+    "sourceId": "Q9022083",
+    "displayName": "潘文杰",
+    "englishName": "Poon Man-kit",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q701936",
+    "sourceId": "Q701936",
+    "displayName": "钱嘉乐",
+    "englishName": "Chin Kar-lok",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1994
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q10564248",
+    "sourceId": "Q10564248",
+    "displayName": "钱升玮",
+    "englishName": "Wellson Chin",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1994
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "钱昇玮"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q5099503",
+    "sourceId": "Q5099503",
+    "displayName": "钱小豪",
+    "englishName": "Chin Siu-ho",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q1346626",
+    "sourceId": "Q1346626",
+    "displayName": "乔宏",
+    "englishName": "Roy Chiao",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q699415",
+    "sourceId": "Q699415",
+    "displayName": "秦沛",
+    "englishName": "Paul Chun",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1995
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q710179",
+    "sourceId": "Q710179",
+    "displayName": "秦祥林",
+    "englishName": "Charlie Chin",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1988
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q45076407",
+    "sourceId": "Q45076407",
+    "displayName": "邱刚健",
+    "englishName": "Chiu Kang Chien",
+    "kinds": [
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1989
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q3134110",
+    "sourceId": "Q3134110",
+    "displayName": "邱礼涛",
+    "englishName": "Herman Yau",
+    "kinds": [
+      "director",
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q838209",
+    "sourceId": "Q838209",
+    "displayName": "邱淑贞",
+    "englishName": "Chingmy Yau",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 17
+  },
+  {
+    "id": "fig_hk_ent_q18402497",
+    "sourceId": "Q18402497",
+    "displayName": "任世官",
+    "englishName": "Yen Shi-Kwan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1993
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q9353074",
+    "sourceId": "Q9353074",
+    "displayName": "邵丽琼",
+    "englishName": "Sandy Shaw",
+    "kinds": [
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q842519",
+    "sourceId": "Q842519",
+    "displayName": "邵仁枚",
+    "englishName": "Runme Shaw",
+    "kinds": [
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1983
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q7496456",
+    "sourceId": "Q7496456",
+    "displayName": "施思",
+    "englishName": "Shih Szu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q557277",
+    "sourceId": "Q557277",
+    "displayName": "石坚",
+    "englishName": "Shih Kien",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1990
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q5246464",
+    "sourceId": "Q5246464",
+    "displayName": "石天",
+    "englishName": "Dean Shek",
+    "kinds": [
+      "actor",
+      "producer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1990
+    },
+    "sourceCredits": 18
+  },
+  {
+    "id": "fig_hk_ent_q233859",
+    "sourceId": "Q233859",
+    "displayName": "舒淇",
+    "englishName": "Shu Qi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1996,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q4726467",
+    "sourceId": "Q4726467",
+    "displayName": "孙佳君",
+    "englishName": "Paulyn Sun",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q27830466",
+    "sourceId": "Q27830466",
+    "displayName": "孙仲",
+    "englishName": "Sun Chung",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q9092846",
+    "sourceId": "Q9092846",
+    "displayName": "太保",
+    "englishName": "Tai Bo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1992
+    },
+    "sourceCredits": 4,
+    "recognitionAliases": [
+      "张嘉年",
+      "Tai Bo Cheung"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q700297",
+    "sourceId": "Q700297",
+    "displayName": "泰迪罗宾",
+    "englishName": "Teddy Robin",
+    "kinds": [
+      "actor",
+      "composer",
+      "producer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1996
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q1041593",
+    "sourceId": "Q1041593",
+    "displayName": "汤镇业",
+    "englishName": "Kent Tong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1992
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q9122631",
+    "sourceId": "Q9122631",
+    "displayName": "唐基明",
+    "englishName": "Terry Tong Kei Ming",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1992
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q185783",
+    "sourceId": "Q185783",
+    "displayName": "唐季礼",
+    "englishName": "Stanley Tong",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q56304547",
+    "sourceId": "Q56304547",
+    "displayName": "唐佳",
+    "englishName": "Tong Gai",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1984
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q7801028",
+    "sourceId": "Q7801028",
+    "displayName": "田丰",
+    "englishName": "Tien Feng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q1681194",
+    "sourceId": "Q1681194",
+    "displayName": "田俊",
+    "englishName": "James Tien",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1986
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q6214493",
+    "sourceId": "Q6214493",
+    "displayName": "万绮雯",
+    "englishName": "Joey Meng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1993
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q712097",
+    "sourceId": "Q712097",
+    "displayName": "万梓良",
+    "englishName": "Alex Man",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1991
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q8032047",
+    "sourceId": "Q8032047",
+    "displayName": "汪禹",
+    "englishName": "Wong Yue",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1984
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q464650",
+    "sourceId": "Q464650",
+    "displayName": "王菲",
+    "englishName": "Faye Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q7967550",
+    "sourceId": "Q7967550",
+    "displayName": "王龙威",
+    "englishName": "Wang Lung-wei",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q718036",
+    "sourceId": "Q718036",
+    "displayName": "王敏德",
+    "englishName": "Michael Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q7218759",
+    "sourceId": "Q7218759",
+    "displayName": "王青",
+    "englishName": "Wong Ching",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1987
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q22773606",
+    "sourceId": "Q22773606",
+    "displayName": "王小凤",
+    "englishName": "Pauline Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1988
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q703153",
+    "sourceId": "Q703153",
+    "displayName": "王羽",
+    "englishName": "Jimmy Wang Yu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1991
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q431486",
+    "sourceId": "Q431486",
+    "displayName": "王祖贤",
+    "englishName": "Joey Wong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1994
+    },
+    "sourceCredits": 25
+  },
+  {
+    "id": "fig_hk_ent_q6069296",
+    "sourceId": "Q6069296",
+    "displayName": "温碧霞",
+    "englishName": "Irene Wan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q5262567",
+    "sourceId": "Q5262567",
+    "displayName": "温兆伦",
+    "englishName": "Deric Wan",
+    "kinds": [
+      "actor",
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q10301318",
+    "sourceId": "Q10301318",
+    "displayName": "文隽",
+    "englishName": "Manfred Wong",
+    "kinds": [
+      "actor",
+      "screenwriter",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q8062520",
+    "sourceId": "Q8062520",
+    "displayName": "翁虹",
+    "englishName": "Yvonne Yung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q701984",
+    "sourceId": "Q701984",
+    "displayName": "吴家丽",
+    "englishName": "Carrie Ng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q718163",
+    "sourceId": "Q718163",
+    "displayName": "吴君如",
+    "englishName": "Sandra Ng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 17
+  },
+  {
+    "id": "fig_hk_ent_q706667",
+    "sourceId": "Q706667",
+    "displayName": "吴奇隆",
+    "englishName": "Nicky Wu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1995
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q3828155",
+    "sourceId": "Q3828155",
+    "displayName": "吴启华",
+    "englishName": "Lawrence Ng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1994
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q701962",
+    "sourceId": "Q701962",
+    "displayName": "吴倩莲",
+    "englishName": "Jacklyn Wu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q716091",
+    "sourceId": "Q716091",
+    "displayName": "吴思远",
+    "englishName": "Ng See-yuen",
+    "kinds": [
+      "producer",
+      "screenwriter",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q4215838",
+    "sourceId": "Q4215838",
+    "displayName": "吴耀汉",
+    "englishName": "Richard Ng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q589739",
+    "sourceId": "Q589739",
+    "displayName": "夏萍",
+    "englishName": "Teresa Ha",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q7143498",
+    "sourceId": "Q7143498",
+    "displayName": "夏文汐",
+    "englishName": "Patricia Ha",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1988
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q9434714",
+    "sourceId": "Q9434714",
+    "displayName": "冼杞然",
+    "englishName": "Stephen Shin",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1992
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q5079027",
+    "sourceId": "Q5079027",
+    "displayName": "向华强",
+    "englishName": "Charles Heung",
+    "kinds": [
+      "actor",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1995
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q6200362",
+    "sourceId": "Q6200362",
+    "displayName": "向华胜",
+    "englishName": "Jimmy Heung",
+    "kinds": [
+      "producer",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q709927",
+    "sourceId": "Q709927",
+    "displayName": "萧芳芳",
+    "englishName": "Josephine Siao",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q9071120",
+    "sourceId": "Q9071120",
+    "displayName": "萧若元",
+    "englishName": "Stephen Shiu",
+    "kinds": [
+      "producer",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1993
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q5924212",
+    "sourceId": "Q5924212",
+    "displayName": "小侯",
+    "englishName": "Hsiao Ho",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1990
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q3787623",
+    "sourceId": "Q3787623",
+    "displayName": "熊欣欣",
+    "englishName": "Hung Yan-yan",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q837323",
+    "sourceId": "Q837323",
+    "displayName": "徐锦江",
+    "englishName": "Elvis Tsui",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1986,
+      "to": 1996
+    },
+    "sourceCredits": 12
+  },
+  {
+    "id": "fig_hk_ent_q6576386",
+    "sourceId": "Q6576386",
+    "displayName": "徐少强",
+    "englishName": "Norman Chui",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1989
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q1059801",
+    "sourceId": "Q1059801",
+    "displayName": "许绍雄",
+    "englishName": "Stephen Hui",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q6141069",
+    "sourceId": "Q6141069",
+    "displayName": "严浩",
+    "englishName": "Yim Ho",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q717584",
+    "sourceId": "Q717584",
+    "displayName": "杨采妮",
+    "englishName": "Charlie Yeung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q330182",
+    "sourceId": "Q330182",
+    "displayName": "杨凡",
+    "englishName": "Yonfan",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1995
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q325010",
+    "sourceId": "Q325010",
+    "displayName": "杨斯",
+    "englishName": "Bolo Yeung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q698490",
+    "sourceId": "Q698490",
+    "displayName": "叶德娴",
+    "englishName": "Deanie Ip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1994
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q455986",
+    "sourceId": "Q455986",
+    "displayName": "叶芳华",
+    "englishName": "Françoise Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q716586",
+    "sourceId": "Q716586",
+    "displayName": "叶童",
+    "englishName": "Cecilia Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1995
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q7922473",
+    "sourceId": "Q7922473",
+    "displayName": "叶玉卿",
+    "englishName": "Veronica Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1994
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q704021",
+    "sourceId": "Q704021",
+    "displayName": "叶蕴仪",
+    "englishName": "Gloria Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1993
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q714103",
+    "sourceId": "Q714103",
+    "displayName": "叶子楣",
+    "englishName": "Amy Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q525109",
+    "sourceId": "Q525109",
+    "displayName": "于仁泰",
+    "englishName": "Ronny Yu",
+    "kinds": [
+      "director",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1995
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q970882",
+    "sourceId": "Q970882",
+    "displayName": "于荣光",
+    "englishName": "Yu Rongguang",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q533745",
+    "sourceId": "Q533745",
+    "displayName": "元华",
+    "englishName": "Yuen Wah",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1993
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q9077680",
+    "sourceId": "Q9077680",
+    "displayName": "袁洁莹",
+    "englishName": "Fennie Yuen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1992
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q8060276",
+    "sourceId": "Q8060276",
+    "displayName": "袁祥仁",
+    "englishName": "Yuen Cheung-yan",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q1369795",
+    "sourceId": "Q1369795",
+    "displayName": "袁咏仪",
+    "englishName": "Anita Yuen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 13
+  },
+  {
+    "id": "fig_hk_ent_q15270301",
+    "sourceId": "Q15270301",
+    "displayName": "袁振洋",
+    "englishName": "Brandy Yuen",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1994
+    },
+    "sourceCredits": 4,
+    "recognitionAliases": [
+      "释传般",
+      "Brandy Yuen Jan-yeung"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q6412535",
+    "sourceId": "Q6412535",
+    "displayName": "苑琼丹",
+    "englishName": "Kingdom Yuen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q5354246",
+    "sourceId": "Q5354246",
+    "displayName": "岳华",
+    "englishName": "Yueh Hua",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1989
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q292693",
+    "sourceId": "Q292693",
+    "displayName": "张艾嘉",
+    "englishName": "Sylvia Chang",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1992
+    },
+    "sourceCredits": 11
+  },
+  {
+    "id": "fig_hk_ent_q709580",
+    "sourceId": "Q709580",
+    "displayName": "张彻",
+    "englishName": "Chang Cheh",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 20
+  },
+  {
+    "id": "fig_hk_ent_q7701861",
+    "sourceId": "Q7701861",
+    "displayName": "张家振",
+    "englishName": "Terence Chang",
+    "kinds": [
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1992
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5094249",
+    "sourceId": "Q5094249",
+    "displayName": "张嘉辉",
+    "englishName": "Cheung Ka-fai",
+    "kinds": [
+      "editor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q4722445",
+    "sourceId": "Q4722445",
+    "displayName": "张坚庭",
+    "englishName": "Alfred Cheung",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q848775",
+    "sourceId": "Q848775",
+    "displayName": "张敏",
+    "englishName": "Sharla Cheung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 24
+  },
+  {
+    "id": "fig_hk_ent_q6123628",
+    "sourceId": "Q6123628",
+    "displayName": "张叔平",
+    "englishName": "William Chang",
+    "kinds": [
+      "editor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5460288",
+    "sourceId": "Q5460288",
+    "displayName": "张天爱",
+    "englishName": "Flora Cheong-Leen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1983
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q9137924",
+    "sourceId": "Q9137924",
+    "displayName": "张同祖",
+    "englishName": "Joe Cheung Tung-joe",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q713119",
+    "sourceId": "Q713119",
+    "displayName": "张卫健",
+    "englishName": "Dicky Cheung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1994
+    },
+    "sourceCredits": 5
+  },
+  {
+    "id": "fig_hk_ent_q44792239",
+    "sourceId": "Q44792239",
+    "displayName": "张鑫炎",
+    "englishName": "Cheung Sing-Yim",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1992
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q701585",
+    "sourceId": "Q701585",
+    "displayName": "张耀扬",
+    "englishName": "Roy Cheung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1996
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q106714078",
+    "sourceId": "Q106714078",
+    "displayName": "张耀宗",
+    "englishName": "Peter Cheung",
+    "kinds": [
+      "editor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1996
+    },
+    "sourceCredits": 24
+  },
+  {
+    "id": "fig_hk_ent_q3157531",
+    "sourceId": "Q3157531",
+    "displayName": "张之亮",
+    "englishName": "Jacob Cheung",
+    "kinds": [
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1995
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q17031109",
+    "sourceId": "Q17031109",
+    "displayName": "章国明",
+    "englishName": "Cheung Kwok-Ming",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1981,
+      "to": 1985
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q127740",
+    "sourceId": "Q127740",
+    "displayName": "赵季平",
+    "englishName": "Zhao Jiping",
+    "kinds": [
+      "composer"
+    ],
+    "activeYears": {
+      "from": 1994,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q3470954",
+    "sourceId": "Q3470954",
+    "displayName": "赵良骏",
+    "englishName": "Samson Chiu",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q708480",
+    "sourceId": "Q708480",
+    "displayName": "赵文卓",
+    "englishName": "Vincent Zhao",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q696622",
+    "sourceId": "Q696622",
+    "displayName": "赵雅芝",
+    "englishName": "Angie Chiu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1983
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q311723",
+    "sourceId": "Q311723",
+    "displayName": "甄子丹",
+    "englishName": "Donnie Yen",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1996
+    },
+    "sourceCredits": 14
+  },
+  {
+    "id": "fig_hk_ent_q6503919",
+    "sourceId": "Q6503919",
+    "displayName": "郑丹瑞",
+    "englishName": "Lawrence Cheng",
+    "kinds": [
+      "actor",
+      "producer"
+    ],
+    "activeYears": {
+      "from": 1983,
+      "to": 1994
+    },
+    "sourceCredits": 10
+  },
+  {
+    "id": "fig_hk_ent_q9087085",
+    "sourceId": "Q9087085",
+    "displayName": "郑浩南",
+    "englishName": "Mark Cheng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1991
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q269513",
+    "sourceId": "Q269513",
+    "displayName": "郑佩佩",
+    "englishName": "Cheng Pei-pei",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1988,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q704724",
+    "sourceId": "Q704724",
+    "displayName": "郑少秋",
+    "englishName": "Adam Cheng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1994
+    },
+    "sourceCredits": 8
+  },
+  {
+    "id": "fig_hk_ent_q717129",
+    "sourceId": "Q717129",
+    "displayName": "郑伊健",
+    "englishName": "Ekin Cheng",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 7
+  },
+  {
+    "id": "fig_hk_ent_q712178",
+    "sourceId": "Q712178",
+    "displayName": "郑则仕",
+    "englishName": "Kent Cheng",
+    "kinds": [
+      "actor",
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 15
+  },
+  {
+    "id": "fig_hk_ent_q5091252",
+    "sourceId": "Q5091252",
+    "displayName": "郑兆强",
+    "englishName": "Cheng Siu-keung",
+    "kinds": [
+      "cinematographer"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q9360490",
+    "sourceId": "Q9360490",
+    "displayName": "钟发",
+    "englishName": "Chung Fat",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1989
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "锺发"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q1041384",
+    "sourceId": "Q1041384",
+    "displayName": "钟丽缇",
+    "englishName": "Christy Chung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1995
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "锺丽缇"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q6548471",
+    "sourceId": "Q6548471",
+    "displayName": "钟淑慧",
+    "englishName": "Lily Chung",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1994
+    },
+    "sourceCredits": 2,
+    "recognitionAliases": [
+      "锺淑慧"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q837534",
+    "sourceId": "Q837534",
+    "displayName": "钟镇涛",
+    "englishName": "Kenny Bee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1980,
+      "to": 1995
+    },
+    "sourceCredits": 14,
+    "recognitionAliases": [
+      "锺镇涛"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q4912343",
+    "sourceId": "Q4912343",
+    "displayName": "周比利",
+    "englishName": "Billy Chow",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1994
+    },
+    "sourceCredits": 4
+  },
+  {
+    "id": "fig_hk_ent_q2673694",
+    "sourceId": "Q2673694",
+    "displayName": "周慧敏",
+    "englishName": "Vivian Chow",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1994
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q275095",
+    "sourceId": "Q275095",
+    "displayName": "周嘉玲",
+    "englishName": "Valerie Chow",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q6829249",
+    "sourceId": "Q6829249",
+    "displayName": "周文健",
+    "englishName": "Michael Chow",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_q5372109",
+    "sourceId": "Q5372109",
+    "displayName": "朱宝意",
+    "englishName": "Emily Chu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1985,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q5115171",
+    "sourceId": "Q5115171",
+    "displayName": "朱延平",
+    "englishName": "Chu Yen-ping",
+    "kinds": [
+      "director"
+    ],
+    "activeYears": {
+      "from": 1982,
+      "to": 1996
+    },
+    "sourceCredits": 9
+  },
+  {
+    "id": "fig_hk_ent_q262468",
+    "sourceId": "Q262468",
+    "displayName": "朱茵",
+    "englishName": "Athena Chu",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1995
+    },
+    "sourceCredits": 2
+  },
+  {
+    "id": "fig_hk_ent_q6788483",
+    "sourceId": "Q6788483",
+    "displayName": "邹凯光",
+    "englishName": "Matt Chow",
+    "kinds": [
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 3
+  },
+  {
+    "id": "fig_hk_ent_q338048",
+    "sourceId": "Q338048",
+    "displayName": "邹兆龙",
+    "englishName": "Collin Chou",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 6
+  }
+]
