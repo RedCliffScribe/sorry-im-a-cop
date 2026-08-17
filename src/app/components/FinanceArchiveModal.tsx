@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FinanceCashflowItem, FinanceLedgerEntry, MonthlyFinanceReport, RuntimeState } from '../../domain/runtime/types';
+import { formatChineseGameTimeWithWeekday } from '../../domain/time/gameTime';
 import { formatCurrencyAmount } from '../../domain/worldpack/economyConfig';
 
 interface FinanceArchiveModalProps {
@@ -92,7 +93,10 @@ function formatLedger(entries: FinanceLedgerEntry[], worldpackId: string) {
           className={`finance-list-card finance-ledger-card finance-list-card--${entry.direction}`}
         >
           <div className="finance-list-card-heading">
-            <strong>{entry.title}</strong>
+            <div className="finance-ledger-heading-main">
+              <strong>{entry.title}</strong>
+              <time className="finance-ledger-time">{formatChineseGameTimeWithWeekday(entry.gameTime)}</time>
+            </div>
             <span className={`finance-amount finance-amount--${entry.direction}`}>
               {formatDirection(entry.direction)} {formatCurrencyAmount(entry.amount, worldpackId)} · {formatAccount(entry.account)}
             </span>
@@ -221,7 +225,14 @@ export function FinanceArchiveModal({ state, onStateChange, onClose }: FinanceAr
               <h3>近期收支</h3>
               <HistoryLimitSelect value={ledgerLimit} onChange={setLedgerLimit} />
             </div>
-            <div className="finance-ledger-scroll">{formatLedger(recentLedger, state.world.worldpackId)}</div>
+            <div
+              className="finance-ledger-scroll"
+              role="region"
+              aria-label="近期收支记录列表"
+              tabIndex={0}
+            >
+              {formatLedger(recentLedger, state.world.worldpackId)}
+            </div>
           </section>
 
           <section className="finance-panel finance-report-section" aria-label="月度报告">

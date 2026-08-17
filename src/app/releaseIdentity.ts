@@ -1,6 +1,11 @@
-export const APP_VERSION = '1.0.0';
+import type { AppLocale } from '../domain/localization/appLocale';
+
+export const APP_VERSION = '2.0.4';
 export const APP_VERSION_LABEL = `v${APP_VERSION}`;
-export const APP_EDITION_LABEL = '简体中文';
 export const APP_COPYRIGHT_YEAR = '2026';
 export const APP_COPYRIGHT_OWNER = 'RedCliffScribe';
 export const APP_SOURCE_REPOSITORY_URL = 'https://github.com/RedCliffScribe/sorry-im-a-cop';
+
+export function getAppEditionLabel(locale: AppLocale): string {
+  return locale === 'zh-Hant-HK' ? '香港繁體中文' : '简体中文';
+}

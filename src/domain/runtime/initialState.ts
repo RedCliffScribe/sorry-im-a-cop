@@ -3,6 +3,7 @@ import {
   hk1980sOriginBackgroundOptions,
   resolveTriadOpeningProfile,
   type CivilianCustomOpeningProfileInput,
+  type CivilianOpeningProfileOption,
   type TriadRankId
 } from '../worldpack/hk1980sOpening';
 import { mergeWorldpackPlaces } from '../map/placeRepository';
@@ -11,13 +12,40 @@ import { normalizeEquippedItemIds } from '../assets/equipmentSlots';
 import { syncHomeBaseAssetAndFinance } from '../assets/homeBaseAsset';
 import { createInitialFinanceState, normalizeFinanceState, syncPlayerEconomyWithFinance } from '../finance/financeState';
 import { syncPlayerPoliceSalaryCashflow } from '../finance/playerSalaryCashflow';
+import { syncPlayerCivilianOpeningIncome } from '../finance/playerCivilianIncomeCashflow';
 import { createInitialPolicePanel } from '../police/policePanel';
+import { synchronizePlayerPoliceRank } from '../police/playerPoliceRank';
 import { createInitialGrayNetworks } from '../grayNetwork/grayNetwork';
-import { createInitialTriadOrganizations } from '../grayNetwork/initialTriadOrganizations';
+import { createInitialTriadOrganizations, mergeInitialTriadDetails } from '../grayNetwork/initialTriadOrganizations';
 import { createInitialConflictStores } from '../conflict/conflictRuntime';
 import { createInitialEnvironment, ensureEnvironmentState } from '../weather/weather';
-import { createInitialCitySituationTrackSeeds } from '../cityPower/initialCitySituationTracks';
+import {
+  createInitialCitySituationTrackSeeds,
+  refreshPristineCitySituationTrackSeeds
+} from '../cityPower/initialCitySituationTracks';
+import { hkLateColonialOrganizations } from '../cityPower/hkLateColonialOrganizations';
+import { normalizeDramaticContentSettings } from '../drama/settings';
+import { enforcePlayerCaseLead } from '../cases/caseLeadContract';
+import { getCantoneseFlavorProfile } from '../settings/cantoneseFlavor';
+import { normalizeGameDifficulty } from '../settings/gameDifficulty';
+import { normalizeNarrativeArcs } from '../drama/narrativeArc';
+import { collectOfficialDlcExposureRefs } from '../drama/sourceExposure';
+import { normalizeSaveDlcBindings, resolveOfficialDlcBindings } from '../dlc';
+import { reconcileActorRelationshipProfiles } from '../relationship/relationshipActorProfile';
+import type { NewGameCustomContentSelection } from '../customContent/newGameSelection';
+import {
+  getLivelihoodOrganizationProfile,
+  getOpeningLivelihoodMetadata
+} from '../worldpack/hk1980sLivelihood';
+import {
+  createVitalsConditionLifecycle,
+  normalizeLoadedPlayerVitals
+} from '../vitals/playerVitalsLifecycle';
 import { normalizeActor } from './actorFactory';
+import { withProjectedStableIdentity } from '../avgResourcePack/stableIdentity';
+import { normalizePendingActorProfileEnrichment } from './actorProfileEnrichment';
+import { deriveActorAgeAt, normalizeRuntimeActorAges } from './actorAge';
+import { createStoryVisualContext } from './storyVisualContext';
 import type {
   Actor,
   ActorRoleProfiles,
@@ -25,6 +53,7 @@ import type {
   CantoneseFlavorLevel,
   CurrentIdentity,
   DynamicEventsState,
+  GameDifficultyLevel,
   GameTime,
   HomeBase,
   LawIdentityRuntime,
@@ -66,10 +95,27 @@ export interface OpeningSetup {
   cantoneseFlavor?: CantoneseFlavorLevel;
   startTime?: GameTime;
   storypackInfluence?: RuntimeState['world']['storypackInfluence'];
-  lawIdentity?: Partial<Pick<LawIdentityRuntime, 'stationOrPost' | 'department' | 'rank' | 'assignmentSummary'>>;
+  screenCharacterSeedsEnabled?: boolean;
+  dramaticOpeningId?: string;
+  customContentSelections?: NewGameCustomContentSelection[];
+  openingCustomSupportSelectionKey?: string;
+  lawIdentity?: Partial<
+    Pick<
+      LawIdentityRuntime,
+      | 'stationOrPost'
+      | 'department'
+      | 'rank'
+      | 'assignmentSummary'
+      | 'authoritySummary'
+      | 'accessSummary'
+      | 'dutySummary'
+    >
+  >;
   attributes?: AttributeBlock;
   traits?: Trait[];
   openingPressure?: OpeningPressureLevel;
+  gameDifficulty?: GameDifficultyLevel;
+  officialDlcIds?: string[];
   openingNote?: string;
 }
 
@@ -84,13 +130,14 @@ function createInitialAttributes(): AttributeBlock {
   };
 }
 
-function createInitialVitals(): Vitals {
+function createInitialVitals(time: GameTime): Vitals {
   return {
     health: 100,
     maxHealth: 100,
     stamina: 100,
     maxStamina: 100,
-    conditionSummary: '状态正常。'
+    conditionSummary: '状态正常。',
+    conditionLifecycle: createVitalsConditionLifecycle('stable', time)
   };
 }
 
@@ -146,6 +193,7 @@ function createInitialBackgroundEvolution(): RuntimeState['backgroundEvolution']
   return {
     npcTracks: {},
     organizationTracks: {},
+    npcReviewCooldownUntil: {},
     recentOutcomes: [],
     chronicle: [],
     lastAppliedAt: undefined,
@@ -245,6 +293,50 @@ function createInitialOrganizations(currentIdentity: CurrentIdentity, openingYea
   };
 }
 
+function activateCivilianOpeningEmployer(
+  organizations: RuntimeState['organizations'],
+  profile: CivilianOpeningProfileOption
+): void {
+  const organizationId = profile.employerOrganizationId;
+  const employerName = profile.employerName;
+  if (!organizationId || !employerName) return;
+
+  const existing = organizations[organizationId];
+  if (existing) {
+    organizations[organizationId] = {
+      ...existing,
+      stanceTowardPlayer: `玩家当前以“${profile.publicOccupation}”身份在该机构任职。`,
+      pressureSummary: profile.employerRelationSummary ?? existing.pressureSummary,
+      relatedActorIds: [...new Set([...existing.relatedActorIds, 'player'])],
+      relatedPlaceIds: [...new Set([...existing.relatedPlaceIds, profile.workplacePlaceId])]
+    };
+    return;
+  }
+
+  const anchor = hkLateColonialOrganizations.find((candidate) => candidate.organizationId === organizationId);
+  organizations[organizationId] = {
+    organizationId,
+    name: employerName,
+    type: anchor?.organizationType ?? profile.employerOrganizationType ?? 'business',
+    summary: anchor?.promptSafeProfile ?? `${employerName}是本存档开局生成的本地雇主，只服务于玩家当前职业与相关剧情。`,
+    publicKnowledge: anchor?.publicKnowledge ?? `${employerName}在${profile.workplaceLabel}经营，玩家通过当前工作与其建立直接关系。`,
+    currentState: `玩家当前以“${profile.publicOccupation}”身份在此工作，具体经营状况由后续剧情更新。`,
+    stanceTowardPlayer: `玩家是该机构的${profile.employerRelationType === 'owner' ? '经营者' : profile.employerRelationType === 'manager' ? '中层管理人员' : profile.employerRelationType === 'contractor' ? '散工合作人员' : '雇员'}。`,
+    pressureSummary: profile.employerRelationSummary ?? '工作、人事与收入变化会直接影响玩家。',
+    relatedActorIds: ['player'],
+    relatedPlaceIds: [
+      ...new Set([
+        ...(anchor?.headquartersPlaceIds ?? []),
+        ...(anchor?.territoryPlaceIds ?? []),
+        profile.workplacePlaceId
+      ])
+    ],
+    relatedCaseIds: [],
+    visibility: anchor?.defaultVisibility === 'public' ? 'public' : 'player_known',
+    importance: Math.max(anchor?.influence ?? 0, 70)
+  };
+}
+
 function createInitialTime(): GameTime {
   return {
     year: 1988,
@@ -264,7 +356,16 @@ function cloneAttributes(attributes: AttributeBlock): AttributeBlock {
 }
 
 function cloneVitals(vitals: Vitals): Vitals {
-  return { ...vitals };
+  return {
+    ...vitals,
+    conditionLifecycle: vitals.conditionLifecycle
+      ? {
+          ...vitals.conditionLifecycle,
+          establishedAt: cloneTime(vitals.conditionLifecycle.establishedAt),
+          lastReviewedAt: cloneTime(vitals.conditionLifecycle.lastReviewedAt)
+        }
+      : undefined
+  };
 }
 
 function cloneTraits(traits: Trait[]): Trait[] {
@@ -273,21 +374,6 @@ function cloneTraits(traits: Trait[]): Trait[] {
 
 function cloneOriginBackground(originBackground: OriginBackground): OriginBackground {
   return { ...originBackground };
-}
-
-function calculateAge(birthDate: string | undefined, time: GameTime): number | undefined {
-  if (!birthDate) return undefined;
-  const [yearText, monthText, dayText] = birthDate.split('-');
-  const birthYear = Number(yearText);
-  const birthMonth = Number(monthText);
-  const birthDay = Number(dayText);
-  if (!birthYear || !birthMonth || !birthDay) return undefined;
-
-  let age = time.year - birthYear;
-  if (time.month < birthMonth || (time.month === birthMonth && time.day < birthDay)) {
-    age -= 1;
-  }
-  return age;
 }
 
 function calculateBirthDateFromAge(age: number | undefined, time: GameTime): string | undefined {
@@ -338,7 +424,13 @@ function policePostingPlaceId(postingId: string | undefined): string {
     ptu_barracks: 'place_wan_chai_police_headquarters',
     traffic_hq: 'place_wan_chai_police_headquarters',
     marine_police_base: 'place_aberdeen_police_station',
-    special_branch_hq: 'place_wan_chai_police_headquarters'
+    special_branch_hq: 'place_wan_chai_police_headquarters',
+    // EU 的正式 posting 始终是总区冲锋队；这里只复用现有地点作为开局场景锚点。
+    eu_hong_kong_island: 'place_wan_chai_police_headquarters',
+    eu_kowloon_east: 'place_kwun_tong_police_station',
+    eu_kowloon_west: 'place_mong_kok_police_station',
+    eu_new_territories_north: 'place_yuen_long_police_station',
+    eu_new_territories_south: 'place_tsuen_wan_police_station'
   };
   return specialPostingPlaceIds[postingId] ?? 'place_mong_kok_police_station';
 }
@@ -371,6 +463,16 @@ function resolveOpeningRoute(setup: OpeningSetup, identity: CurrentIdentity): Op
         : `${profile.workplaceLabel}照常忙碌，玩家先要顾好眼前的工作与生活。`
     };
   }
+  if (setup.policePostingId?.startsWith('eu_')) {
+    return {
+      placeId: policePostingPlaceId(setup.policePostingId),
+      sceneId: 'scene_opening_eu_duty_room',
+      sceneName: '冲锋队当值室',
+      sceneSummary: '电台、当值板、车辆钥匙与装备检查记录摆在眼前，轮值小队正按指挥链候命。',
+      sceneState: '当值小队已经交更，冲锋车组正在等待电台调派或继续机动防罪巡逻。',
+      openingNarration: '这一更暂时没有重大现场；电台仍在低声报出各区消息，车组依程序检查装备并等待下一次调派。'
+    };
+  }
   return {
     placeId: policePostingPlaceId(setup.policePostingId),
     sceneId: 'scene_report_room',
@@ -397,9 +499,16 @@ function createActorRoleProfiles(currentIdentity: CurrentIdentity, setup: Openin
             : undefined,
         supervisorActorIds: [],
         peerActorIds: [],
-        authoritySummary: 'Has basic police authority under the current posting, bounded by rank, department and procedure.',
-        accessSummary: 'May access only the station, patrol and case information appropriate to the current rank and posting.',
-        dutySummary: setup.lawIdentity?.assignmentSummary ?? 'Handles routine duty, street incidents and immediate reports.',
+        authoritySummary:
+          setup.lawIdentity?.authoritySummary ??
+          'Has basic police authority under the current posting, bounded by rank, department and procedure.',
+        accessSummary:
+          setup.lawIdentity?.accessSummary ??
+          'May access only the station, patrol and case information appropriate to the current rank and posting.',
+        dutySummary:
+          setup.lawIdentity?.dutySummary ??
+          setup.lawIdentity?.assignmentSummary ??
+          'Handles routine duty, street incidents and immediate reports.',
         institutionalReputation: 'New or lightly known within the force unless later play establishes otherwise.',
         disciplinePressureSummary: 'Subject to chain of command, complaints, ICAC exposure and internal discipline.'
       }
@@ -426,11 +535,33 @@ function createActorRoleProfiles(currentIdentity: CurrentIdentity, setup: Openin
   }
 
   const profile = resolveCivilianProfile(setup);
+  const livelihoodMetadata = getOpeningLivelihoodMetadata(profile.id);
+  const organizationProfile = getLivelihoodOrganizationProfile(profile.employerOrganizationId);
   return {
     civilian: {
       status: 'active',
+      civilianProfileId: profile.id,
+      occupationGroupId: livelihoodMetadata?.occupationGroupId ?? profile.occupationGroup,
+      employmentStatusId: livelihoodMetadata?.employmentStatusId ?? profile.employmentStatus,
       publicOccupation: profile.publicOccupation,
       workplacePlaceId: profile.workplacePlaceId,
+      employerOrganizationId: profile.employerOrganizationId,
+      employerRelationType: profile.employerRelationType,
+      employerRelationSummary: profile.employerRelationSummary,
+      workUnitSummary: profile.workUnitSummary ?? livelihoodMetadata?.workUnitSummary ?? profile.workplaceLabel,
+      positionSummary: profile.positionSummary ?? livelihoodMetadata?.positionSummary ?? profile.publicOccupation,
+      dutySummary: profile.dutySummary ?? livelihoodMetadata?.dutySummary ?? profile.employerRelationSummary,
+      decisionScopeSummary: profile.decisionScopeSummary ?? livelihoodMetadata?.decisionScopeSummary,
+      accessSummary: profile.accessSummary ?? livelihoodMetadata?.accessSummary,
+      sectorIds: Array.from(
+        new Set([
+          ...(profile.sectorIds ?? []),
+          ...(livelihoodMetadata?.sectorIds ?? []),
+          ...(organizationProfile?.sectorIds ?? [])
+        ])
+      ),
+      roleTags: Array.from(new Set([...(profile.roleTags ?? []), ...(livelihoodMetadata?.roleTags ?? [])])),
+      livelihoodActorIds: [],
       communitySummary: profile.communitySummary,
       familyEconomicSummary: profile.familyEconomicSummary,
       legalStatusSummary: profile.legalStatusSummary
@@ -438,20 +569,12 @@ function createActorRoleProfiles(currentIdentity: CurrentIdentity, setup: Openin
   };
 }
 
-function cantoneseFlavorPromptAnchor(flavor: CantoneseFlavorLevel): string {
-  if (flavor === 'off') return '对白使用标准书面中文，不主动加入粤语词汇。';
-  if (flavor === 'light') return '对白可轻微加入粤语语气词和称呼，正文仍以书面中文为主。';
-  if (flavor === 'medium') return '对白保持中等粤语风味，关键人物口吻可带港式词汇，叙述仍保持易读。';
-  if (flavor === 'heavy') return '对白较多使用粤语表达和港式句式，但需要保证非粤语读者能理解。';
-  return '人物对白尽量使用粤语/港式口语，必要时用上下文保证意思清楚。';
-}
-
 function createPlayerActor(setup: OpeningSetup, time: GameTime, attributes: AttributeBlock, traits: Trait[]): Actor {
   const currentIdentity = setup.currentIdentity ?? 'police';
   const playerName = setup.playerName?.trim() || '';
   const englishName = setup.englishName?.trim() || undefined;
   const birthDate = setup.birthDate || calculateBirthDateFromAge(setup.age, time) || '1965-01-01';
-  const computedAge = calculateAge(birthDate, time);
+  const computedAge = deriveActorAgeAt({ birthDate }, time);
   const originBackground = setup.originBackground ?? hk1980sOriginBackgroundOptions[0];
   const route = resolveOpeningRoute(setup, currentIdentity);
   const civilianProfile = resolveCivilianProfile(setup);
@@ -467,8 +590,8 @@ function createPlayerActor(setup: OpeningSetup, time: GameTime, attributes: Attr
         : `当前公开职业：${civilianProfile.publicOccupation}。`;
   const englishNameMemory = englishName ? `英文名：${englishName}。` : '开局需要 LLM 根据中文名生成英文名。';
   const cantoneseFlavor = setup.cantoneseFlavor ?? 'medium';
-  const cantoneseFlavorAnchor = cantoneseFlavorPromptAnchor(cantoneseFlavor);
-  const vitals = createInitialVitals();
+  const cantoneseFlavorAnchor = getCantoneseFlavorProfile(cantoneseFlavor).promptGuide;
+  const vitals = createInitialVitals(time);
   const roleProfiles = createActorRoleProfiles(currentIdentity, setup);
   const publicIdentity =
     currentIdentity === 'police'
@@ -481,7 +604,7 @@ function createPlayerActor(setup: OpeningSetup, time: GameTime, attributes: Attr
       ? 'org_hk_police'
       : currentIdentity === 'gang_member'
         ? triadProfile.organizationId
-        : undefined;
+        : civilianProfile.employerOrganizationId;
 
   return {
     actorId: 'player',
@@ -528,7 +651,21 @@ function createPlayerActor(setup: OpeningSetup, time: GameTime, attributes: Attr
                 isPrimary: true
               }
             ]
-          : [],
+          : civilianProfile.employerOrganizationId
+            ? [
+                {
+                  organizationId: civilianProfile.employerOrganizationId,
+                  relationType: civilianProfile.employerRelationType ?? 'employee',
+                  roleTitle: civilianProfile.publicOccupation,
+                  departmentOrUnit: civilianProfile.workplaceLabel,
+                  summary:
+                    civilianProfile.employerRelationSummary ??
+                    `玩家在${civilianProfile.employerName ?? civilianProfile.workplaceLabel}从事当前公开职业。`,
+                  visibility: 'player_known',
+                  isPrimary: true
+                }
+              ]
+            : [],
     positionSummary:
       currentIdentity === 'police'
         ? `驻守${setup.lawIdentity?.stationOrPost ?? '旺角警署'}的${setup.lawIdentity?.rank ?? '警员'}`
@@ -620,6 +757,7 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
   const playerTraits = cloneTraits(setup.traits ?? []);
   const currentIdentity = setup.currentIdentity ?? 'police';
   const openingRoute = resolveOpeningRoute(setup, currentIdentity);
+  const civilianProfile = resolveCivilianProfile(setup);
   const originBackground = cloneOriginBackground(setup.originBackground ?? hk1980sOriginBackgroundOptions[0]);
   const playerActor = createPlayerActor(setup, time, actorAttributes, actorTraits);
   const initialEconomy = createInitialEconomy();
@@ -627,6 +765,9 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
   const initialReputation = createInitialReputationState(currentIdentity);
   const initialHomeBase = createInitialHomeBase();
   const initialOrganizations = createInitialOrganizations(currentIdentity, time.year);
+  if (currentIdentity === 'civilian') {
+    activateCivilianOpeningEmployer(initialOrganizations, civilianProfile);
+  }
   if (currentIdentity === 'gang_member') {
     const triadProfile = resolveTriadProfile(setup);
     const organization = initialOrganizations[triadProfile.organizationId];
@@ -639,7 +780,7 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
       };
     }
   }
-  const initialVitals = cloneVitals(playerActor.vitals ?? createInitialVitals());
+  const initialVitals = cloneVitals(playerActor.vitals ?? createInitialVitals(time));
   const initialClothingState = createInitialClothingState(playerActor.clothing, time, currentIdentity);
   const initialConflictStores = createInitialConflictStores();
   const initialLawIdentity: RuntimeState['lawIdentity'] = {
@@ -652,28 +793,63 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
       currentIdentity === 'police' ? setup.lawIdentity?.assignmentSummary ?? '日常值班与街面巡逻。' : undefined,
     supervisorActorIds: [],
     peerActorIds: [],
-    authoritySummary: currentIdentity === 'police' ? '可进行基本盘问、巡逻、记录和现场处置。' : '当前没有执法权限。',
-    accessSummary: currentIdentity === 'police' ? '只能接触基层勤务和公开资料。' : '只能接触公开社会信息。',
-    dutySummary: currentIdentity === 'police' ? '维持街面秩序，处理当值期间遇到的事件。' : '没有正式警务职责。',
+    authoritySummary:
+      currentIdentity === 'police'
+        ? setup.lawIdentity?.authoritySummary ?? '可进行基本盘问、巡逻、记录和现场处置。'
+        : '当前没有执法权限。',
+    accessSummary:
+      currentIdentity === 'police'
+        ? setup.lawIdentity?.accessSummary ?? '只能接触基层勤务和公开资料。'
+        : '只能接触公开社会信息。',
+    dutySummary:
+      currentIdentity === 'police'
+        ? setup.lawIdentity?.dutySummary ?? '维持街面秩序，处理当值期间遇到的事件。'
+        : '没有正式警务职责。',
     institutionalReputation: currentIdentity === 'police' ? '新人，尚未形成稳定名声。' : '与警队暂无正式连接。',
     disciplinePressureSummary: currentIdentity === 'police' ? '暂无明确纪律风险。' : '暂无警队纪律压力。'
   };
+  const initialFinanceWithCivilianIncome =
+    currentIdentity === 'civilian'
+      ? syncPlayerCivilianOpeningIncome({ finance: initialFinance, profile: civilianProfile, time })
+      : initialFinance;
   const initialFinanceWithSalary = syncPlayerPoliceSalaryCashflow({
-    finance: initialFinance,
+    finance: initialFinanceWithCivilianIncome,
     time,
     currentIdentity,
-    lawIdentity: initialLawIdentity
+    lawIdentity: initialLawIdentity,
+    identityHistory: []
   });
+  const initialEnvironment = createInitialEnvironment(time);
+  const initialPlaces = mergeWorldpackPlaces();
+  const initialScenes: RuntimeState['scenes'] = {
+    [openingRoute.sceneId]: {
+      sceneId: openingRoute.sceneId,
+      placeId: openingRoute.placeId,
+      name: openingRoute.sceneName,
+      summary: openingRoute.sceneSummary,
+      temporaryState: openingRoute.sceneState,
+      presentActorIds: ['player']
+    }
+  };
 
   return {
     runtimeVersion: 1,
     world: {
       worldpackId: 'hk_1988',
-      storypackInfluence: setup.storypackInfluence ?? 'medium',
-      openingPressure: setup.openingPressure ?? 'relaxed'
+      storypackInfluence: setup.storypackInfluence ?? 'high',
+      openingPressure: setup.openingPressure ?? 'relaxed',
+      gameDifficulty: normalizeGameDifficulty(setup.gameDifficulty),
+      screenCharacterSeedsEnabled: setup.screenCharacterSeedsEnabled ?? true,
+      dramaticOpeningId: setup.dramaticOpeningId,
+      officialDlcBindings: resolveOfficialDlcBindings(
+        setup.officialDlcIds,
+        'hk_1988',
+        undefined,
+        setup.officialDlcIds?.length ? new Date().toISOString() : undefined
+      )
     },
     time,
-    environment: createInitialEnvironment(time),
+    environment: initialEnvironment,
     map: {},
     player: {
       actorId: 'player',
@@ -716,14 +892,16 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
         peerActorIds: [],
         authoritySummary:
           currentIdentity === 'police'
-            ? 'Basic police authority under the current rank and posting.'
+            ? setup.lawIdentity?.authoritySummary ?? 'Basic police authority under the current rank and posting.'
             : 'No active police authority.',
         accessSummary:
           currentIdentity === 'police'
-            ? 'Access is limited by rank, post and station chain.'
+            ? setup.lawIdentity?.accessSummary ?? 'Access is limited by rank, post and station chain.'
             : 'No police access.',
         dutySummary:
-          currentIdentity === 'police' ? 'Routine duty, street response and report handling.' : 'No police duty.',
+          currentIdentity === 'police'
+            ? setup.lawIdentity?.dutySummary ?? 'Routine duty, street response and report handling.'
+            : 'No police duty.',
         institutionalReputation:
           currentIdentity === 'police' ? 'Opening reputation is not stable yet.' : 'No formal police link.',
         disciplinePressureSummary:
@@ -741,6 +919,14 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
     },
     secretFacts: {},
     pendingActorWritebackRecoveries: [],
+    pendingActorProfileEnrichments: [],
+    dramaticContent: {
+      openingId: setup.dramaticOpeningId,
+      instances: [],
+      recentDiagnostics: [],
+      exposedOfficialDlcSourceRefs: []
+    },
+    narrativeArcs: [],
     organizations: initialOrganizations,
     dynamicEvents: createInitialDynamicEvents(),
     citySituationTracks: createInitialCitySituationTracks(time),
@@ -754,24 +940,22 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
     pressures: {},
     grayLedger: [],
     assets: createInitialAssets(),
-    places: mergeWorldpackPlaces(),
-    scenes: {
-      [openingRoute.sceneId]: {
-        sceneId: openingRoute.sceneId,
-        placeId: openingRoute.placeId,
-        name: openingRoute.sceneName,
-        summary: openingRoute.sceneSummary,
-        temporaryState: openingRoute.sceneState,
-        presentActorIds: ['player']
-      }
-    },
+    places: initialPlaces,
+    scenes: initialScenes,
     memories: createOpeningMemories(setup, time),
     storyLog: [
       {
         turnId: 'turn_0',
         speaker: 'narrator',
         text: openingRoute.openingNarration,
-        gameTime: cloneTime(time)
+        gameTime: cloneTime(time),
+        visualContext: createStoryVisualContext({
+          time,
+          environment: initialEnvironment,
+          location: { currentPlaceId: openingRoute.placeId, currentSceneId: openingRoute.sceneId },
+          places: initialPlaces,
+          scenes: initialScenes
+        })
       }
     ],
     turnCounter: 0
@@ -801,35 +985,57 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     combatEvents?: RuntimeState['combatEvents'];
     secretFacts?: RuntimeState['secretFacts'];
     pendingActorWritebackRecoveries?: RuntimeState['pendingActorWritebackRecoveries'];
+    pendingActorProfileEnrichments?: RuntimeState['pendingActorProfileEnrichments'];
+    dramaticContent?: RuntimeState['dramaticContent'];
   };
   const playerWithPartialDefaults = state.player as RuntimeState['player'] & {
     reputation?: Partial<PlayerReputationState>;
     reputationByCircle?: unknown;
     vitals?: Vitals;
   };
-  const actors = Object.fromEntries(
+  const relationshipThreads = stateWithOptionalAssets.relationshipThreads ?? defaults.relationshipThreads;
+  const rawActors = Object.fromEntries(
     Object.entries(state.actors ?? {}).map(([actorId, actor]) => [
       actorId,
-      normalizeActor({
-        ...actor,
-        actorId: actor.actorId ?? actorId,
-        currentIdentity: actorId === state.player.actorId ? state.player.currentIdentity : actor.currentIdentity
-      })
+      withProjectedStableIdentity(
+        normalizeActor({
+          ...actor,
+          actorId: actor.actorId ?? actorId,
+          currentIdentity: actorId === state.player.actorId ? state.player.currentIdentity : actor.currentIdentity
+        }),
+        state.world.worldpackId
+      )
     ])
   ) as RuntimeState['actors'];
+  const ageNormalizedRuntime = normalizeRuntimeActorAges({
+    actors: rawActors,
+    player: state.player,
+    currentTime: state.time
+  });
+  const actors = reconcileActorRelationshipProfiles(
+    ageNormalizedRuntime.actors,
+    relationshipThreads,
+    state.player.actorId,
+    { mode: 'hydrate_missing' }
+  );
   const playerActor = actors[state.player.actorId];
-  if (playerActor && !playerActor.vitals) {
+  const playerVitals = normalizeLoadedPlayerVitals(
+    playerWithPartialDefaults.vitals ?? playerActor?.vitals ?? defaults.player.vitals,
+    state.time
+  );
+  if (playerActor) {
     actors[state.player.actorId] = {
       ...playerActor,
-      vitals: state.player.vitals ?? defaults.player.vitals
+      vitals: cloneVitals(playerVitals)
     };
   }
   const economy = state.player.economy ?? defaults.player.economy;
   const finance = normalizeFinanceState(stateWithOptionalAssets.finance, state.time, economy);
   const playerWithMirroredEconomy = syncPlayerEconomyWithFinance({ ...state.player, economy }, finance);
-  const lawIdentity = stateWithOptionalAssets.lawIdentity ?? defaults.lawIdentity;
+  let lawIdentity = stateWithOptionalAssets.lawIdentity ?? defaults.lawIdentity;
   const player: RuntimeState['player'] = {
     ...playerWithMirroredEconomy,
+    birthDate: ageNormalizedRuntime.player.birthDate,
     originIdentity: playerWithPartialDefaults.originIdentity ?? state.player.currentIdentity,
     identityHistory: Array.isArray(playerWithPartialDefaults.identityHistory)
       ? playerWithPartialDefaults.identityHistory
@@ -840,11 +1046,21 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
       defaults.player.reputation
     ),
     homeBase: state.player.homeBase ?? defaults.player.homeBase,
-    vitals: playerWithPartialDefaults.vitals ?? defaults.player.vitals,
+    vitals: cloneVitals(playerVitals),
     clothingState:
       state.player.clothingState ??
       createInitialClothingState(state.player.clothing ?? defaults.player.clothing, state.time, state.player.currentIdentity)
   };
+  const cases = Object.fromEntries(
+    Object.entries(state.cases ?? defaults.cases).map(([caseId, caseFile]) => [
+      caseId,
+      enforcePlayerCaseLead({
+        caseFile,
+        playerActorId: state.player.actorId,
+        playerActorName: actors[state.player.actorId]?.name
+      })
+    ])
+  ) as RuntimeState['cases'];
   const assets: RuntimeAssetsState = {
     items: {
       ...(stateWithOptionalAssets.assets?.items ?? defaults.assets.items)
@@ -861,11 +1077,34 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     economy: player.economy,
     time: state.time
   });
+  const organizations = mergeInitialTriadDetails(
+    state.organizations ?? defaults.organizations,
+    player.currentIdentity,
+    state.time.year
+  );
+  let policePanel =
+    stateWithOptionalAssets.policePanel ??
+    createInitialPolicePanel(actors[state.player.actorId] ?? defaults.actors.player, lawIdentity, state.time);
+  const canonicalPoliceRank = lawIdentity.rank?.trim() || actors[state.player.actorId]?.roleProfiles.police?.rank?.trim();
+  if (canonicalPoliceRank) {
+    const synchronizedRank = synchronizePlayerPoliceRank({
+      lawIdentity,
+      policePanel,
+      playerActor: actors[state.player.actorId],
+      rank: canonicalPoliceRank
+    });
+    lawIdentity = synchronizedRank.lawIdentity;
+    policePanel = synchronizedRank.policePanel;
+    if (synchronizedRank.playerActor) {
+      actors[state.player.actorId] = synchronizedRank.playerActor;
+    }
+  }
   const financeWithSalary = syncPlayerPoliceSalaryCashflow({
     finance: syncedHomeBaseState.finance,
     time: state.time,
     currentIdentity: player.currentIdentity,
-    lawIdentity
+    lawIdentity,
+    identityHistory: player.identityHistory
   });
 
   return {
@@ -873,7 +1112,11 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     world: {
       ...defaults.world,
       ...(stateWithOptionalAssets.world ?? {}),
-      openingPressure: stateWithOptionalAssets.world?.openingPressure ?? defaults.world.openingPressure
+      openingPressure: stateWithOptionalAssets.world?.openingPressure ?? defaults.world.openingPressure,
+      gameDifficulty: normalizeGameDifficulty(stateWithOptionalAssets.world?.gameDifficulty),
+      officialDlcBindings: normalizeSaveDlcBindings(
+        stateWithOptionalAssets.world?.officialDlcBindings
+      )
     },
     environment: ensureEnvironmentState(state.time, stateWithOptionalAssets.environment ?? defaults.environment),
     map: stateWithOptionalAssets.map ?? defaults.map,
@@ -881,15 +1124,44 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     actors,
     secretFacts: stateWithOptionalAssets.secretFacts ?? defaults.secretFacts,
     pendingActorWritebackRecoveries: Array.isArray(stateWithOptionalAssets.pendingActorWritebackRecoveries)
-      ? stateWithOptionalAssets.pendingActorWritebackRecoveries
+      ? stateWithOptionalAssets.pendingActorWritebackRecoveries.map((pending) => ({
+          ...pending,
+          attemptCount: Number.isFinite(pending.attemptCount) ? Math.max(0, pending.attemptCount) : 0,
+          consecutiveFailureCount:
+            typeof pending.consecutiveFailureCount === 'number' && Number.isFinite(pending.consecutiveFailureCount)
+            ? Math.max(0, pending.consecutiveFailureCount)
+            : 0
+        }))
       : defaults.pendingActorWritebackRecoveries,
-    organizations: state.organizations ?? defaults.organizations,
+    pendingActorProfileEnrichments: Array.isArray(stateWithOptionalAssets.pendingActorProfileEnrichments)
+      ? stateWithOptionalAssets.pendingActorProfileEnrichments
+          .map(normalizePendingActorProfileEnrichment)
+          .filter((pending): pending is NonNullable<typeof pending> => Boolean(pending))
+      : defaults.pendingActorProfileEnrichments,
+    dramaticContent: {
+      openingId: stateWithOptionalAssets.dramaticContent?.openingId,
+      settings: normalizeDramaticContentSettings(stateWithOptionalAssets.dramaticContent?.settings),
+      instances: stateWithOptionalAssets.dramaticContent?.instances ?? [],
+      recentExecutions: stateWithOptionalAssets.dramaticContent?.recentExecutions ?? [],
+      recentDiagnostics: stateWithOptionalAssets.dramaticContent?.recentDiagnostics ?? [],
+      exposedOfficialDlcSourceRefs: collectOfficialDlcExposureRefs(state)
+    },
+    narrativeArcs: normalizeNarrativeArcs(stateWithOptionalAssets.narrativeArcs),
+    organizations,
     dynamicEvents: stateWithOptionalAssets.dynamicEvents ?? defaults.dynamicEvents,
-    citySituationTracks: stateWithOptionalAssets.citySituationTracks ?? defaults.citySituationTracks,
+    citySituationTracks: refreshPristineCitySituationTrackSeeds(
+      stateWithOptionalAssets.citySituationTracks ?? defaults.citySituationTracks,
+      state.time
+    ),
     backgroundEvolution: stateWithOptionalAssets.backgroundEvolution
       ? {
           npcTracks: stateWithOptionalAssets.backgroundEvolution.npcTracks ?? {},
           organizationTracks: stateWithOptionalAssets.backgroundEvolution.organizationTracks ?? {},
+          npcReviewCooldownUntil: Object.fromEntries(
+            Object.entries(stateWithOptionalAssets.backgroundEvolution.npcReviewCooldownUntil ?? {}).map(
+              ([actorId, time]) => [actorId, { ...time }]
+            )
+          ),
           recentOutcomes: stateWithOptionalAssets.backgroundEvolution.recentOutcomes ?? [],
           chronicle: stateWithOptionalAssets.backgroundEvolution.chronicle ?? [],
           lastAppliedAt: stateWithOptionalAssets.backgroundEvolution.lastAppliedAt,
@@ -897,17 +1169,15 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
           lastRun: stateWithOptionalAssets.backgroundEvolution.lastRun
         }
       : defaults.backgroundEvolution,
-    relationshipThreads: stateWithOptionalAssets.relationshipThreads ?? defaults.relationshipThreads,
+    relationshipThreads,
     judgementChecks: stateWithOptionalAssets.judgementChecks ?? defaults.judgementChecks,
     combatEvents: stateWithOptionalAssets.combatEvents ?? defaults.combatEvents,
-    cases: state.cases ?? defaults.cases,
+    cases,
     caseEvidence: stateWithOptionalAssets.caseEvidence ?? defaults.caseEvidence,
     deferredEvents: stateWithOptionalAssets.deferredEvents ?? defaults.deferredEvents,
     pressures: state.pressures ?? defaults.pressures,
     lawIdentity,
-    policePanel:
-      stateWithOptionalAssets.policePanel ??
-      createInitialPolicePanel(actors[state.player.actorId] ?? defaults.actors.player, lawIdentity, state.time),
+    policePanel,
     grayNetworks: stateWithOptionalAssets.grayNetworks ?? createInitialGrayNetworks(),
     finance: financeWithSalary,
     grayLedger: state.grayLedger ?? [],

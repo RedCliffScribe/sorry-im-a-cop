@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import type { Actor, RuntimeState } from '../../domain/runtime/types';
@@ -122,5 +122,23 @@ describe('FatePanelModal', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: '缘份' })).getByRole('button', { name: '关闭' }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires confirmation before deleting a fate relationship', async () => {
+    const onDeleteThread = vi.fn(async () => undefined);
+    render(
+      <FatePanelModal
+        state={createStateWithThreads()}
+        onClose={vi.fn()}
+        onDeleteThread={onDeleteThread}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '删除缘份：雨夜旧约' }));
+    const confirmation = screen.getByRole('alertdialog', { name: '确认删除缘份' });
+    expect(onDeleteThread).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole('button', { name: '确认删除' }));
+
+    await waitFor(() => expect(onDeleteThread).toHaveBeenCalledWith('thread_may_fate'));
   });
 });

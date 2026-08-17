@@ -31,6 +31,12 @@ test.describe('Batch 3B 组织面板', () => {
   });
 
   test('社团逐个展示架构与自身动态且不暴露诊断用语', async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') browserErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => browserErrors.push(error.message));
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole('button', { name: '社团', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '社团' });
 
@@ -38,18 +44,34 @@ test.describe('Batch 3B 组织面板', () => {
     await expect(dialog.getByText('公开名号，细节待确认')).toHaveCount(0);
     await expect(dialog.getByText('街面公开可知')).toBeVisible();
     const sunYeeOn = dialog.getByRole('region', { name: '新义安社团面板' });
+    await expect(sunYeeOn.getByRole('heading', { name: '社团本色' })).toBeVisible();
+    await expect(sunYeeOn.getByRole('heading', { name: '话事与交接' })).toBeVisible();
+    await expect(sunYeeOn.getByRole('heading', { name: '势力范围与活动线' })).toBeVisible();
+    await expect(sunYeeOn.getByText('钵兰街', { exact: true })).toBeVisible();
+    await expect(sunYeeOn.getByText('观塘工业区', { exact: true })).toBeVisible();
+    await expect(sunYeeOn.getByText('并非排他控制').first()).toBeVisible();
     const structure = sunYeeOn.getByLabel('新义安组织架构');
     await expect(structure.getByText('组织架构')).toBeVisible();
-    await expect(structure.getByText('坐馆')).not.toBeVisible();
-    await structure.getByText('组织架构').click();
-    await expect(structure.getByText('坐馆')).toBeVisible();
+    await expect(structure.getByText('核心主事层')).not.toBeVisible();
+    await structure.locator('summary').click();
+    await expect(structure.getByText('核心主事层')).toBeVisible();
+    await expect(structure.getByText('地区线负责人')).toBeVisible();
     await expect(sunYeeOn.getByText('新义安旺角外围')).toBeVisible();
     await expect(sunYeeOn.getByText('街头传闻')).toBeVisible();
     await expect(sunYeeOn.getByText('中等风险')).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
     await dialog.getByRole('button', { name: /十四K/ }).click();
     const fourteenK = dialog.getByRole('region', { name: '十四K社团面板' });
     await expect(fourteenK.getByText('新义安旺角外围')).toHaveCount(0);
+    await expect(fourteenK.getByText('支系与地区线较分散', { exact: false })).toBeVisible();
+    await expect(fourteenK.getByText('重庆大厦', { exact: true })).toBeVisible();
+    const fourteenKStructure = fourteenK.getByLabel('十四K组织架构');
+    await fourteenKStructure.locator('summary').click();
+    await expect(fourteenKStructure.getByText('支系名义层')).toBeVisible();
+    await expect(fourteenKStructure.getByText('跨线中间人')).toBeVisible();
+    expect(await page.locator('body').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(browserErrors).toEqual([]);
   });
 
   test('机构使用玩家可读来源并显示机构关系', async ({ page }) => {
@@ -75,6 +97,7 @@ test.describe('Batch 3B 组织面板', () => {
       const dialog = page.getByRole('dialog', { name: panelName });
       await expect(dialog).toBeVisible();
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await page.locator('body').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await dialog.getByRole('button', { name: '关闭', exact: true }).click();
     }
   });

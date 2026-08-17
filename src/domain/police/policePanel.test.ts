@@ -91,4 +91,30 @@ describe('police panel state', () => {
     expect(state.policePanel.careerPath.currentRank).toBe('总督察');
     expect(state.policePanel.careerPath.targetRank).toBe('警司');
   });
+
+  it.each([
+    ['Superintendent（警司 SP）', '高级警司'],
+    ['Senior Superintendent（高级警司 SSP）', '总警司'],
+    ['Chief Superintendent（总警司 CSP）', '助理处长'],
+    ['Assistant Commissioner of Police（助理处长 ACP）', '高级助理处长'],
+    ['Senior Assistant Commissioner of Police（高级助理处长 SACP）', '副处长'],
+    ['Deputy Commissioner of Police（副处长 DCP）', '警务处长'],
+    ['Commissioner of Police（警务处长 CP）', undefined]
+  ] as const)('derives the next senior promotion target from %s', (rank, targetRank) => {
+    const state = createInitialRuntimeState({
+      lawIdentity: {
+        rank,
+        stationOrPost: 'Police Headquarters',
+        department: 'Force Headquarters',
+        assignmentSummary: 'Command duties'
+      }
+    });
+
+    expect(state.policePanel.careerPath.targetRank).toBe(targetRank);
+    if (targetRank) {
+      expect(state.policePanel.careerPath.routeSummary).toContain(targetRank);
+    } else {
+      expect(state.policePanel.careerPath.routeSummary).toContain('当前职级路径尚未固定');
+    }
+  });
 });

@@ -1,4 +1,5 @@
 import type { PoliceClimateEntry, RuntimeState } from '../../domain/runtime/types';
+import { projectPoliceDutyContext } from '../../domain/police/policeDutyContext';
 import { formatPoliceAssessmentKey, formatPoliceText } from '../../domain/police/policeTerminology';
 
 interface PolicePanelModalProps {
@@ -34,6 +35,11 @@ export function PolicePanelModal({ state, onClose, onDraftPlayerAction }: Police
   const career = panel.careerPath;
   const assessment = Object.entries(career.dynamicAssessment);
   const actionHints = panel.actionHints.length > 0 ? panel.actionHints : career.suggestedActions;
+  const duty = projectPoliceDutyContext({
+    time: state.time,
+    currentIdentity: state.player.currentIdentity,
+    lawIdentity: state.lawIdentity
+  });
 
   function handleDraftAction(actionText: string) {
     onDraftPlayerAction?.(formatPoliceText(actionText));
@@ -66,7 +72,7 @@ export function PolicePanelModal({ state, onClose, onDraftPlayerAction }: Police
             当前职级 <strong>{formatPoliceText(career.currentRank)}</strong>
           </span>
           <span>
-            下一目标 <strong>{career.targetRank ? formatPoliceText(career.targetRank) : '未明'}</strong>
+            当前值班 <strong>{duty.label} · {duty.shiftLabel}</strong>
           </span>
           <span>
             单位 <strong>{formatPoliceText(panel.unitName)}</strong>
@@ -85,6 +91,30 @@ export function PolicePanelModal({ state, onClose, onDraftPlayerAction }: Police
               <div>
                 <dt>单位摘要</dt>
                 <dd>{formatPoliceText(panel.unitSummary)}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="police-panel-card police-panel-card--wide police-panel-card--duty">
+            <h3>值班安排</h3>
+            <strong>{duty.label} · {duty.shiftLabel}</strong>
+            <p>{duty.summary}</p>
+            <dl>
+              <div>
+                <dt>本次安排</dt>
+                <dd>{duty.currentDutySummary}</dd>
+              </div>
+              <div>
+                <dt>本更时段</dt>
+                <dd>{duty.scheduleWindow}</dd>
+              </div>
+              <div>
+                <dt>下一更</dt>
+                <dd>{duty.nextDutySummary}</dd>
+              </div>
+              <div>
+                <dt>轮班规则</dt>
+                <dd>{duty.rosterSummary}</dd>
               </div>
             </dl>
           </section>

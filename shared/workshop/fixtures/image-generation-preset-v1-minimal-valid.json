@@ -1,0 +1,51 @@
+{
+  "format": "sorry-im-a-cop-v2-workshop-package",
+  "schemaVersion": 1,
+  "kind": "image-generation-preset",
+  "manifest": {
+    "title": "基础人物头像预设",
+    "summary": "不绑定上传者 API 档案的最小可移植人物头像预设。",
+    "contentRating": "general",
+    "language": "zh-CN",
+    "tags": ["人物", "头像"],
+    "minAppVersion": "1.7.49"
+  },
+  "compatibility": {
+    "providerTypes": ["openai-images"],
+    "modelHints": [],
+    "requiredFeatures": []
+  },
+  "content": {
+    "variants": [
+      {
+        "variantRef": "character-avatar",
+        "purpose": "avatar-close-up",
+        "name": "人物头像",
+        "providerType": "openai-images",
+        "styleRefs": [],
+        "targetAspectRatio": "1:1"
+      }
+    ],
+    "stylePresets": [],
+    "dialectPresets": [],
+    "comfyStyleRecipes": [],
+    "styleSelection": {},
+    "safeGenerationParameters": [
+      {
+        "variantRef": "character-avatar",
+        "parameters": {
+          "providerType": "openai-images",
+          "requestedImageCount": 1,
+          "size": {
+            "mode": "dimensions",
+            "width": 1024,
+            "height": 1024
+          },
+          "quality": "medium",
+          "outputFormat": "png",
+          "background": "opaque"
+        }
+      }
+    ]
+  }
+}

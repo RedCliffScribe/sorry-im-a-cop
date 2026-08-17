@@ -5,7 +5,18 @@ import { createPortableSaveRecord } from './portableSaveArchive';
 import { parseRuntimeSaveRecord, parseSaveArchive } from './saveArchiveSchema';
 
 export const PORTABLE_SAVE_ZIP_FORMAT = 'sorry-im-a-cop-v2-save-archive';
-export const PORTABLE_SAVE_ZIP_VERSION = 2;
+export const PORTABLE_SAVE_ZIP_VERSION = 5;
+
+export interface PortableSaveBundle {
+  records: RuntimeSaveRecord[];
+  visualArchives: Record<string, Uint8Array>;
+  avgOverrideArchives?: Record<string, Uint8Array>;
+}
+
+export interface PortableSaveZipOptions {
+  visualArchives?: Record<string, Uint8Array>;
+  avgOverrideArchives?: Record<string, Uint8Array>;
+}
 
 interface PortableSaveManifestEntry {
   path: string;
@@ -29,6 +40,8 @@ interface PortableSaveZipManifest {
     events: string;
     objects: string;
   };
+  visuals: Array<{ partitionId: string; path: string }>;
+  avgOverrides: Array<{ partitionId: string; path: string }>;
 }
 
 const manifestEntrySchema = z.object({
@@ -41,9 +54,8 @@ const manifestEntrySchema = z.object({
   turnCounter: z.number().int().nonnegative()
 });
 
-const manifestSchema = z.object({
+const manifestBaseSchema = z.object({
   format: z.literal(PORTABLE_SAVE_ZIP_FORMAT),
-  version: z.literal(PORTABLE_SAVE_ZIP_VERSION),
   exportedAt: z.string().min(1),
   saveCount: z.number().int().nonnegative(),
   saves: z.array(manifestEntrySchema),
@@ -53,6 +65,34 @@ const manifestSchema = z.object({
     events: z.string().min(1),
     objects: z.string().min(1)
   })
+});
+
+const legacyManifestSchema = manifestBaseSchema.extend({
+  version: z.literal(2)
+});
+
+const versionThreeManifestSchema = manifestBaseSchema.extend({
+  version: z.literal(3),
+  visuals: z.array(z.object({
+    partitionId: z.string().min(1),
+    path: z.string().min(1)
+  }))
+});
+
+const versionFourManifestSchema = manifestBaseSchema.extend({
+  version: z.literal(4),
+  visuals: z.array(z.object({
+    partitionId: z.string().min(1),
+    path: z.string().min(1)
+  })),
+  avgOverrides: z.array(z.object({
+    partitionId: z.string().min(1),
+    path: z.string().min(1)
+  }))
+});
+
+const manifestSchema = versionFourManifestSchema.extend({
+  version: z.literal(PORTABLE_SAVE_ZIP_VERSION)
 });
 
 const ASSET_FOLDERS = {
@@ -106,7 +146,8 @@ function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
 
 export async function createPortableSaveZip(
   records: RuntimeSaveRecord[],
-  exportedAt = new Date().toISOString()
+  exportedAt = new Date().toISOString(),
+  options: PortableSaveZipOptions = {}
 ): Promise<Uint8Array> {
   const entries: Record<string, Uint8Array> = {};
   const manifestEntries: PortableSaveManifestEntry[] = [];
@@ -127,13 +168,40 @@ export async function createPortableSaveZip(
     });
   });
 
+  const knownPartitionIds = new Set(records.map((record) => record.rollbackChainId ?? record.saveId));
+  const visualEntries: Array<{ partitionId: string; path: string }> = [];
+  for (const [partitionId, archive] of Object.entries(options.visualArchives ?? {})) {
+    if (!knownPartitionIds.has(partitionId)) throw new Error(`视觉资料不属于导出存档链：${partitionId}`);
+    if (!(archive instanceof Uint8Array) || archive.byteLength === 0) throw new Error(`视觉资料包无效：${partitionId}`);
+    const index = visualEntries.length;
+    const path = `visuals/${String(index + 1).padStart(4, '0')}-${safeFileSegment(partitionId, 'partition')}.zip`;
+    entries[path] = archive;
+    visualEntries.push({ partitionId, path });
+  }
+
+  const avgOverrideEntries: Array<{ partitionId: string; path: string }> = [];
+  for (const [partitionId, archive] of Object.entries(options.avgOverrideArchives ?? {})) {
+    if (!knownPartitionIds.has(partitionId)) {
+      throw new Error(`AVG 自定义视觉资料不属于导出存档链：${partitionId}`);
+    }
+    if (!(archive instanceof Uint8Array) || archive.byteLength === 0) {
+      throw new Error(`AVG 自定义视觉资料包无效：${partitionId}`);
+    }
+    const index = avgOverrideEntries.length;
+    const path = `avg-overrides/${String(index + 1).padStart(4, '0')}-${safeFileSegment(partitionId, 'partition')}.zip`;
+    entries[path] = archive;
+    avgOverrideEntries.push({ partitionId, path });
+  }
+
   const manifest: PortableSaveZipManifest = {
     format: PORTABLE_SAVE_ZIP_FORMAT,
     version: PORTABLE_SAVE_ZIP_VERSION,
     exportedAt,
     saveCount: manifestEntries.length,
     saves: manifestEntries,
-    assetFolders: ASSET_FOLDERS
+    assetFolders: ASSET_FOLDERS,
+    visuals: visualEntries,
+    avgOverrides: avgOverrideEntries
   };
   entries['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
 
@@ -144,21 +212,28 @@ export async function createPortableSaveZip(
   return zipAsync(entries);
 }
 
-export async function parsePortableSaveZip(data: Uint8Array): Promise<RuntimeSaveRecord[]> {
+export async function parsePortableSaveBundle(data: Uint8Array): Promise<PortableSaveBundle> {
   const entries = await unzipAsync(data);
   const manifestBytes = entries['manifest.json'];
   if (!manifestBytes) {
     throw new Error('Save archive manifest is missing.');
   }
 
-  const manifest = manifestSchema.parse(JSON.parse(strFromU8(manifestBytes)));
+  const rawManifest = JSON.parse(strFromU8(manifestBytes)) as { version?: unknown };
+  const manifest = rawManifest.version === 2
+    ? { ...legacyManifestSchema.parse(rawManifest), visuals: [], avgOverrides: [] }
+    : rawManifest.version === 3
+      ? { ...versionThreeManifestSchema.parse(rawManifest), avgOverrides: [] }
+      : rawManifest.version === 4
+        ? versionFourManifestSchema.parse(rawManifest)
+        : manifestSchema.parse(rawManifest);
   if (manifest.saveCount !== manifest.saves.length) {
     throw new Error('Save archive count does not match its manifest.');
   }
 
   const paths = new Set<string>();
   const saveIds = new Set<string>();
-  return manifest.saves.map((summary) => {
+  const records = manifest.saves.map((summary) => {
     if (
       paths.has(summary.path) ||
       !summary.path.startsWith('saves/') ||
@@ -179,6 +254,58 @@ export async function parsePortableSaveZip(data: Uint8Array): Promise<RuntimeSav
     saveIds.add(record.saveId);
     return record;
   });
+
+  const visualArchives: Record<string, Uint8Array> = {};
+  const visualPaths = new Set<string>();
+  const knownPartitionIds = new Set(records.map((record) => record.rollbackChainId ?? record.saveId));
+  for (const visual of manifest.visuals) {
+    if (
+      !knownPartitionIds.has(visual.partitionId) ||
+      visualArchives[visual.partitionId] ||
+      visualPaths.has(visual.path) ||
+      !visual.path.startsWith('visuals/') ||
+      !visual.path.endsWith('.zip') ||
+      !entries[visual.path]
+    ) {
+      throw new Error('Save archive contains an invalid visual archive entry.');
+    }
+    visualPaths.add(visual.path);
+    visualArchives[visual.partitionId] = entries[visual.path];
+  }
+
+
+  const avgOverrideArchives: Record<string, Uint8Array> = {};
+  const avgOverridePaths = new Set<string>();
+  for (const visual of manifest.avgOverrides) {
+    if (
+      !knownPartitionIds.has(visual.partitionId) ||
+      avgOverrideArchives[visual.partitionId] ||
+      avgOverridePaths.has(visual.path) ||
+      !visual.path.startsWith('avg-overrides/') ||
+      !visual.path.endsWith('.zip') ||
+      !entries[visual.path]
+    ) {
+      throw new Error('Save archive contains an invalid AVG override archive entry.');
+    }
+    avgOverridePaths.add(visual.path);
+    avgOverrideArchives[visual.partitionId] = entries[visual.path];
+  }
+
+  const allowedPaths = new Set([
+    'manifest.json',
+    ...manifest.saves.map((save) => save.path),
+    ...manifest.visuals.map((visual) => visual.path),
+    ...manifest.avgOverrides.map((visual) => visual.path),
+    ...Object.values(ASSET_FOLDERS).map((folder) => `${folder}/.keep`)
+  ]);
+  if (Object.keys(entries).some((path) => !allowedPaths.has(path))) {
+    throw new Error('Save archive contains an unregistered file.');
+  }
+  return { records, visualArchives, avgOverrideArchives };
+}
+
+export async function parsePortableSaveZip(data: Uint8Array): Promise<RuntimeSaveRecord[]> {
+  return (await parsePortableSaveBundle(data)).records;
 }
 
 function isZipBytes(data: Uint8Array): boolean {
@@ -193,10 +320,17 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
 }
 
 export async function readPortableSaveArchiveFile(file: File): Promise<RuntimeSaveRecord[]> {
+  return (await readPortableSaveBundleFile(file)).records;
+}
+
+export async function readPortableSaveBundleFile(file: File): Promise<PortableSaveBundle> {
   const bytes = await readFileBytes(file);
   if (isZipBytes(bytes)) {
-    return parsePortableSaveZip(bytes);
+    return parsePortableSaveBundle(bytes);
   }
-
-  return parseSaveArchive(JSON.parse(strFromU8(bytes))).saves;
+  return {
+    records: parseSaveArchive(JSON.parse(strFromU8(bytes))).saves,
+    visualArchives: {},
+    avgOverrideArchives: {}
+  };
 }

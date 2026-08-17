@@ -150,7 +150,21 @@ function organizationActionScore(
   const inputMatch = directTextMatch(playerInput, [organization?.name]);
   const visibleCase = track.relatedCaseIds.some((caseId) => state.cases[caseId]?.visibility !== 'hidden');
   const currentPlaceOwner = state.places[state.location.currentPlaceId]?.owningOrganizationId === track.organizationId;
-  return (inputMatch ? 40 : 0) + (visibleCase ? 20 : 0) + (currentPlaceOwner ? 15 : 0) + (track.status === 'blocked' ? 5 : 0);
+  const playerTriadProfile =
+    state.player.currentIdentity === 'gang_member'
+      ? state.actors[state.player.actorId]?.roleProfiles.triad
+      : undefined;
+  const currentPlayerOrganization =
+    playerTriadProfile &&
+    (playerTriadProfile.status === 'active' || playerTriadProfile.status === 'cover') &&
+    playerTriadProfile.organizationId === track.organizationId;
+  return (
+    (currentPlayerOrganization ? 50 : 0) +
+    (inputMatch ? 40 : 0) +
+    (visibleCase ? 20 : 0) +
+    (currentPlaceOwner ? 15 : 0) +
+    (track.status === 'blocked' ? 5 : 0)
+  );
 }
 
 function cloneOutcome(outcome: EvolutionOutcomeRecord): BackgroundOutcomeProjection {

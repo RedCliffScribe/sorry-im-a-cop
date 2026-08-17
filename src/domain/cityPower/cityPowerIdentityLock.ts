@@ -75,6 +75,15 @@ export function findCityPowerIdentityMatch(
   return undefined;
 }
 
+export function findCityPowerIdentityByCanonicalId(
+  canonicalSeedId: string | undefined,
+  anchors: CityPowerFigureAnchor[] = hkLateColonialPowerFigures
+): CityPowerIdentityMatch | undefined {
+  if (!canonicalSeedId?.trim()) return undefined;
+  const anchor = anchors.find((item) => cityPowerCanonicalId(item) === canonicalSeedId.trim());
+  return anchor ? makeMatch(anchor, 'displayName', anchor.displayName) : undefined;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

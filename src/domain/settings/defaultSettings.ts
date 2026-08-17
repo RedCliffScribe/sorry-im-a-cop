@@ -1,4 +1,5 @@
 import type { AiSettings } from './types';
+import { defaultDramaticContentSettings } from '../drama/settings';
 
 export function createDefaultAiSettings(): AiSettings {
   return {
@@ -14,16 +15,24 @@ export function createDefaultAiSettings(): AiSettings {
       auxiliaryGeneration: { mode: 'follow-main' }
     },
     game: {
+      language: 'zh-CN',
       storyRenderLimit: 30,
       narrativeLengthLevel: 'standard',
       narrativePerspective: 'second_person',
+      playerPortrayalMode: 'natural',
       autoSaveLimit: 20,
       autoSaveIntervalTurns: 1,
       rollbackSnapshotLimit: 20,
-      pregnancyMode: 'standard'
+      pregnancyMode: 'standard',
+      dramaticContent: {
+        ...defaultDramaticContentSettings,
+        channels: { ...defaultDramaticContentSettings.channels }
+      }
     },
     display: {
       uiTheme: 'dark',
+      storyPresentationMode: 'auto',
+      avgPlayerPortraitMode: 'hidden',
       interfaceFontFamily: 'readable',
       narrationFontFamily: 'system',
       dialogueFontFamily: 'system',
@@ -31,7 +40,24 @@ export function createDefaultAiSettings(): AiSettings {
       dialogueFontSize: 16
     },
     prompts: {
-      overrides: {}
+      overrides: {},
+      persistentPrompts: []
+    },
+    tavern: {
+      enabled: false,
+      activePresetId: null,
+      entries: [],
+      customCot: {
+        enabled: false,
+        scope: 'both',
+        content: '',
+        templateId: 'natural-planning'
+      },
+      reasoningOutput: {
+        mode: 'off',
+        maxCharacters: 4000,
+        showInUi: false
+      }
     },
     memory: {
       autoCompressionEnabled: true,

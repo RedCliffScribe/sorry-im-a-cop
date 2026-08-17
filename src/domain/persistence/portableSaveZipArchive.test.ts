@@ -1,10 +1,11 @@
-import { strFromU8, unzipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import type { MemoryItem } from '../runtime/types';
 import type { RuntimeSaveRecord } from './SaveRepository';
 import {
   createPortableSaveZip,
+  parsePortableSaveBundle,
   parsePortableSaveZip,
   PORTABLE_SAVE_ZIP_FORMAT,
   PORTABLE_SAVE_ZIP_VERSION
@@ -96,5 +97,82 @@ describe('portable ZIP save archives', () => {
     expect(importedRecords[0].runtimeState.memories.memory_zip_test).not.toHaveProperty(
       'embeddingVector'
     );
+  });
+
+  it('optionally embeds one visual archive per shared rollback partition', async () => {
+    const manual = createRecord('manual_save', 'manual');
+    const auto = createRecord('auto_save', 'auto');
+    auto.rollbackChainId = manual.rollbackChainId;
+    const visualBytes = zipSync({ 'manifest.json': strToU8('{"fixture":true}') });
+    const zipBytes = await createPortableSaveZip([manual, auto], undefined, {
+      visualArchives: { [manual.rollbackChainId!]: visualBytes }
+    });
+    const parsed = await parsePortableSaveBundle(zipBytes);
+    const entries = unzipSync(zipBytes);
+    const manifest = JSON.parse(strFromU8(entries['manifest.json']));
+
+    expect(manifest.visuals).toEqual([
+      expect.objectContaining({ partitionId: manual.rollbackChainId, path: expect.stringMatching(/^visuals\/.*\.zip$/) })
+    ]);
+    expect(parsed.records).toHaveLength(2);
+    expect(parsed.visualArchives[manual.rollbackChainId!]).toEqual(visualBytes);
+  });
+
+  it('embeds AVG override archives only for known visual partitions', async () => {
+    const manual = createRecord('manual_override', 'manual');
+    const overrideBytes = zipSync({ 'manifest.json': strToU8('{"override":true}') });
+    const zipBytes = await createPortableSaveZip([manual], undefined, {
+      avgOverrideArchives: { [manual.rollbackChainId!]: overrideBytes }
+    });
+    const parsed = await parsePortableSaveBundle(zipBytes);
+    const entries = unzipSync(zipBytes);
+    const manifest = JSON.parse(strFromU8(entries['manifest.json']));
+
+    expect(manifest.avgOverrides).toEqual([
+      expect.objectContaining({
+        partitionId: manual.rollbackChainId,
+        path: expect.stringMatching(/^avg-overrides\/.*\.zip$/)
+      })
+    ]);
+    expect(parsed.avgOverrideArchives?.[manual.rollbackChainId!]).toEqual(overrideBytes);
+
+    await expect(createPortableSaveZip([manual], undefined, {
+      avgOverrideArchives: { unknown_partition: overrideBytes }
+    })).rejects.toThrow('不属于导出存档链');
+  });
+
+  it('keeps accepting version 2 save-only ZIP archives', async () => {
+    const current = unzipSync(await createPortableSaveZip([createRecord('legacy', 'manual')]));
+    const manifest = JSON.parse(strFromU8(current['manifest.json']));
+    manifest.version = 2;
+    delete manifest.visuals;
+    current['manifest.json'] = strToU8(JSON.stringify(manifest));
+
+    const parsed = await parsePortableSaveBundle(zipSync(current));
+    expect(parsed.records.map((record) => record.saveId)).toEqual(['legacy']);
+    expect(parsed.visualArchives).toEqual({});
+  });
+
+  it('keeps accepting version 3 visual ZIP archives without AVG overrides', async () => {
+    const current = unzipSync(await createPortableSaveZip([createRecord('legacy_v3', 'manual')]));
+    const manifest = JSON.parse(strFromU8(current['manifest.json']));
+    manifest.version = 3;
+    delete manifest.avgOverrides;
+    current['manifest.json'] = strToU8(JSON.stringify(manifest));
+
+    const parsed = await parsePortableSaveBundle(zipSync(current));
+    expect(parsed.records.map((record) => record.saveId)).toEqual(['legacy_v3']);
+    expect(parsed.avgOverrideArchives).toEqual({});
+  });
+
+  it('keeps accepting version 4 ZIP archives with AVG overrides', async () => {
+    const current = unzipSync(await createPortableSaveZip([createRecord('legacy_v4', 'manual')]));
+    const manifest = JSON.parse(strFromU8(current['manifest.json']));
+    manifest.version = 4;
+    current['manifest.json'] = strToU8(JSON.stringify(manifest));
+
+    const parsed = await parsePortableSaveBundle(zipSync(current));
+    expect(parsed.records.map((record) => record.saveId)).toEqual(['legacy_v4']);
+    expect(parsed.avgOverrideArchives).toEqual({});
   });
 });

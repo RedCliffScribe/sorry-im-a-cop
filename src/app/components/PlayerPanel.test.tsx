@@ -4,6 +4,95 @@ import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import { PlayerPanel } from './PlayerPanel';
 
 describe('PlayerPanel', () => {
+  it('renders the current player avatar in the reserved identity-card photo area', async () => {
+    const state = createInitialRuntimeState({ playerName: '梁志文' });
+    const onOpenVisualEditor = vi.fn();
+    const createObjectUrl = vi.fn(() => 'blob:player-avatar');
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectUrl
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn()
+    });
+    const repository = {
+      loadSnapshot: vi.fn().mockResolvedValue({
+        schemaVersion: 1 as const,
+        saveId: 'save-player-avatar',
+        characterAnchors: {},
+        scenePlans: {},
+        tasks: {},
+        characterBatches: {},
+        assets: {
+          player_avatar: {
+            imageId: 'player_avatar',
+            scope: 'save' as const,
+            saveId: 'save-player-avatar',
+            source: 'user-imported' as const,
+            originSubject: {
+              type: 'actor' as const,
+              saveId: 'save-player-avatar',
+              actorId: state.player.actorId
+            },
+            originPurpose: 'avatar-close-up' as const,
+            mimeType: 'image/png' as const,
+            width: 512,
+            height: 512,
+            byteLength: 3,
+            contentHash: 'hash-player-avatar',
+            blobKey: 'blob-player-avatar',
+            createdAt: '2026-08-01T00:00:00.000Z'
+          }
+        },
+        bindings: {
+          player_avatar_binding: {
+            bindingId: 'player_avatar_binding',
+            saveId: 'save-player-avatar',
+            subject: {
+              type: 'actor' as const,
+              saveId: 'save-player-avatar',
+              actorId: state.player.actorId
+            },
+            purpose: 'avatar-close-up' as const,
+            imageId: 'player_avatar',
+            updatedAt: '2026-08-01T00:00:00.000Z'
+          }
+        },
+        storySceneDisplayStates: {}
+      }),
+      getBlob: vi.fn().mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+    };
+
+    render(
+      <PlayerPanel
+        state={state}
+        visualSaveId="save-player-avatar"
+        visualRepository={repository}
+        onOpenVisualEditor={onOpenVisualEditor}
+      />
+    );
+
+    expect(await screen.findByRole('img', { name: '梁志文 当前人物图' })).toHaveAttribute(
+      'src',
+      'blob:player-avatar'
+    );
+    expect(repository.loadSnapshot).toHaveBeenCalledWith('save-player-avatar');
+    expect(repository.getBlob).toHaveBeenCalledWith('blob-player-avatar');
+    fireEvent.click(screen.getByRole('button', { name: '打开主角头像设置' }));
+    expect(onOpenVisualEditor).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens avatar settings from the empty reserved portrait position', () => {
+    const state = createInitialRuntimeState({ playerName: '梁志文' });
+    const onOpenVisualEditor = vi.fn();
+
+    render(<PlayerPanel state={state} onOpenVisualEditor={onOpenVisualEditor} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '打开主角头像设置' }));
+    expect(onOpenVisualEditor).toHaveBeenCalledTimes(1);
+  });
+
   it('does not show unknown gender as 未指定 under the player name', () => {
     const state = createInitialRuntimeState({
       playerName: '刘博',
@@ -98,6 +187,7 @@ describe('PlayerPanel', () => {
         assignmentSummary: 'Report Room Officer（报案室值日）'
       }
     });
+    state.time = { year: 1988, month: 9, day: 12, hour: 22, minute: 13 };
     state.finance.cashOnHand = 350;
     state.finance.bankBalance = 2350;
     state.player.economy.bankBalance = 100;
@@ -147,7 +237,8 @@ describe('PlayerPanel', () => {
     expect(shoulderChevron).toHaveAttribute('data-points-to', 'badge-number');
     expect(shoulderChevron).toHaveAttribute('d', 'M83 11L62 25L83 39');
     expect(card).toHaveTextContent('所属单位 / Station / Unit');
-    expect(card).toHaveTextContent('旺角警署 · 报案室值日');
+    expect(card).toHaveTextContent('旺角警署 · 军装巡逻 · 报案室值日');
+    expect(card).toHaveTextContent('值班：临近交班 · 晚更 14:00–22:45');
     expect(card).not.toHaveTextContent('香港警队基层警员');
     expect(card).not.toHaveTextContent('HK$2,350');
 
@@ -209,6 +300,106 @@ describe('PlayerPanel', () => {
     expect(inspectorInsignia.querySelectorAll('.rank-shoulder-chevron')).toHaveLength(0);
     expect(inspectorSlide?.querySelector('.rank-board-label')).toHaveTextContent('RHKP');
   });
+
+  it.each([
+    {
+      rank: 'Chief Inspector（总督察 CIP）',
+      zh: '总督察',
+      code: 'cip',
+      bathStars: 3,
+      crowns: 0,
+      commandWreaths: 0
+    },
+    {
+      rank: 'Superintendent（警司 SP）',
+      zh: '警司',
+      code: 'sp',
+      bathStars: 0,
+      crowns: 1,
+      commandWreaths: 0
+    },
+    {
+      rank: 'Senior Superintendent（高级警司 SSP）',
+      zh: '高级警司',
+      code: 'ssp',
+      bathStars: 1,
+      crowns: 1,
+      commandWreaths: 0
+    },
+    {
+      rank: 'Chief Superintendent（总警司 CSP）',
+      zh: '总警司',
+      code: 'csp',
+      bathStars: 2,
+      crowns: 1,
+      commandWreaths: 0
+    },
+    {
+      rank: 'Assistant Commissioner（助理处长 ACP）',
+      zh: '助理处长',
+      code: 'acp',
+      bathStars: 0,
+      crowns: 0,
+      commandWreaths: 1
+    },
+    {
+      rank: 'Senior Assistant Commissioner（高级助理处长 SACP）',
+      zh: '高级助理处长',
+      code: 'sacp',
+      bathStars: 1,
+      crowns: 0,
+      commandWreaths: 1
+    },
+    {
+      rank: 'Deputy Commissioner of Police（副处长 DCP）',
+      zh: '副处长',
+      code: 'dcp',
+      bathStars: 0,
+      crowns: 1,
+      commandWreaths: 1
+    },
+    {
+      rank: 'Commissioner of Police（警务处长 CP）',
+      zh: '警务处长',
+      code: 'cp',
+      bathStars: 1,
+      crowns: 1,
+      commandWreaths: 1
+    }
+  ])(
+    'renders the official senior-rank symbol composition for $zh',
+    ({ rank, zh, code, bathStars, crowns, commandWreaths }) => {
+      const state = createInitialRuntimeState({
+        policeNumber: '1988',
+        lawIdentity: {
+          rank,
+          stationOrPost: 'Police Headquarters（警察总部）',
+          assignmentSummary: 'Senior command posting（高级指挥岗位）'
+        }
+      });
+      render(<PlayerPanel state={state} />);
+
+      const insignia = screen.getByRole('img', { name: `${zh}职级标志` });
+      const svg = insignia.querySelector('svg');
+      expect(svg).toHaveAttribute('data-rank-code', code);
+      expect(svg?.querySelectorAll('.rank-bath-star')).toHaveLength(bathStars);
+      expect(svg?.querySelectorAll('.rank-crown-right')).toHaveLength(crowns);
+      expect(svg?.querySelectorAll('.rank-command-wreath')).toHaveLength(commandWreaths);
+      expect(svg?.querySelector('.rank-board-label')).toHaveTextContent('RHKP');
+
+      if (code === 'cip') {
+        expect(
+          Array.from(svg?.querySelectorAll('.rank-bath-star') ?? []).map((star) =>
+            star.getAttribute('transform')
+          )
+        ).toEqual([
+          'translate(58 25) scale(0.88)',
+          'translate(84 25) scale(0.88)',
+          'translate(110 25) scale(0.88)'
+        ]);
+      }
+    }
+  );
 
   it('does not render unresolved internal asset ids as equipment labels', () => {
     const state = createInitialRuntimeState();
@@ -273,6 +464,7 @@ describe('PlayerPanel', () => {
       playerName: '刘启',
       englishName: 'Kai Lau'
     });
+    state.time = { year: 1988, month: 9, day: 12, hour: 22, minute: 13 };
 
     render(<PlayerPanel state={state} />);
 
@@ -285,6 +477,7 @@ describe('PlayerPanel', () => {
     expect(card).toHaveTextContent('油麻地果栏运输帮工');
     expect(card).toHaveTextContent('油麻地果栏');
     expect(card).toHaveTextContent('夜班工人');
+    expect(card).toHaveTextContent('上班：上班中 · 周一至周五 · 夜班 22:00–次日06:00');
     expect(screen.queryByRole('region', { name: '皇家香港警察个人信息卡' })).not.toBeInTheDocument();
   });
 
@@ -398,7 +591,7 @@ describe('PlayerPanel', () => {
 
     const card = screen.getByRole('region', { name: '皇家香港警察个人信息卡' });
     expect(card).toHaveTextContent('7742');
-    expect(card).toHaveTextContent('旺角警署 · 街面巡逻');
+    expect(card).toHaveTextContent('旺角警署 · 军装巡逻 · 街面巡逻');
     expect(screen.queryByRole('region', { name: '社团公开身份卡' })).not.toBeInTheDocument();
     expect(screen.queryByText('和胜和')).not.toBeInTheDocument();
     expect(screen.queryByText('受和胜和指派进入警队的社团成员')).not.toBeInTheDocument();

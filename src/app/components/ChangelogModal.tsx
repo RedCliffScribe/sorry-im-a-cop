@@ -35,11 +35,21 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
             <time>{entry.date}</time>
             <span>{hasMultipleEntries ? `${entryIndex + 1} / ${releaseNotes.length}` : APP_VERSION_LABEL}</span>
           </div>
-          <h3>{entry.title}</h3>
-          <p>{entry.summary}</p>
-          <ul>
-            {entry.items.map((item) => <li key={item}>{item}</li>)}
-          </ul>
+          <div className="changelog-update-list">
+            {entry.updates.map((update) => (
+              <section className="changelog-update" key={update.id} aria-labelledby={`${update.id}-title`}>
+                <div className="changelog-update-heading">
+                  <time dateTime={`${entry.id}T${update.time}:00+08:00`}>{update.time}</time>
+                  <span>{update.version}</span>
+                </div>
+                <h3 id={`${update.id}-title`}>{update.title}</h3>
+                <p>{update.summary}</p>
+                <ul>
+                  {update.items.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </section>
+            ))}
+          </div>
         </article>
 
         {hasMultipleEntries ? (
@@ -53,7 +63,7 @@ export function ChangelogModal({ onClose }: { onClose: () => void }) {
                   key={note.id}
                   type="button"
                   className={index === entryIndex ? 'active' : ''}
-                  aria-label={`查看${note.date}更新`}
+                  aria-label={`查看${note.date}更新，共${note.updates.length}项`}
                   aria-current={index === entryIndex ? 'page' : undefined}
                   onClick={() => setEntryIndex(index)}
                 />

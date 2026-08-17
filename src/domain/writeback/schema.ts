@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { MAX_MONEY_AMOUNT } from '../finance/moneyAmount';
 import { normalizeReputationCircle, reputationCircleValues } from '../reputation/reputation';
 import { optionalCurrentIdentitySchema } from '../runtime/currentIdentity';
+import { storyPresentationHintsSchema } from '../runtime/storyBlocks';
 import type { OrganizationStructureNode, StoryDiagnosticIssue } from '../runtime/types';
 
 export const visibilitySchema = z.enum(['public', 'player_known', 'private', 'hidden']);
@@ -137,8 +139,43 @@ export const actorActiveTraitPatchSchema = z.object({
 export const vitalsPatchSchema = z.object({
   healthDelta: z.number().int().min(-100).max(100).default(0),
   staminaDelta: z.number().int().min(-100).max(100).default(0),
-  conditionSummary: z.string().min(1).optional()
+  conditionSummary: z.string().min(1).optional(),
+  conditionPersistence: z.enum(['stable', 'transient', 'persistent', 'unknown']).optional()
 });
+
+export const playerVitalsReviewSchema = z.object({
+  changed: z.boolean(),
+  reason: z.string().trim().min(1)
+});
+
+export const pregnancyLifecycleReviewEventSchema = z.object({
+  actorId: z.string().min(1),
+  event: z.enum(['pregnancy_risk', 'pregnancy_confirmed', 'pregnancy_ended', 'live_birth']),
+  reason: z.string().trim().min(1)
+});
+
+export const pregnancyLifecycleReviewSchema = z
+  .object({
+    changed: z.boolean(),
+    events: z.array(pregnancyLifecycleReviewEventSchema).max(4).default([]),
+    reason: z.string().trim().min(1)
+  })
+  .superRefine((review, context) => {
+    if (review.changed && review.events.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['events'],
+        message: '妊娠生命周期发生变化时必须列出对应人物和事件。'
+      });
+    }
+    if (!review.changed && review.events.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['events'],
+        message: '妊娠生命周期没有变化时 events 必须为空。'
+      });
+    }
+  });
 
 const actorPresenceSchema = z.enum(['present', 'nearby', 'mentioned', 'absent']);
 const actorGenderSchema = z.enum(['male', 'female', 'nonbinary', 'unknown']);
@@ -218,13 +255,76 @@ export const triadRoleProfilePatchSchema = z
 export const civilianRoleProfilePatchSchema = z
   .object({
     status: roleProfileStatusSchema.default('active'),
+    civilianProfileId: optionalNonEmptyStringSchema,
+    occupationGroupId: optionalNonEmptyStringSchema,
+    employmentStatusId: optionalNonEmptyStringSchema,
     publicOccupation: optionalNonEmptyStringSchema,
     workplacePlaceId: optionalNonEmptyStringSchema,
+    employerOrganizationId: optionalNonEmptyStringSchema,
+    employerRelationType: optionalNonEmptyStringSchema,
+    employerRelationSummary: optionalNonEmptyStringSchema,
+    workUnitSummary: optionalNonEmptyStringSchema,
+    positionSummary: optionalNonEmptyStringSchema,
+    dutySummary: optionalNonEmptyStringSchema,
+    decisionScopeSummary: optionalNonEmptyStringSchema,
+    accessSummary: optionalNonEmptyStringSchema,
+    sectorIds: z.array(z.string().min(1)).default([]),
+    roleTags: z.array(z.string().min(1)).default([]),
+    livelihoodActorIds: z.array(z.string().min(1)).default([]),
     communitySummary: z.string().default(''),
     familyEconomicSummary: z.string().default(''),
     legalStatusSummary: z.string().default('')
   })
   .passthrough();
+
+const nullableOptionalNonEmptyStringSchema = z.union([z.string().trim().min(1), z.null()]).optional();
+
+export const playerCivilianRoleProfilePatchSchema = z
+  .object({
+    reason: z.string().trim().min(1),
+    status: roleProfileStatusSchema.optional(),
+    civilianProfileId: nullableOptionalNonEmptyStringSchema,
+    occupationGroupId: nullableOptionalNonEmptyStringSchema,
+    employmentStatusId: nullableOptionalNonEmptyStringSchema,
+    publicOccupation: z.string().trim().min(1).optional(),
+    workplacePlaceId: nullableOptionalNonEmptyStringSchema,
+    employerOrganizationId: nullableOptionalNonEmptyStringSchema,
+    employerRelationType: nullableOptionalNonEmptyStringSchema,
+    employerRelationSummary: nullableOptionalNonEmptyStringSchema,
+    workUnitSummary: nullableOptionalNonEmptyStringSchema,
+    positionSummary: nullableOptionalNonEmptyStringSchema,
+    dutySummary: nullableOptionalNonEmptyStringSchema,
+    decisionScopeSummary: nullableOptionalNonEmptyStringSchema,
+    accessSummary: nullableOptionalNonEmptyStringSchema,
+    sectorIds: z.array(z.string().trim().min(1)).max(12).optional(),
+    roleTags: z.array(z.string().trim().min(1)).max(16).optional(),
+    livelihoodActorIds: z.array(z.string().trim().min(1)).max(12).optional(),
+    communitySummary: z.string().trim().optional(),
+    familyEconomicSummary: z.string().trim().optional(),
+    legalStatusSummary: z.string().trim().optional()
+  })
+  .strict()
+  .refine(
+    (patch) =>
+      Object.keys(patch).some((key) => key !== 'reason'),
+    { message: 'At least one civilian role profile field is required.' }
+  );
+
+export const playerPoliceRoleProfilePatchSchema = z
+  .object({
+    reason: z.string().trim().min(1),
+    stationOrPost: z.string().trim().min(1),
+    department: z.string().trim().min(1),
+    assignmentSummary: z.string().trim().min(1),
+    postRole: z.string().trim().min(1).optional(),
+    publicIdentity: z.string().trim().min(1).optional(),
+    supervisorActorIds: z.array(z.string().trim().min(1)).max(12).optional(),
+    peerActorIds: z.array(z.string().trim().min(1)).max(12).optional(),
+    authoritySummary: z.string().trim().min(1).optional(),
+    accessSummary: z.string().trim().min(1).optional(),
+    dutySummary: z.string().trim().min(1).optional()
+  })
+  .strict();
 
 const actorRoleProfilesPatchSchema = z
   .object({
@@ -408,16 +508,23 @@ export const actorPatchSchema = z.object({
 
 export const economyPatchSchema = z.object({
   // Legacy v1.5 player economy writeback. New prompts use financePatch instead.
-  moneyDelta: z.number().int().min(-100_000_000).max(100_000_000).optional(),
-  moneySet: z.number().int().min(0).max(100_000_000).optional(),
+  moneyDelta: z.number().int().min(-MAX_MONEY_AMOUNT).max(MAX_MONEY_AMOUNT).optional(),
+  moneySet: z.number().int().min(0).max(MAX_MONEY_AMOUNT).optional(),
   monthlyPressureDelta: z.number().int().min(-100).max(100).optional(),
   monthlyPressureSet: z.number().int().min(0).max(100).optional(),
   financeSummary: z.string().min(1).optional()
 });
 
 export const progressionPatchSchema = z.object({
-  experienceGain: z.number().int().min(0).max(1_000),
-  reason: z.string().min(1)
+  experienceGain: z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') return value;
+      const trimmed = value.trim();
+      return /^\d+$/.test(trimmed) ? Number(trimmed) : value;
+    },
+    z.number().int().min(0).max(1_000)
+  ),
+  reason: z.string().trim().min(1).optional()
 });
 
 export const weatherConditionSchema = z.enum([
@@ -434,19 +541,15 @@ export const weatherConditionSchema = z.enum([
 
 export const weatherPatchSchema = z
   .object({
-    condition: weatherConditionSchema.optional(),
+    condition: weatherConditionSchema,
     label: z.string().min(1).optional(),
     intensity: boundedIntSchema(0, 100).optional(),
     impactSummary: z.string().min(1).optional(),
     validForMinutes: z.number().int().min(10).max(1440).optional(),
-    validUntil: writebackGameTimeSchema.optional(),
     tags: z.array(z.string().min(1)).max(8).default([]),
     reason: z.string().min(1).optional()
   })
-  .refine(
-    (patch) => Boolean(patch.condition || patch.label || patch.impactSummary || patch.tags.length || patch.reason),
-    { message: 'weatherPatch must include at least one weather change.' }
-  );
+  .strict();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -604,8 +707,9 @@ export const financeCashflowPatchSchema = z.preprocess(
       'other'
     ]),
     title: z.string().min(1),
-    amount: z.number().int().min(0).max(100_000_000),
+    amount: z.number().int().min(0).max(MAX_MONEY_AMOUNT),
     account: financeAccountSchema,
+    identityBinding: z.enum(['civilian', 'gang_member', 'police']).optional(),
     summary: z.string().min(1),
     activeFromMonth: z.string().min(1),
     activeToMonth: z.string().min(1).optional(),
@@ -624,7 +728,7 @@ export const financeLedgerEntryPatchSchema = z.preprocess(
     entryId: z.string().min(1).optional(),
     gameTime: writebackGameTimeSchema.optional(),
     direction: financeLedgerDirectionSchema,
-    amount: z.number().int().min(0).max(100_000_000),
+    amount: z.number().int().min(0).max(MAX_MONEY_AMOUNT),
     account: financeAccountSchema,
     title: z.string().min(1),
     summary: z.string().min(1),
@@ -637,12 +741,16 @@ export const financeLedgerEntryPatchSchema = z.preprocess(
   })
 );
 
+export const financePatchScalarFieldSchemas = {
+  cashDelta: z.number().int().min(-MAX_MONEY_AMOUNT).max(MAX_MONEY_AMOUNT).optional(),
+  cashSet: z.number().int().min(0).max(MAX_MONEY_AMOUNT).optional(),
+  bankDelta: z.number().int().min(-MAX_MONEY_AMOUNT).max(MAX_MONEY_AMOUNT).optional(),
+  bankSet: z.number().int().min(0).max(MAX_MONEY_AMOUNT).optional(),
+  summary: z.string().min(1).optional()
+} as const;
+
 const financePatchObjectSchema = z.object({
-  cashDelta: z.number().int().min(-1_000_000).max(1_000_000).optional(),
-  cashSet: z.number().int().min(0).max(100_000_000).optional(),
-  bankDelta: z.number().int().min(-10_000_000).max(10_000_000).optional(),
-  bankSet: z.number().int().min(0).max(1_000_000_000).optional(),
-  summary: z.string().min(1).optional(),
+  ...financePatchScalarFieldSchemas,
   upsertCashflows: z.array(financeCashflowPatchSchema).default([]),
   removeCashflowItemIds: z.array(z.string().min(1)).default([]),
   ledgerEntries: z.array(financeLedgerEntryPatchSchema).default([])
@@ -663,7 +771,7 @@ export const grayLedgerEntryPatchSchema = z.object({
   ledgerId: z.string().min(1).optional(),
   gameTime: writebackGameTimeSchema.optional(),
   kind: z.enum(['cash', 'gift', 'favor', 'service', 'other']),
-  amount: z.number().int().min(0).max(100_000_000).optional(),
+  amount: z.number().int().min(0).max(MAX_MONEY_AMOUNT).optional(),
   itemSummary: z.string().min(1).optional(),
   fromActorId: z.string().min(1).optional(),
   fromSummary: z.string().min(1),
@@ -1109,6 +1217,284 @@ function sanitizeNarratorGrayNetworkPatches(value: unknown): unknown {
   };
 }
 
+const dramaWritebackRefSchema = z
+  .object({
+    kind: z.string().min(1),
+    id: z.string().min(1)
+  })
+  .strict();
+
+const customEventFactStateChangeSchema = z
+  .object({
+    factId: z.string().min(1),
+    state: z.enum(['established_in_save', 'invalidated_in_save']),
+    supportingWritebackRefs: z.array(dramaWritebackRefSchema).min(1)
+  })
+  .strict();
+
+const customEventProgressTraceSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    stageId: z.string().min(1),
+    usedNodeIds: z.array(z.string().min(1)).default([]),
+    decision: z.enum(['stay', 'advance', 'complete', 'diverge']),
+    nextStageId: z.string().min(1).optional(),
+    supportingWritebackRefs: z.array(dramaWritebackRefSchema).min(1),
+    factStateChanges: z.array(customEventFactStateChangeSchema).default([])
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.usedNodeIds).size !== value.usedNodeIds.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['usedNodeIds'],
+        message: 'usedNodeIds 不能重复'
+      });
+    }
+    const factIds = value.factStateChanges.map((change) => change.factId);
+    if (new Set(factIds).size !== factIds.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['factStateChanges'],
+        message: '同一 factId 不能在一次进度回执中重复修改'
+      });
+    }
+    if (value.decision === 'advance' && !value.nextStageId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['nextStageId'],
+        message: 'advance 必须提供 nextStageId'
+      });
+    }
+    if (value.decision !== 'advance' && value.nextStageId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['nextStageId'],
+        message: '只有 advance 可以提供 nextStageId'
+      });
+    }
+  });
+
+const narrativeArcProgressTraceSchema = z.preprocess(
+  (value) => {
+    if (!isWritebackRecord(value) || value.decision !== 'remain') return value;
+    const supportingWritebackRefs = Array.isArray(value.supportingWritebackRefs)
+      ? value.supportingWritebackRefs.flatMap((ref) => {
+          const parsed = dramaWritebackRefSchema.safeParse(ref);
+          return parsed.success ? [parsed.data] : [];
+        })
+      : [];
+    return {
+      ...value,
+      supportingWritebackRefs
+    };
+  },
+  z.object({
+    arcInstanceId: z.string().min(1),
+    sourceRef: z
+      .object({
+        providerId: z.string().min(1),
+        sourceType: z.string().min(1),
+        sourceId: z.string().min(1),
+        dlcId: z.string().min(1).optional()
+      })
+      .strict(),
+    decision: z.enum(['remain', 'advance_stage', 'complete', 'abandon']),
+    currentStageId: z.string().min(1).optional(),
+    previousStageId: z.string().min(1).optional(),
+    nextStageId: z.string().min(1).optional(),
+    usedNodeIds: z.array(z.string().min(1)).default([]),
+    supportingWritebackRefs: z.array(dramaWritebackRefSchema).default([]),
+    summary: z.string().trim().min(1).max(2000).optional()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.usedNodeIds).size !== value.usedNodeIds.length) {
+      context.addIssue({ code: 'custom', path: ['usedNodeIds'], message: 'usedNodeIds 不能重复' });
+    }
+    if (value.decision === 'advance_stage' && !value.nextStageId) {
+      context.addIssue({ code: 'custom', path: ['nextStageId'], message: 'advance_stage 必须提供 nextStageId' });
+    }
+    if (value.decision !== 'advance_stage' && value.nextStageId) {
+      context.addIssue({ code: 'custom', path: ['nextStageId'], message: '只有 advance_stage 可以提供 nextStageId' });
+    }
+    if (value.decision !== 'remain' && value.supportingWritebackRefs.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['supportingWritebackRefs'],
+        message: '推进、完成或放弃剧情弧必须引用至少一项本回合写回'
+      });
+    }
+  })
+);
+
+export const dramaExecutionTraceSchema = z
+  .object({
+    planId: z.string().min(1),
+    status: z.enum([
+      'not_used',
+      'used_as_texture',
+      'partially_used',
+      'used_persistently'
+    ]),
+    usedSourceRefs: z
+      .array(
+        z
+          .object({
+            providerId: z.string().min(1),
+            sourceType: z.string().min(1),
+            sourceId: z.string().min(1),
+            dlcId: z.string().min(1).optional()
+          })
+          .strict()
+      )
+      .default([]),
+    resultingWritebackRefs: z
+      .array(dramaWritebackRefSchema)
+      .default([]),
+    customEventProgress: z.array(customEventProgressTraceSchema).optional(),
+    narrativeArcProgress: z.array(narrativeArcProgressTraceSchema).optional()
+  })
+  .strict();
+
+function sanitizeInvalidDramaExecutionTrace(value: unknown): unknown {
+  if (!isWritebackRecord(value) || value.dramaExecutionTrace === undefined) return value;
+  let traceCandidate = value.dramaExecutionTrace;
+  const progressWarnings: StoryDiagnosticIssue[] = [];
+  if (
+    isWritebackRecord(traceCandidate) &&
+    traceCandidate.customEventProgress !== undefined
+  ) {
+    const rawProgress = traceCandidate.customEventProgress;
+    const validProgress = Array.isArray(rawProgress)
+      ? rawProgress.flatMap((item, index) => {
+          const parsedItem = customEventProgressTraceSchema.safeParse(item);
+          if (parsedItem.success) return [parsedItem.data];
+          progressWarnings.push({
+            path: ['dramaExecutionTrace', 'customEventProgress', index],
+            code: 'custom_event_progress_schema_invalid',
+            message: `自定义事件进度项格式无效，已忽略该项并保留基础执行回执：${parsedItem.error.issues
+              .map(
+                (issue) =>
+                  `${issue.path.join('.') || 'progress'} ${issue.message}`
+              )
+              .join('；')}`
+          });
+          return [];
+        })
+      : [];
+    if (!Array.isArray(rawProgress)) {
+      progressWarnings.push({
+        path: ['dramaExecutionTrace', 'customEventProgress'],
+        code: 'custom_event_progress_schema_invalid',
+        message: 'customEventProgress 必须是数组；已忽略该字段并保留基础执行回执。'
+      });
+    }
+    traceCandidate = {
+      ...traceCandidate,
+      customEventProgress: validProgress
+    };
+  }
+  if (
+    isWritebackRecord(traceCandidate) &&
+    traceCandidate.narrativeArcProgress !== undefined
+  ) {
+    const rawProgress = traceCandidate.narrativeArcProgress;
+    const validProgress = Array.isArray(rawProgress)
+      ? rawProgress.flatMap((item, index) => {
+          const parsedItem = narrativeArcProgressTraceSchema.safeParse(item);
+          if (parsedItem.success) {
+            if (isWritebackRecord(item) && item.decision === 'remain') {
+              const rawRefs = item.supportingWritebackRefs;
+              const ignoredRefCount = Array.isArray(rawRefs)
+                ? rawRefs.filter((ref) => !dramaWritebackRefSchema.safeParse(ref).success).length
+                : rawRefs === undefined
+                  ? 0
+                  : 1;
+              if (ignoredRefCount > 0) {
+                progressWarnings.push({
+                  path: ['dramaExecutionTrace', 'narrativeArcProgress', index, 'supportingWritebackRefs'],
+                  code: 'narrative_arc_remain_evidence_ignored',
+                  message: `remain 不依赖写回证据；已忽略 ${ignoredRefCount} 项格式无效的 supportingWritebackRefs，并保留当前阶段。`
+                });
+              }
+            }
+            return [parsedItem.data];
+          }
+          progressWarnings.push({
+            path: ['dramaExecutionTrace', 'narrativeArcProgress', index],
+            code: 'narrative_arc_progress_schema_invalid',
+            message: `剧情弧进度项格式无效，已忽略该项并保留基础执行回执：${parsedItem.error.issues
+              .map((issue) => `${issue.path.join('.') || 'progress'} ${issue.message}`)
+              .join('；')}`
+          });
+          return [];
+        })
+      : [];
+    if (!Array.isArray(rawProgress)) {
+      progressWarnings.push({
+        path: ['dramaExecutionTrace', 'narrativeArcProgress'],
+        code: 'narrative_arc_progress_schema_invalid',
+        message: 'narrativeArcProgress 必须是数组；已忽略该字段并保留基础执行回执。'
+      });
+    }
+    traceCandidate = {
+      ...traceCandidate,
+      narrativeArcProgress: validProgress
+    };
+  }
+  const parsed = dramaExecutionTraceSchema.safeParse(traceCandidate);
+  if (parsed.success) {
+    return {
+      ...value,
+      dramaExecutionTrace: parsed.data,
+      ...(progressWarnings.length > 0
+        ? {
+            validationWarnings: [
+              ...(Array.isArray(value.validationWarnings)
+                ? (value.validationWarnings as StoryDiagnosticIssue[])
+                : []),
+              ...progressWarnings
+            ]
+          }
+        : {})
+    };
+  }
+  const validationWarnings = Array.isArray(value.validationWarnings)
+    ? value.validationWarnings
+    : [];
+  const { dramaExecutionTrace: _ignored, ...rest } = value;
+  return {
+    ...rest,
+    validationWarnings: [
+      ...validationWarnings,
+      {
+        path: ['dramaExecutionTrace'],
+        code: 'drama_execution_trace_schema_invalid',
+        message: `戏剧执行回执格式无效，已忽略回执并保留正文与合法写回：${parsed.error.issues
+          .map((issue) => `${issue.path.join('.') || 'trace'} ${issue.message}`)
+          .join('；')}`
+      }
+    ]
+  };
+}
+
+function normalizeNestedDramaExecutionTrace(value: unknown): unknown {
+  if (!isWritebackRecord(value) || value.dramaExecutionTrace !== undefined) return value;
+  const writeback = value.writeback;
+  if (!isWritebackRecord(writeback) || writeback.dramaExecutionTrace === undefined) return value;
+  return {
+    ...value,
+    dramaExecutionTrace: writeback.dramaExecutionTrace
+  };
+}
+
+function sanitizeNarratorResponse(value: unknown): unknown {
+  return sanitizeInvalidDramaExecutionTrace(
+    normalizeNestedDramaExecutionTrace(sanitizeNarratorGrayNetworkPatches(value))
+  );
+}
+
 export const playerPatchSchema = z.object({
   economy: economyPatchSchema.optional(),
   progression: progressionPatchSchema.optional(),
@@ -1426,7 +1812,8 @@ export const assetRemoveItemSchema = z.object({
 
 export const assetPatchSchema = z.object({
   upsertItems: z.array(assetItemSchema).default([]),
-  removeItems: z.array(assetRemoveItemSchema).default([])
+  removeItems: z.array(assetRemoveItemSchema).default([]),
+  equippedItemIds: z.array(z.string().min(1)).max(3).optional()
 });
 
 export const visualAnchorPatchSchema = z.object({
@@ -1609,6 +1996,7 @@ const currentMatterStatusSchema = z.enum(['active', 'dormant', 'resolved', 'arch
 const currentMatterKindSchema = z.enum([
   'personal',
   'police_work',
+  'livelihood',
   'relationship',
   'family',
   'social',
@@ -1716,6 +2104,7 @@ export const newsIssuePatchSchema = z.object({
 });
 
 const organizationStructureConfidenceSchema = z.enum(['low', 'medium', 'high', 'unknown']);
+const triadLeadershipPhaseSchema = z.enum(['stable', 'consultation', 'contested', 'transition']);
 
 const organizationStructureNodeSchema: z.ZodType<OrganizationStructureNode> = z.lazy(() =>
   z.object({
@@ -1731,9 +2120,39 @@ const organizationStructureNodeSchema: z.ZodType<OrganizationStructureNode> = z.
   })
 );
 
+export const triadOrganizationStatePatchSchema = z
+  .object({
+    leadership: z
+      .object({
+        phase: triadLeadershipPhaseSchema.optional(),
+        visibleSummary: z.string().min(1).max(320).optional(),
+        nextMilestone: z.string().min(1).max(240).optional(),
+        currentLeaderActorId: z.string().min(1).max(120).optional(),
+        knownCandidateActorIds: z.array(z.string().min(1).max(120)).max(4).optional(),
+        confidence: organizationStructureConfidenceSchema.optional()
+      })
+      .strict()
+      .optional(),
+    activityAreas: z
+      .array(
+        z
+          .object({
+            placeId: z.string().min(1).max(120),
+            statusSummary: z.string().min(1).max(320).optional(),
+            pressureSummary: z.string().min(1).max(260).optional(),
+            confidence: organizationStructureConfidenceSchema.optional()
+          })
+          .strict()
+      )
+      .max(2)
+      .optional()
+  })
+  .strict();
+
 export const organizationPatchSchema = z.object({
   organizationId: z.string().min(1),
   name: z.string().min(1).optional(),
+  aliases: z.array(z.string().trim().min(1)).max(20).optional(),
   type: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),
   publicKnowledge: z.string().min(1).optional(),
@@ -1741,6 +2160,7 @@ export const organizationPatchSchema = z.object({
   stanceTowardPlayer: z.string().min(1).optional(),
   pressureSummary: z.string().min(1).optional(),
   structureTree: z.array(organizationStructureNodeSchema).max(40).optional(),
+  triadState: triadOrganizationStatePatchSchema.optional(),
   relatedActorIds: z.array(z.string().min(1)).optional(),
   relatedPlaceIds: z.array(z.string().min(1)).optional(),
   relatedCaseIds: z.array(z.string().min(1)).optional(),
@@ -1782,9 +2202,25 @@ const judgementCategorySchema = z.enum([
   'other'
 ]);
 const judgementOutcomeSchema = z.enum(['critical_success', 'success', 'partial_success', 'failure', 'critical_failure']);
+const judgementAttributeSchema = z.enum([
+  'body',
+  'action',
+  'perception',
+  'thinking',
+  'negotiation',
+  'will'
+]);
+const judgementDifficultyTierSchema = z.enum([
+  'easy',
+  'standard',
+  'hard',
+  'dangerous',
+  'extreme'
+]);
 const combatEventTypeSchema = z.enum(['chase', 'melee', 'armed', 'firearm', 'crowd', 'arrest', 'escape', 'other']);
 const combatEventOutcomeSchema = z.enum([
   'player_advantage',
+  'opponent_advantage',
   'player_wounded',
   'opponent_subdued',
   'opponent_escaped',
@@ -1795,12 +2231,22 @@ const combatEventOutcomeSchema = z.enum([
 ]);
 
 export const judgementFactorPatchSchema = z.object({
+  sourceType: z.enum([
+    'trait',
+    'equipment',
+    'status',
+    'environment',
+    'preparation',
+    'other'
+  ]).optional(),
+  sourceId: z.string().min(1).optional(),
   label: z.string().min(1),
   value: z.number().int().min(-100).max(100),
   reason: z.string().min(1)
 });
 
 export const judgementCheckPatchSchema = z.object({
+  rulesetVersion: z.enum(['v1', 'v1.1-local-d100']).optional(),
   checkId: z.string().min(1),
   turnId: z.string().min(1),
   gameTime: writebackGameTimeSchema,
@@ -1810,15 +2256,106 @@ export const judgementCheckPatchSchema = z.object({
   relatedActorIds: z.array(z.string().min(1)).default([]),
   relatedPlaceIds: z.array(z.string().min(1)).default([]),
   relatedCaseIds: z.array(z.string().min(1)).default([]),
-  difficulty: z.number().int().min(-1000).max(1000),
-  score: z.number().int().min(-1000).max(1000),
+  difficulty: z.number().int().min(-1000).max(1000).optional(),
+  score: z.number().int().min(-1000).max(1000).optional(),
+  primaryAttribute: judgementAttributeSchema.optional(),
+  secondaryAttribute: judgementAttributeSchema.optional(),
+  difficultyTier: judgementDifficultyTierSchema.optional(),
+  presetRoll: z.number().int().min(1).max(100).optional(),
+  effectiveTarget: z.number().int().min(5).max(95).optional(),
   outcome: judgementOutcomeSchema,
+  margin: z.number().int().min(-100).max(100).optional(),
+  primaryAttributeValue: z.number().int().min(0).max(100).optional(),
+  secondaryAttributeValue: z.number().int().min(0).max(100).optional(),
+  secondaryModifier: z.number().int().min(-10).max(10).optional(),
+  difficultyModifier: z.number().int().min(-45).max(15).optional(),
+  gameDifficulty: z.enum(['story', 'easy', 'standard', 'hard', 'brutal']).optional(),
+  gameDifficultyModifier: z.number().int().min(-20).max(20).optional(),
+  contextModifierTotal: z.number().int().min(-20).max(20).optional(),
   shortSummary: z.string().min(1),
   consequenceSummary: z.string().min(1).optional(),
   factors: z.array(judgementFactorPatchSchema).default([]),
   relatedCombatEventId: z.string().min(1).optional(),
   visibility: visibilitySchema.default('player_known')
+}).superRefine((patch, context) => {
+  if (patch.rulesetVersion === 'v1.1-local-d100') {
+    (
+      [
+        ['primaryAttribute', patch.primaryAttribute],
+        ['difficultyTier', patch.difficultyTier],
+        ['presetRoll', patch.presetRoll],
+        ['effectiveTarget', patch.effectiveTarget]
+      ] as const
+    ).forEach(([field, value]) => {
+      if (value === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `本地骰制判定缺少 ${field}`
+        });
+      }
+    });
+    if (patch.factors.length > 5) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['factors'],
+        message: '本地骰制判定的情境因素最多五项'
+      });
+    }
+    patch.factors.forEach((factor, index) => {
+      if (factor.value < -10 || factor.value > 10) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['factors', index, 'value'],
+          message: '本地骰制判定的单项情境修正必须在 -10..+10'
+        });
+      }
+    });
+    return;
+  }
+
+  if (patch.difficulty === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['difficulty'],
+      message: '旧版判定缺少 difficulty'
+    });
+  }
+  if (patch.score === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['score'],
+      message: '旧版判定缺少 score'
+    });
+  }
 });
+
+export const canonicalLocalJudgementCheckSchema = judgementCheckPatchSchema.superRefine(
+  (patch, context) => {
+    if (patch.rulesetVersion !== 'v1.1-local-d100') return;
+    (
+      [
+        ['difficulty', patch.difficulty],
+        ['score', patch.score],
+        ['margin', patch.margin],
+        ['primaryAttributeValue', patch.primaryAttributeValue],
+        ['secondaryModifier', patch.secondaryModifier],
+        ['difficultyModifier', patch.difficultyModifier],
+        ['gameDifficulty', patch.gameDifficulty],
+        ['gameDifficultyModifier', patch.gameDifficultyModifier],
+        ['contextModifierTotal', patch.contextModifierTotal]
+      ] as const
+    ).forEach(([field, value]) => {
+      if (value === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `本地结算后的判定记录缺少 ${field}`
+        });
+      }
+    });
+  }
+);
 
 export const combatParticipantPatchSchema = z.object({
   actorId: z.string().min(1).optional(),
@@ -1904,10 +2441,21 @@ export const relationshipThreadPatchSchema = z.object({
   importance: z.number().int().min(0).max(100).optional()
 });
 
+const pregnancyPaternityCandidatePatchSchema = z
+  .object({
+    actorId: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    visibility: visibilitySchema.optional()
+  })
+  .refine((candidate) => Boolean(candidate.actorId || candidate.name), {
+    message: '父系候选至少需要 actorId 或 name。'
+  });
+
 export const pregnancyRiskPatchSchema = z.object({
   actorId: z.string().min(1),
   riskType: z.enum(['unprotected', 'tryingToConceive', 'reducedRisk']),
   summary: z.string().min(1),
+  paternityCandidates: z.array(pregnancyPaternityCandidatePatchSchema).max(4).optional(),
   fatherActorId: z.string().min(1).optional(),
   fatherName: z.string().min(1).optional(),
   fatherVisibility: visibilitySchema.optional()
@@ -1915,7 +2463,7 @@ export const pregnancyRiskPatchSchema = z.object({
 
 export const pregnancyResolutionPatchSchema = z.object({
   actorId: z.string().min(1),
-  outcome: z.enum(['live_birth', 'pregnancy_ended']),
+  outcome: z.enum(['pregnancy_confirmed', 'live_birth', 'pregnancy_ended']),
   summary: z.string().min(1),
   childName: z.string().min(1).optional(),
   childGender: z.enum(['male', 'female']).optional(),
@@ -1927,6 +2475,8 @@ export const writebackSchema = z
     actorPatches: z.array(actorPatchSchema).default([]),
     playerPatch: playerPatchSchema.optional(),
     identityContextPatch: identityContextPatchSchema.optional(),
+    policeRoleProfilePatch: playerPoliceRoleProfilePatchSchema.optional(),
+    civilianRoleProfilePatch: playerCivilianRoleProfilePatchSchema.optional(),
     secretFactPatches: z.array(secretFactPatchSchema).default([]),
     locationPatch: locationPatchSchema.optional(),
     weatherPatch: weatherPatchSchema.optional(),
@@ -1960,6 +2510,8 @@ function createEmptyWriteback() {
   return {
     actorPatches: [],
     identityContextPatch: undefined,
+    policeRoleProfilePatch: undefined,
+    civilianRoleProfilePatch: undefined,
     secretFactPatches: [],
     locationPatch: undefined,
     weatherPatch: undefined,
@@ -1987,12 +2539,17 @@ function createEmptyWriteback() {
 }
 
 export const narratorResponseSchema = z.preprocess(
-  sanitizeNarratorGrayNetworkPatches,
+  sanitizeNarratorResponse,
   z.object({
     writebackVersion: z.string().default('1.0'),
     narrativeText: z.string().min(1),
+    presentationHints: storyPresentationHintsSchema,
     turnSummary: z.string().trim().min(1),
     suggestedActions: z.array(z.string()).default([]),
+    playerVitalsReview: playerVitalsReviewSchema.optional(),
+    pregnancyLifecycleReview: pregnancyLifecycleReviewSchema.optional(),
+    dramaPlan: z.unknown().optional(),
+    dramaExecutionTrace: dramaExecutionTraceSchema.optional(),
     timePatch: timePatchSchema.optional(),
     writeback: writebackSchema.default(createEmptyWriteback),
     validationWarnings: z
@@ -2010,4 +2567,39 @@ export const narratorResponseSchema = z.preprocess(
 
 export type NarratorResponse = z.infer<typeof narratorResponseSchema> & {
   validationWarnings?: import('../runtime/types').StoryDiagnosticIssue[];
+  /**
+   * Ephemeral copy of the model's raw asset patch. It is attached before
+   * tolerant per-item validation can discard an incomplete vehicle, and is
+   * only available to the current turn's recovery chain.
+   */
+  rawAssetPatch?: unknown;
+  /**
+   * Ephemeral raw asset upsert candidates retained for stable-ID, field-level
+   * vehicle recovery. These values never enter canonical runtime state.
+   */
+  rawAssetUpsertItems?: unknown[];
+  /**
+   * Ephemeral copy of the model's raw judgement intent candidates. It is attached by
+   * validateNarratorResponse before tolerant item validation can discard an invalid
+   * candidate, and is never persisted as runtime state.
+  */
+  rawJudgementCheckPatches?: unknown[];
+  /**
+   * Ephemeral copy of the model's raw major-combat record candidates. It lets the
+   * turn engine restore locally determined envelope fields before strict
+   * persistence validation, without regenerating the narrative.
+   */
+  rawCombatEventPatches?: unknown[];
+  /**
+   * Ephemeral copy of the model's raw case intent candidates. It is attached
+   * before tolerant item validation so a locally recoverable enum or array
+   * shape error cannot erase the whole case update. It is never persisted.
+   */
+  rawCasePatches?: unknown[];
+  /**
+   * Ephemeral copy of the model's raw relationship intent candidates. It is kept
+   * before tolerant item validation so a malformed evidence reference cannot erase
+   * the whole relationship intent. It is never persisted as runtime state.
+   */
+  rawRelationshipThreadPatches?: unknown[];
 };

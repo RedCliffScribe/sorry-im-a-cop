@@ -153,7 +153,7 @@ describe('AssetArchiveModal', () => {
     expect(nextState.player.equipment).toEqual(['Baton', 'Radio']);
   });
 
-  it('keeps fixed assets and vehicles out of the all-items grid', () => {
+  it('keeps long-term assets out of the portable grid but makes them visible in the default overview', () => {
     const state = createInitialRuntimeState();
     state.assets = {
       items: {
@@ -202,8 +202,13 @@ describe('AssetArchiveModal', () => {
     render(<AssetArchiveModal state={state} initialView="allItems" onClose={vi.fn()} />);
 
     expect(screen.getByText('Baton')).toBeInTheDocument();
-    expect(screen.queryByText('Rented Flat')).not.toBeInTheDocument();
-    expect(screen.queryByText('Old Motorcycle')).not.toBeInTheDocument();
+    const overview = screen.getByLabelText('固定资产与交通工具概览');
+    expect(within(overview).getByText('Rented Flat')).toBeInTheDocument();
+    expect(within(overview).getByText('Old Motorcycle')).toBeInTheDocument();
+    expect(within(overview).getByText('电单车 · 自有 · 可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看交通工具 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Baton/ }).closest('.asset-grid')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Old Motorcycle/ }).closest('.asset-grid')).not.toBeInTheDocument();
   });
 
   it('renders normal items as icon cards with the item name below the glyph', () => {

@@ -84,6 +84,41 @@ describe('npc simulation auxiliary API', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('keeps only NPC advice allowed by the foreground contract', async () => {
+    const state = createInitialRuntimeState();
+    const context = selectContext(state, '继续处理眼前人物');
+    const client = new FakeNpcSimulationClient();
+
+    const result = await runNpcSimulation({
+      context,
+      playerInput: '继续处理眼前人物',
+      client,
+      foregroundContract: {
+        planId: 'drama_plan_turn_0',
+        mode: 'continue_existing',
+        origin: 'main_two_pass',
+        selectedSourceRefs: [],
+        evidenceSourceRefs: [],
+        mandatorySourceRefs: [],
+        allowedActorIds: ['npc_sergeant_chan'],
+        allowedOrganizationIds: [],
+        allowedPlaceIds: [state.location.currentPlaceId],
+        allowedCaseIds: [],
+        allowedMatterIds: [],
+        allowedRelationshipThreadIds: [],
+        allowedCityTrackIds: [],
+        maxForegroundArcs: 1,
+        maxNewActors: 0,
+        maxNewDurableThreads: 1
+      }
+    });
+
+    expect(result.package?.presentReactions).toHaveLength(1);
+    expect(result.package?.remotePresence).toEqual([]);
+    expect(client.prompt).toContain('本回合前台契约');
+    expect(client.prompt).toContain('presentReactions 最多返回 1 名');
+  });
+
   it('keeps the turn on fallback prompt simulation when the auxiliary API fails', async () => {
     const state = createInitialRuntimeState();
     const context = selectContext(state, '继续巡逻');
@@ -119,6 +154,8 @@ describe('npc simulation auxiliary API', () => {
     expect(text).toContain('npc_sergeant_chan');
     expect(text).toContain('提醒玩家别在柜台讲线人');
     expect(text).toContain('未裁定建议');
+    expect(text).toContain('不是必须逐项执行的任务清单');
+    expect(text).toContain('remotePresence 中的人物可以继续留在远场且不出现在正文');
   });
 
   it('feeds simulation only a quota-bounded subset of the main narrator NPC memory IDs', () => {

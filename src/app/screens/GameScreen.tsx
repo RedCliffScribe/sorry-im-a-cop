@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import gameTitleMark from '../../assets/ui/game-title-hk-retro-compact.webp';
 import type { AssetArchiveView } from '../components/AssetArchiveModal';
+import { AiProcessTraceButton, AiProcessTracePanel } from '../components/AiProcessTracePanel';
 import { CommandBar } from '../components/CommandBar';
 import { DiagnosticExportModal } from '../components/DiagnosticExportModal';
 import { DynamicMattersPanelModal } from '../components/DynamicMattersPanelModal';
 import { FatePanelModal } from '../components/FatePanelModal';
 import { FinanceArchiveModal } from '../components/FinanceArchiveModal';
 import { GrayNetworkPanelModal } from '../components/GrayNetworkPanelModal';
+import { LivelihoodPanelModal } from '../components/LivelihoodPanelModal';
 import { NewsPaperModal } from '../components/NewsPaperModal';
 import { PlayerDossierModal } from '../components/PlayerDossierModal';
 import { PlayerPanel } from '../components/PlayerPanel';
@@ -15,13 +17,44 @@ import { RelationshipNetworkPanelModal } from '../components/RelationshipNetwork
 import { ReputationArchiveModal } from '../components/ReputationArchiveModal';
 import { SocialInstitutionPanelModal } from '../components/SocialInstitutionPanelModal';
 import { StoryLog, type PendingPlayerAction } from '../components/StoryLog';
+import {
+  StoryPresentationPane,
+  type StoryPresentationPaneHandle
+} from '../components/avg/StoryPresentationPane';
+import type { AvgPresentationResourceRuntime } from '../components/avg/avgPresentationResourceRuntime';
+import { StoryExportModal } from '../components/StoryExportModal';
 import { WeatherAmbience } from '../components/WeatherAmbience';
-import { createNarrativeDiagnostic } from '../diagnostics/createNarrativeDiagnostic';
+import {
+  createNarrativeDiagnostic,
+  type TurnExecutionDiagnostic
+} from '../diagnostics/createNarrativeDiagnostic';
+import type { SettingsDestination } from '../settings/settingsNavigation';
+import { IndexedDbVisualRepository, type VisualRepository } from '../../domain/imageGeneration/visualRepository';
+import { ImagePromptConversionProbe } from '../../domain/imageGeneration/promptConversion';
+import { IndexedDbImagePromptTemplateRepository } from '../../domain/imageGeneration/promptConversion';
+import { IndexedDbImageAutomationSettingsRepository } from '../../domain/imageGeneration/automationSettings';
+import { IndexedDbImageAutomationRuntimeRepository } from '../../domain/imageGeneration/automationRuntime';
+import { IndexedDbImageProbeStore } from '../../domain/imageGeneration/probe';
+import { IndexedDbImageCredentialRepository, IndexedDbImageProfileRepository } from '../../domain/imageGeneration/profile';
+import { ImageAutomationCoordinator } from '../../domain/imageGeneration/ImageAutomationCoordinator';
 import type { MemoryEmbeddingClient } from '../../domain/memory/MemoryEmbeddingClient';
-import type { NarratorClient } from '../../domain/narrator/NarratorClient';
+import type {
+  NarratorAttemptRecord,
+  NarratorAttemptStartRecord,
+  NarratorClient
+} from '../../domain/narrator/NarratorClient';
+import {
+  openingExecutionStageLabels,
+  type OpeningExecutionStage
+} from '../../domain/opening/openingExecutionStage';
 import { runBackgroundEvolution } from '../../domain/backgroundEvolution/runBackgroundEvolution';
+import { createBalancedLocalD100Roll } from '../../domain/conflict/localJudgement';
+import type { JudgementRecoveryTrace } from '../../domain/conflict/judgementRecoveryTrace';
 import { selectBackgroundEvolutionCandidates } from '../../domain/backgroundEvolution/selection';
 import { getNewsIssueCategory } from '../../domain/news/newsIssueLifecycle';
+import { isArchivedCurrentMatter } from '../../domain/dynamic/currentMatterStatus';
+import { archiveDynamicEntry, isCurrentSignal } from '../../domain/dynamic/signalLifecycle';
+import { removeRelationshipThreadFromState } from '../../domain/relationship/relationshipThread';
 import { IndexedDbTurnSnapshotRepository } from '../../domain/persistence/IndexedDbTurnSnapshotRepository';
 import type { TurnSnapshotRepository } from '../../domain/persistence/TurnSnapshotRepository';
 import {
@@ -29,10 +62,29 @@ import {
   type PlayerAttributeKey
 } from '../../domain/progression/playerProgression';
 import type { CombatEventId, GameTime, RuntimeState, WeatherCondition } from '../../domain/runtime/types';
-import type { DisplaySettings, GameSettings, MemoryCompressionSettings, PromptSettings } from '../../domain/settings/types';
+import {
+  applyManualActorProfileEdit,
+  type ManualActorProfileDraft
+} from '../../domain/runtime/manualActorProfile';
+import { deriveHistoricalActorIdAliases } from '../../domain/runtime/storyDialogueActors';
+import type {
+  DisplaySettings,
+  FeatureModelRoute,
+  GameSettings,
+  MemoryCompressionSettings,
+  PromptSettings,
+  TavernManagementSettings
+} from '../../domain/settings/types';
 import { formatChineseGameTimeWithWeekday } from '../../domain/time/gameTime';
 import { runPlayerTurn, type TurnExecutionStage } from '../../domain/turn/TurnEngine';
 import { createTurnRollbackSnapshot, restoreTurnRollbackSnapshot } from '../../domain/turn/TurnRollback';
+import { collectUnresolvedPartialWritebackDiagnostics } from '../../domain/writeback/writebackDiagnostics';
+import type { OfficialDlcDramaAuditRecord } from '../../domain/dlc/dramaAudit';
+import type { AvgVisualOverrideRepository } from '../../domain/avgVisualOverride';
+import { AvgImageGenerationService } from '../../domain/avgImageGeneration';
+import { CharacterImageRuntimeExecutor } from '../../domain/imageGeneration/characterImageRuntimeExecutor';
+import { IndexedDbImageGenerationPresetRepository } from '../../domain/imageGeneration/generationPresets';
+import { IndexedDbPngStyleRepository } from '../../domain/imageGeneration/pngStyle';
 
 const AssetArchiveModal = lazy(() =>
   import('../components/AssetArchiveModal').then((module) => ({ default: module.AssetArchiveModal }))
@@ -52,6 +104,43 @@ const MapArchiveModal = lazy(() =>
 const MemoryArchiveModal = lazy(() =>
   import('../components/MemoryArchiveModal').then((module) => ({ default: module.MemoryArchiveModal }))
 );
+const ImageGalleryModal = lazy(() =>
+  import('../components/ImageGalleryModal').then((module) => ({ default: module.ImageGalleryModal }))
+);
+
+const visualRepositoryMethodSet = {
+  loadSnapshot: true,
+  getStorageSummary: true,
+  inspectStorageIntegrity: true,
+  cleanupStorageIssues: true,
+  restoreAssetBlob: true,
+  saveCharacterAnchor: true,
+  saveScenePlan: true,
+  saveScenePlanWithTasks: true,
+  saveTask: true,
+  saveCharacterBatch: true,
+  saveCharacterBatchWithTasks: true,
+  saveStorySceneDisplayState: true,
+  bindAsset: true,
+  unbindAsset: true,
+  restoreSceneAssetToStory: true,
+  completeTaskWithImages: true,
+  persistLateTaskImages: true,
+  importUserImage: true,
+  getBlob: true,
+  getAssetDeletionImpact: true,
+  deleteAsset: true,
+  exportSave: true,
+  replaceSaveFromArchive: true,
+  clearSave: true
+} satisfies Record<keyof VisualRepository, true>;
+
+const visualRepositoryMethods = Object.keys(visualRepositoryMethodSet) as (keyof VisualRepository)[];
+
+function supportsVisualWrites(repository: Pick<VisualRepository, 'loadSnapshot'>): repository is VisualRepository {
+  const candidate = repository as Partial<VisualRepository>;
+  return visualRepositoryMethods.every((method) => typeof candidate[method] === 'function');
+}
 
 interface GameScreenProps {
   state: RuntimeState;
@@ -60,27 +149,46 @@ interface GameScreenProps {
   createMemoryEmbedding?: () => MemoryEmbeddingClient | null;
   createMemorySummary?: () => NarratorClient | null;
   createWritebackRepair?: () => NarratorClient | null;
+  writebackRepairMode?: FeatureModelRoute['mode'];
   createNpcSimulation?: () => NarratorClient | null;
   createBackgroundEvolution?: () => NarratorClient | null;
   createAuxiliaryGeneration?: () => NarratorClient | null;
+  auxiliaryGenerationMode?: FeatureModelRoute['mode'];
   memoryCompression?: MemoryCompressionSettings;
   gameSettings?: GameSettings;
   promptSettings?: PromptSettings;
+  onPromptSettingsChange?: (settings: PromptSettings) => void | Promise<void>;
+  tavernSettings?: TavernManagementSettings;
   displaySettings?: DisplaySettings;
+  onDisplaySettingsChange?: (settings: DisplaySettings) => void | Promise<void>;
+  avgPresentationResourceRuntime?: AvgPresentationResourceRuntime;
+  avgResourceRevision?: number;
+  avgPlaybackRevision?: number;
   onSave: () => void;
   onAutoSave: (state: RuntimeState, force?: boolean) => Promise<void>;
   onLoad: () => void | Promise<void>;
-  onSettings: () => void;
+  onSettings: (destination?: SettingsDestination) => void;
   onHome: () => void;
   isOpeningStarting?: boolean;
   openingStreamText?: string;
   openingError?: string | null;
+  openingSaveError?: string | null;
+  openingStage?: OpeningExecutionStage | null;
+  openingStageDetail?: string | null;
+  openingActionPreview?: string[];
+  openingAttempts?: NarratorAttemptRecord[];
+  openingReasoningText?: string;
   lastRawNarratorResponse?: string | null;
   onRawNarratorResponse?: (rawText: string | null) => void;
   onRetryOpening?: () => void;
+  onChangeOpeningModel?: () => void;
+  onAbandonOpening?: () => void;
+  onRetryOpeningSave?: () => void;
   saveId?: string;
   rollbackChainId?: string;
   turnSnapshotRepository?: TurnSnapshotRepository;
+  visualRepository?: Pick<VisualRepository, 'loadSnapshot'>;
+  avgVisualOverrideRepository?: AvgVisualOverrideRepository;
   storyRenderLimit?: number;
 }
 
@@ -90,17 +198,69 @@ const turnExecutionStageLabels: Record<GameTurnExecutionStage, string> = {
   preparing_turn: '整理回合上下文',
   recalling_memory: '检索相关记忆',
   simulating_npcs: '模拟相关 NPC',
+  preflighting_judgement: '判断本回合是否需要判定',
+  repairing_judgement_preflight: '补齐判定预检的必要信息',
   generating_narrative: '生成剧情正文',
+  regenerating_narrative: '正文篇幅不足，重新生成正文',
+  normalizing_judgement: '正在按本地规则校正判定记录',
+  repairing_judgement_structure: '正在补齐判定意图的必要信息',
+  regenerating_judgement: '判定结果与本地结算不一致，正在校正相关正文',
+  repairing_judgement_narrative: '判定结果与本地结算不一致，正在校正相关正文',
+  repairing_judgement_response: '正在校验判定正文校正结果',
   validating_writeback: '校验剧情与状态写回',
   applying_turn_results: '结算本回合状态',
   evolving_background: '推演远场人物与城市动态',
   updating_city_news: '检查报章与城市动态',
+  planning_drama: '整理本回合戏剧素材',
   compressing_memory: '整理阶段记忆',
   embedding_memory: '建立记忆索引',
   finalizing_turn: '完成本回合记录',
   saving_progress: '保存本回合进度',
   stopping_turn: '中止本回合请求'
 };
+
+const aiProcessStageLabels: Readonly<Record<string, string>> = {
+  ...turnExecutionStageLabels,
+  ...openingExecutionStageLabels
+};
+
+function advanceTurnExecutionDiagnostic(
+  current: TurnExecutionDiagnostic | null,
+  stage: GameTurnExecutionStage,
+  occurredAt = new Date().toISOString()
+): TurnExecutionDiagnostic | null {
+  if (!current || current.status !== 'running') return current;
+  const stages = current.stages?.length
+    ? current.stages.map((item) => ({ ...item }))
+    : [{ stage: current.stage, startedAt: current.startedAt }];
+  const latest = stages.at(-1);
+  if (latest?.stage === stage) return { ...current, stage, stages };
+  if (latest && !latest.finishedAt) latest.finishedAt = occurredAt;
+  stages.push({ stage, startedAt: occurredAt });
+  return { ...current, stage, stages };
+}
+
+function finishTurnExecutionDiagnostic(
+  current: TurnExecutionDiagnostic | null,
+  status: 'succeeded' | 'failed' | 'aborted',
+  finishedAt: string,
+  errorMessage?: string
+): TurnExecutionDiagnostic | null {
+  if (!current) return current;
+  const stages = current.stages?.length
+    ? current.stages.map((item) => ({ ...item }))
+    : [{ stage: current.stage, startedAt: current.startedAt }];
+  const latest = stages.at(-1);
+  if (latest && !latest.finishedAt) latest.finishedAt = finishedAt;
+  return {
+    ...current,
+    status,
+    stage: status === 'succeeded' ? 'completed' : current.stage,
+    finishedAt,
+    ...(errorMessage ? { errorMessage } : {}),
+    stages
+  };
+}
 
 function formatGameTime(time: GameTime) {
   return formatChineseGameTimeWithWeekday(time);
@@ -212,21 +372,37 @@ function WeatherIcon({ condition }: { condition: WeatherCondition }) {
   );
 }
 
-const grayNetworkPanelEntry = '社团';
-const institutionPanelEntry = '机构';
-const dynamicPanelEntry = '动态';
-const newsPanelEntry = '新闻';
-const combatPanelEntry = '战斗';
-const memoryPanelEntry = '回忆';
-const relationshipNetworkPanelEntry = '人脉';
-const fatePanelEntry = '缘份';
-const policeOnlyPanelEntries = new Set(['案件', '警队']);
+interface RightPanelEntryDefinition {
+  entryId: string;
+  label: string;
+}
+
+const panelEntry = (entryId: string, label: string): RightPanelEntryDefinition => ({ entryId, label });
+const mapPanelEntry = panelEntry('map', '地图');
+const combatPanelEntry = panelEntry('combat', '战斗');
+const assetPanelEntry = panelEntry('assets', '物品与资产');
+const financePanelEntry = panelEntry('finance', '金钱与收支');
+const galleryPanelEntry = panelEntry('gallery', '图册');
+const dynamicPanelEntry = panelEntry('dynamic', '动态');
+const casePanelEntry = panelEntry('cases', '案件');
+const newsPanelEntry = panelEntry('news', '新闻');
+const characterPanelEntry = panelEntry('characters', '人物志');
+const relationshipNetworkPanelEntry = panelEntry('relationships', '人脉');
+const fatePanelEntry = panelEntry('fate', '缘份');
+const reputationPanelEntry = panelEntry('reputation', '口碑');
+const policePanelEntry = panelEntry('police', '警队');
+const livelihoodPanelEntry = panelEntry('livelihood', '营生');
+const grayNetworkPanelEntry = panelEntry('gray-network', '社团');
+const institutionPanelEntry = panelEntry('institutions', '机构');
+const memoryPanelEntry = panelEntry('memory', '回忆');
+const policeOnlyPanelEntryIds = new Set([casePanelEntry.entryId, policePanelEntry.entryId]);
+const civilianOnlyPanelEntryIds = new Set([livelihoodPanelEntry.entryId]);
 const rightPanelGroupDefinitions = [
   {
     groupId: 'location',
     title: '城市位置',
     tone: 'location',
-    entries: ['地图']
+    entries: [mapPanelEntry]
   },
   {
     groupId: 'risk',
@@ -238,25 +414,31 @@ const rightPanelGroupDefinitions = [
     groupId: 'resources',
     title: '个人资源',
     tone: 'resources',
-    entries: ['物品与资产', '金钱与收支']
+    entries: [assetPanelEntry, financePanelEntry]
+  },
+  {
+    groupId: 'visuals',
+    title: '视觉资料',
+    tone: 'visuals',
+    entries: [galleryPanelEntry]
   },
   {
     groupId: 'current',
     title: '当前事务',
     tone: 'current',
-    entries: [dynamicPanelEntry, '案件', newsPanelEntry]
+    entries: [dynamicPanelEntry, casePanelEntry, newsPanelEntry]
   },
   {
     groupId: 'relations',
     title: '人物关系',
     tone: 'relations',
-    entries: ['人物志', relationshipNetworkPanelEntry, fatePanelEntry, '口碑']
+    entries: [characterPanelEntry, relationshipNetworkPanelEntry, fatePanelEntry, reputationPanelEntry]
   },
   {
     groupId: 'organizations',
     title: '组织网络',
     tone: 'organizations',
-    entries: ['警队', grayNetworkPanelEntry, institutionPanelEntry]
+    entries: [policePanelEntry, livelihoodPanelEntry, grayNetworkPanelEntry, institutionPanelEntry]
   },
   {
     groupId: 'memory',
@@ -272,10 +454,15 @@ function hasPoliceSystemAccess(state: RuntimeState) {
 
 function getRightPanelGroups(state: RuntimeState) {
   const canUsePoliceSystems = hasPoliceSystemAccess(state);
+  const canUseCivilianSystems = state.player.currentIdentity === 'civilian';
   return rightPanelGroupDefinitions
     .map((group) => ({
       ...group,
-      entries: group.entries.filter((entry) => canUsePoliceSystems || !policeOnlyPanelEntries.has(entry))
+      entries: group.entries.filter(
+        (entry) =>
+          (canUsePoliceSystems || !policeOnlyPanelEntryIds.has(entry.entryId)) &&
+          (canUseCivilianSystems || !civilianOnlyPanelEntryIds.has(entry.entryId))
+      )
     }))
     .filter((group) => group.entries.length > 0);
 }
@@ -283,12 +470,12 @@ function getRightPanelGroups(state: RuntimeState) {
 function getLatestSuggestedActions(state: RuntimeState): string[] {
   return [...state.storyLog]
     .reverse()
-    .find((entry) => entry.speaker === 'narrator' && entry.suggestedActions?.length)?.suggestedActions ?? [];
+    .find((entry) => entry.speaker === 'narrator')?.suggestedActions ?? [];
 }
 
 function getFooterTickerItems(state: RuntimeState): string[] {
   const currentMatters = Object.values(state.dynamicEvents.currentMatters)
-    .filter((matter) => matter.visibility !== 'hidden' && matter.status !== 'archived')
+    .filter((matter) => matter.visibility !== 'hidden' && !isArchivedCurrentMatter(matter))
     .sort((left, right) => {
       const leftTime = Date.UTC(left.updatedAt.year, left.updatedAt.month - 1, left.updatedAt.day, left.updatedAt.hour, left.updatedAt.minute);
       const rightTime = Date.UTC(right.updatedAt.year, right.updatedAt.month - 1, right.updatedAt.day, right.updatedAt.hour, right.updatedAt.minute);
@@ -297,7 +484,7 @@ function getFooterTickerItems(state: RuntimeState): string[] {
     .slice(0, 4)
     .map((matter) => `动态：${matter.title}`);
   const signals = Object.values(state.dynamicEvents.signals)
-    .filter((signal) => signal.status !== 'archived')
+    .filter((signal) => signal.visibility !== 'hidden' && isCurrentSignal(signal, state.time))
     .slice(0, 3)
     .map((signal) => `风声：${signal.title}`);
   const news = Object.values(state.dynamicEvents.newsIssues)
@@ -354,6 +541,31 @@ export function getPlayerFacingTurnFailureReason(error: unknown): string {
   if (/\b5\d\d\b|service unavailable|bad gateway|服务暂时不可用/i.test(message)) {
     return '接口服务暂时不可用';
   }
+  if (/本地判定叙事校正.*(?:json|schema|parse|解析|格式|校验|验证)/i.test(message)) {
+    return '判定叙事校正未返回有效格式';
+  }
+  if (/judgement_intent_failed/i.test(message)) {
+    return '判定预检未返回必要信息';
+  }
+  if (/judgement_resolution_failed/i.test(message)) {
+    return '本地判定结算未能完成';
+  }
+  if (/judgement_narrative_conflict/i.test(message)) {
+    return '判定预检与正文中的对抗记录不一致';
+  }
+  if (/判定结构修复失败/i.test(message)) {
+    const paths = [...message.matchAll(/writeback\.judgementCheckPatches\.\d+\.([A-Za-z]+)/g)]
+      .map((match) => match[1]);
+    return paths.length > 0
+      ? `判定记录仍缺少必要字段：${[...new Set(paths)].join('、')}`
+      : '判定结构修复未返回有效格式';
+  }
+  if (/本地判定缺少可安全结算的结构/i.test(message)) {
+    return '判定记录缺少必要信息';
+  }
+  if (/本地判定|判定.*(?:json|schema|parse|解析|格式|校验|验证)/i.test(message)) {
+    return '判定结果重写仍未返回有效格式';
+  }
   if (/json|schema|parse|解析|格式|校验|验证|writeback|事实摘要/i.test(message)) {
     return '接口返回格式无效';
   }
@@ -386,13 +598,21 @@ export function GameScreen({
   createMemoryEmbedding,
   createMemorySummary,
   createWritebackRepair,
+  writebackRepairMode,
   createNpcSimulation,
   createBackgroundEvolution,
   createAuxiliaryGeneration,
+  auxiliaryGenerationMode,
   memoryCompression,
   gameSettings,
   promptSettings,
+  onPromptSettingsChange,
+  tavernSettings,
   displaySettings,
+  onDisplaySettingsChange,
+  avgPresentationResourceRuntime,
+  avgResourceRevision = 0,
+  avgPlaybackRevision = 0,
   onSave,
   onAutoSave,
   onLoad,
@@ -401,26 +621,52 @@ export function GameScreen({
   isOpeningStarting = false,
   openingStreamText = '',
   openingError = null,
+  openingSaveError = null,
+  openingStage = null,
+  openingStageDetail = null,
+  openingActionPreview = [],
+  openingAttempts = [],
+  openingReasoningText = '',
   lastRawNarratorResponse = null,
   onRawNarratorResponse,
   onRetryOpening,
+  onChangeOpeningModel,
+  onAbandonOpening,
+  onRetryOpeningSave,
   saveId,
   rollbackChainId,
   turnSnapshotRepository,
+  visualRepository,
+  avgVisualOverrideRepository,
   storyRenderLimit = 30
 }: GameScreenProps) {
   const [mobileGameRegion, setMobileGameRegion] = useState<MobileGameRegion>('narrative');
+  const [isMobileToolbarOpen, setIsMobileToolbarOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [turnError, setTurnError] = useState<string | null>(null);
   const [lastTurnErrorDetail, setLastTurnErrorDetail] = useState<string | null>(null);
+  const [lastJudgementRecoveryTrace, setLastJudgementRecoveryTrace] =
+    useState<JudgementRecoveryTrace | null>(null);
+  const [lastTurnExecution, setLastTurnExecution] =
+    useState<TurnExecutionDiagnostic | null>(null);
+  const [lastOfficialDlcDramaAudit, setLastOfficialDlcDramaAudit] =
+    useState<OfficialDlcDramaAuditRecord[]>([]);
+  const [lastTurnNarratorAttemptStarts, setLastTurnNarratorAttemptStarts] =
+    useState<NarratorAttemptStartRecord[]>([]);
+  const [lastTurnNarratorAttempts, setLastTurnNarratorAttempts] =
+    useState<NarratorAttemptRecord[]>([]);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState('');
+  const [turnReasoningText, setTurnReasoningText] = useState('');
   const [streamingGameTime, setStreamingGameTime] = useState<GameTime | null>(null);
   const [pendingPlayerAction, setPendingPlayerAction] = useState<PendingPlayerAction | null>(null);
+  const [historicalRegenerationPreview, setHistoricalRegenerationPreview] = useState<RuntimeState | null>(null);
   const [turnExecutionStage, setTurnExecutionStage] = useState<GameTurnExecutionStage | null>(null);
   const [canAbortTurn, setCanAbortTurn] = useState(false);
   const [isAbortingTurn, setIsAbortingTurn] = useState(false);
+  const [isStoryExportOpen, setIsStoryExportOpen] = useState(false);
   const [isDiagnosticOpen, setIsDiagnosticOpen] = useState(false);
+  const [isAiProcessTraceOpen, setIsAiProcessTraceOpen] = useState(false);
   const [diagnosticText, setDiagnosticText] = useState('');
   const [isAssetArchiveOpen, setIsAssetArchiveOpen] = useState(false);
   const [assetArchiveInitialView, setAssetArchiveInitialView] = useState<AssetArchiveView>('allItems');
@@ -432,38 +678,146 @@ export function GameScreen({
   const [isReputationArchiveOpen, setIsReputationArchiveOpen] = useState(false);
   const [isRelationshipNetworkPanelOpen, setIsRelationshipNetworkPanelOpen] = useState(false);
   const [isFatePanelOpen, setIsFatePanelOpen] = useState(false);
+  const [isLivelihoodPanelOpen, setIsLivelihoodPanelOpen] = useState(false);
   const [isSocialInstitutionPanelOpen, setIsSocialInstitutionPanelOpen] = useState(false);
+  const [institutionInitialOrganizationId, setInstitutionInitialOrganizationId] = useState<string | null>(null);
   const [isGrayNetworkPanelOpen, setIsGrayNetworkPanelOpen] = useState(false);
   const [isDynamicPanelOpen, setIsDynamicPanelOpen] = useState(false);
   const [isNewsPaperOpen, setIsNewsPaperOpen] = useState(false);
   const [isCombatArchiveOpen, setIsCombatArchiveOpen] = useState(false);
   const [isMemoryArchiveOpen, setIsMemoryArchiveOpen] = useState(false);
+  const [isImageGalleryOpen, setIsImageGalleryOpen] = useState(false);
+  const [visualRepositoryRevision, setVisualRepositoryRevision] = useState(0);
+  const [avgVisualOverrideRevision, setAvgVisualOverrideRevision] = useState(0);
+  const [imageConversionSupportsImages, setImageConversionSupportsImages] = useState(false);
   const [isPlayerDossierOpen, setIsPlayerDossierOpen] = useState(false);
+  const [playerDossierInitialSection, setPlayerDossierInitialSection] = useState<'overview' | 'visuals'>('overview');
   const [isManualEvolutionRunning, setIsManualEvolutionRunning] = useState(false);
   const [manualEvolutionStatus, setManualEvolutionStatus] = useState<string | null>(null);
   const [combatInitialDetailId, setCombatInitialDetailId] = useState<CombatEventId | null>(null);
   const [lastDiagnosticPlayerInput, setLastDiagnosticPlayerInput] = useState('');
   const [draftAction, setDraftAction] = useState<{ text: string; version: number } | null>(null);
   const [rollbackAvailableTurnNumbers, setRollbackAvailableTurnNumbers] = useState<number[]>([]);
+  const storyPresentationRef = useRef<StoryPresentationPaneHandle>(null);
   const isRunningRef = useRef(false);
   const manualEvolutionRunningRef = useRef(false);
+  const pendingJudgementRollRef = useRef<{ key: string; roll: number } | null>(null);
   const activeTurnAbortControllerRef = useRef<AbortController | null>(null);
   const manualEvolutionAbortControllerRef = useRef<AbortController | null>(null);
+  const createAuxiliaryGenerationRef = useRef(createAuxiliaryGeneration);
+  createAuxiliaryGenerationRef.current = createAuxiliaryGeneration;
+  const previousAutomationStateRef = useRef(state);
+  const automationSaveIdRef = useRef<string | undefined>(undefined);
+  const automationWorkRef = useRef<Promise<void>>(Promise.resolve());
   const snapshotRepository = useMemo(
     () => turnSnapshotRepository ?? new IndexedDbTurnSnapshotRepository(),
     [turnSnapshotRepository]
   );
+  const imageVisualRepository = useMemo(
+    () => visualRepository ?? new IndexedDbVisualRepository(),
+    [visualRepository]
+  );
+  const imageAutomationRuntimeRepository = useMemo(() => new IndexedDbImageAutomationRuntimeRepository(), []);
+  const imageAutomationSettingsRepository = useMemo(() => new IndexedDbImageAutomationSettingsRepository(), []);
+  const imageProfileRepository = useMemo(() => new IndexedDbImageProfileRepository(), []);
+  const imageCredentialRepository = useMemo(() => new IndexedDbImageCredentialRepository(), []);
+  const imageVerificationStore = useMemo(() => new IndexedDbImageProbeStore(), []);
+  const imagePromptTemplateRepository = useMemo(() => new IndexedDbImagePromptTemplateRepository(), []);
+  const imageGenerationPresetRepository = useMemo(() => new IndexedDbImageGenerationPresetRepository(), []);
+  const pngStyleRepository = useMemo(() => new IndexedDbPngStyleRepository(), []);
+  useEffect(() => {
+    let active = true;
+    void imagePromptTemplateRepository.load().then(
+      (settings) => active && setImageConversionSupportsImages(settings.conversionCapabilities.imageInputEnabled),
+      () => active && setImageConversionSupportsImages(false)
+    );
+    return () => { active = false; };
+  }, [imagePromptTemplateRepository]);
   const effectiveRollbackChainId = rollbackChainId ?? saveId;
+  const visualSaveId = rollbackChainId ?? saveId;
+  const visualActorIdAliases = useMemo(
+    () => deriveHistoricalActorIdAliases(state.storyLog, state.actors, state.actorIdAliases),
+    [state.actorIdAliases, state.actors, state.storyLog]
+  );
+  const imageAutomationCoordinator = useMemo(() => supportsVisualWrites(imageVisualRepository)
+    ? new ImageAutomationCoordinator({
+      visualRepository: imageVisualRepository,
+      runtimeRepository: imageAutomationRuntimeRepository,
+      settingsRepository: imageAutomationSettingsRepository,
+      profileRepository: imageProfileRepository,
+      credentialRepository: imageCredentialRepository,
+      verificationStore: imageVerificationStore,
+      promptTemplateRepository: imagePromptTemplateRepository,
+      createPromptConversion: () => {
+        const client = createAuxiliaryGenerationRef.current?.();
+        return client ? new ImagePromptConversionProbe(client, {
+          inputModalities: imageConversionSupportsImages ? ['text', 'image'] : ['text'],
+          loadConversionInstructions: async () => (
+            await imagePromptTemplateRepository.load()
+          ).conversionInstructions
+        }) : null;
+      },
+      pageUrl: () => typeof window === 'undefined' ? undefined : window.location.href,
+      onRepositoryChanged: () => setVisualRepositoryRevision((value) => value + 1)
+    })
+    : null, [
+      imageAutomationRuntimeRepository,
+      imageAutomationSettingsRepository,
+      imageCredentialRepository,
+      imageProfileRepository,
+      imagePromptTemplateRepository,
+      imageConversionSupportsImages,
+      imageVerificationStore,
+      imageVisualRepository
+    ]);
+  const avgImageGenerationService = useMemo(() => {
+    if (!supportsVisualWrites(imageVisualRepository)) return undefined;
+    return new AvgImageGenerationService({
+      visualRepository: imageVisualRepository,
+      profileRepository: imageProfileRepository,
+      credentialRepository: imageCredentialRepository,
+      promptTemplateRepository: imagePromptTemplateRepository,
+      generationPresetRepository: imageGenerationPresetRepository,
+      pngStyleRepository,
+      executor: new CharacterImageRuntimeExecutor({
+        profiles: imageProfileRepository,
+        credentials: imageCredentialRepository,
+        verificationStore: imageVerificationStore,
+        visualRepository: imageVisualRepository,
+        pageUrl: () => typeof window === 'undefined' ? undefined : window.location.href
+      }),
+      onRepositoryChanged: () => setVisualRepositoryRevision((value) => value + 1)
+    });
+  }, [
+    imageCredentialRepository,
+    imageGenerationPresetRepository,
+    imageProfileRepository,
+    imagePromptTemplateRepository,
+    imageVerificationStore,
+    imageVisualRepository,
+    pngStyleRepository
+  ]);
   const rollbackSnapshotLimit = getRollbackSnapshotLimit(gameSettings);
   const isCommandDisabled = isRunning || isManualEvolutionRunning || isOpeningStarting || Boolean(openingError);
   const activeStreamingText = openingStreamText || streamingText;
   const activeStreamingGameTime = openingStreamText ? state.time : streamingGameTime;
-  const latestErrorDetail = openingError ?? lastTurnErrorDetail;
-  const suggestedActions = isCommandDisabled ? [] : getLatestSuggestedActions(state);
+  const latestErrorDetail = openingSaveError ?? openingError ?? lastTurnErrorDetail;
+  const latestNarratorEntry = [...state.storyLog].reverse().find((entry) => entry.speaker === 'narrator');
+  const unresolvedPartialWritebackDiagnostics = collectUnresolvedPartialWritebackDiagnostics(
+    latestNarratorEntry?.writebackDiagnostics
+  );
+  const hasPartialWritebackWarning = unresolvedPartialWritebackDiagnostics.length > 0;
+  const suggestedActions =
+    openingActionPreview.length > 0
+      ? openingActionPreview
+      : isCommandDisabled
+        ? []
+        : getLatestSuggestedActions(state);
   const canRetryOpening =
     Boolean(onRetryOpening) &&
     !isRunning &&
     !isOpeningStarting &&
+    !openingSaveError &&
     (Boolean(openingError) || (state.turnCounter === 0 && state.storyLog.some((entry) => entry.speaker === 'narrator')));
   const canUsePoliceSystems = hasPoliceSystemAccess(state);
   const rightPanelGroups = getRightPanelGroups(state);
@@ -481,8 +835,29 @@ export function GameScreen({
       manualEvolutionAbortControllerRef.current?.abort(
         new DOMException('游戏界面已关闭。', 'AbortError')
       );
+      imageAutomationCoordinator?.dispose();
     };
-  }, []);
+  }, [imageAutomationCoordinator]);
+
+  useEffect(() => {
+    if (!visualSaveId || !imageAutomationCoordinator) {
+      previousAutomationStateRef.current = state;
+      automationSaveIdRef.current = visualSaveId;
+      return;
+    }
+    if (automationSaveIdRef.current !== visualSaveId) {
+      automationSaveIdRef.current = visualSaveId;
+      previousAutomationStateRef.current = state;
+      automationWorkRef.current = imageAutomationCoordinator.recover(visualSaveId).catch(() => undefined);
+      return;
+    }
+    const previous = previousAutomationStateRef.current;
+    previousAutomationStateRef.current = state;
+    if (previous === state) return;
+    automationWorkRef.current = automationWorkRef.current
+      .then(() => imageAutomationCoordinator.processTransition(visualSaveId, previous, state))
+      .catch(() => undefined);
+  }, [imageAutomationCoordinator, state, visualSaveId]);
 
   function handleOpenDiagnostic() {
     setDiagnosticText(
@@ -492,8 +867,14 @@ export function GameScreen({
         streamingText: activeStreamingText,
         lastError: latestErrorDetail,
         lastRawNarratorResponse,
-        lastPlayerInput: lastDiagnosticPlayerInput
-      })
+        lastNarratorAttempts: openingAttempts,
+        lastTurnNarratorAttemptStarts,
+        lastTurnNarratorAttempts,
+          lastTurnExecution,
+          lastPlayerInput: lastDiagnosticPlayerInput,
+          lastJudgementRecoveryTrace,
+          lastOfficialDlcDramaAudit
+        })
     );
     setIsDiagnosticOpen(true);
   }
@@ -571,9 +952,18 @@ export function GameScreen({
     stateBeforeTurn: RuntimeState,
     playerInput: string,
     failureState: RuntimeState,
-    signal: AbortSignal
+    signal: AbortSignal,
+    requestId: string
   ): Promise<boolean> {
     try {
+      const judgementRollKey = `${stateBeforeTurn.turnCounter}:${playerInput}`;
+      if (pendingJudgementRollRef.current?.key !== judgementRollKey) {
+        pendingJudgementRollRef.current = {
+          key: judgementRollKey,
+          roll: createBalancedLocalD100Roll(stateBeforeTurn)
+        };
+      }
+      const judgementRoll = pendingJudgementRollRef.current.roll;
       const snapshotTurnNumber = stateBeforeTurn.turnCounter + 1;
       const rollbackSnapshot = createTurnRollbackSnapshot({
         beforeState: stateBeforeTurn,
@@ -586,30 +976,73 @@ export function GameScreen({
       const npcSimulation = createNpcSimulation?.() ?? undefined;
       const backgroundEvolution = createBackgroundEvolution?.() ?? undefined;
       const auxiliaryGeneration = createAuxiliaryGeneration?.() ?? undefined;
+      const reasoningOutput = tavernSettings?.reasoningOutput;
+      const shouldShowReasoning = Boolean(
+        reasoningOutput?.showInUi && reasoningOutput.mode !== 'off'
+      );
+      const reasoningCharacterLimit = Math.max(
+        0,
+        Math.min(8000, reasoningOutput?.maxCharacters ?? 0)
+      );
 
       const next = await runPlayerTurn({
         state: stateBeforeTurn,
         playerInput,
+        requestId,
         narrator,
         memoryEmbedding,
         memorySummary,
         writebackRepair,
+        writebackRepairMode,
         npcSimulation,
         backgroundEvolution,
         auxiliaryGeneration,
+        auxiliaryGenerationMode,
         memoryCompression,
         gameSettings,
         promptSettings,
+        tavernSettings,
         onNarrativeDelta: (delta) => setStreamingText((current) => `${current}${delta}`),
+        onNarrativeReset: () => setStreamingText(''),
         onRawText: (rawText) => onRawNarratorResponse?.(rawText),
+        onReasoningDelta: shouldShowReasoning && reasoningOutput?.mode === 'provider'
+          ? (delta) => setTurnReasoningText((current) =>
+              `${current}${delta}`.slice(0, reasoningCharacterLimit)
+            )
+          : undefined,
+        onReasoningText: shouldShowReasoning
+          ? setTurnReasoningText
+          : undefined,
+        onNarratorAttemptStart: (attempt) =>
+          setLastTurnNarratorAttemptStarts((current) =>
+            current.some((item) => item.attemptId === attempt.attemptId)
+              ? current
+              : [...current, attempt]
+          ),
+        onNarratorAttempt: (attempt) =>
+          setLastTurnNarratorAttempts((current) => [
+            ...current.filter((item) => item.attemptId !== attempt.attemptId),
+            attempt
+          ]),
         signal,
-        onStageChange: setTurnExecutionStage
+        onStageChange: (stage) => {
+          setTurnExecutionStage(stage);
+          setLastTurnExecution((current) => advanceTurnExecutionDiagnostic(current, stage));
+        },
+        onJudgementRecoveryTrace: setLastJudgementRecoveryTrace,
+        onOfficialDlcDramaAudit: setLastOfficialDlcDramaAudit,
+        judgementRoll,
+        enableJudgementPreflight: true
       });
+      if (pendingJudgementRollRef.current?.key === judgementRollKey) {
+        pendingJudgementRollRef.current = null;
+      }
       if (activeTurnAbortControllerRef.current?.signal === signal) {
         activeTurnAbortControllerRef.current = null;
       }
       setCanAbortTurn(false);
       setTurnExecutionStage('saving_progress');
+      setLastTurnExecution((current) => advanceTurnExecutionDiagnostic(current, 'saving_progress'));
       const newCombatId = findNewVisibleCombatEventId(stateBeforeTurn, next);
       setStreamingText('');
       setStreamingGameTime(null);
@@ -641,19 +1074,53 @@ export function GameScreen({
       } catch {
         setSaveStatus('自动保存失败，请手动保存。');
       }
+      setLastTurnExecution((current) =>
+        finishTurnExecutionDiagnostic(current, 'succeeded', new Date().toISOString())
+      );
       const backgroundRun = next.backgroundEvolution.lastRun;
       if (backgroundRun?.status === 'failed' || backgroundRun?.status === 'aborted') {
         setTurnError(
           `主回合已完成，但后台演化${backgroundRun.status === 'aborted' ? '已中止' : '失败'}：${backgroundRun.errorReason ?? '未返回具体原因'}。`
         );
+      } else {
+        const latestNarratorEntry = [...next.storyLog].reverse().find((entry) => entry.speaker === 'narrator');
+        const actorRecoveryQueued = latestNarratorEntry?.writebackDiagnostics?.some(
+          (issue) => issue.code === 'actor_writeback_recovery_queued'
+        );
+        const pendingActorCount = next.pendingActorWritebackRecoveries?.length ?? 0;
+        if (actorRecoveryQueued && pendingActorCount > 0) {
+          setTurnError(
+            `本回合正文已完成；人物建档修复队列仍有 ${pendingActorCount} 名待处理（包含此前回合积压），系统每轮最多核验 2 名并按失败原因退避重试。`
+          );
+        }
       }
       return true;
     } catch (error) {
       const wasAborted = signal.aborted || (error instanceof DOMException && error.name === 'AbortError');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const finishedAt = new Date().toISOString();
       setStreamingText('');
       setStreamingGameTime(null);
       onStateChange(failureState);
-      setLastTurnErrorDetail(wasAborted ? null : error instanceof Error ? error.message : String(error));
+      setLastTurnErrorDetail(wasAborted ? null : errorMessage);
+      setLastTurnExecution((current) =>
+        finishTurnExecutionDiagnostic(
+          current,
+          wasAborted ? 'aborted' : 'failed',
+          finishedAt,
+          wasAborted ? undefined : errorMessage
+        )
+      );
+      setLastJudgementRecoveryTrace((current) =>
+        current
+          ? {
+              ...current,
+              finishedAt,
+              terminalStatus: wasAborted ? 'aborted' : 'failed',
+              ...(wasAborted ? {} : { terminalError: errorMessage })
+            }
+          : current
+      );
       setDraftAction((current) => ({ text: playerInput, version: (current?.version ?? 0) + 1 }));
       setTurnError(
         wasAborted
@@ -671,11 +1138,14 @@ export function GameScreen({
   ): Promise<boolean> {
     if (isCommandDisabled || isRunningRef.current || manualEvolutionRunningRef.current) return false;
 
+    storyPresentationRef.current?.completeCurrentSequence();
+
     isRunningRef.current = true;
     setManualEvolutionStatus(null);
     const abortController = new AbortController();
     activeTurnAbortControllerRef.current = abortController;
     setIsRunning(true);
+    setTurnReasoningText('');
     setCanAbortTurn(true);
     setIsAbortingTurn(false);
     setTurnExecutionStage('preparing_turn');
@@ -686,6 +1156,20 @@ export function GameScreen({
     });
     setTurnError(null);
     setLastTurnErrorDetail(null);
+    setLastJudgementRecoveryTrace(null);
+    const requestId = `turn_request_${stateBeforeTurn.turnCounter + 1}_${Date.now()}`;
+    const startedAt = new Date().toISOString();
+    setLastTurnExecution({
+      requestId,
+      turnId: `turn_${String(stateBeforeTurn.turnCounter + 1).padStart(4, '0')}`,
+      status: 'running',
+      stage: 'preparing_turn',
+      startedAt,
+      stages: [{ stage: 'preparing_turn', startedAt }]
+    });
+    setLastOfficialDlcDramaAudit([]);
+    setLastTurnNarratorAttemptStarts([]);
+    setLastTurnNarratorAttempts([]);
     setSaveStatus(null);
     setStreamingText('');
     onRawNarratorResponse?.(null);
@@ -693,7 +1177,13 @@ export function GameScreen({
     setStreamingGameTime(stateBeforeTurn.time);
 
     try {
-      return await executeActionFromState(stateBeforeTurn, playerInput, failureState, abortController.signal);
+      return await executeActionFromState(
+        stateBeforeTurn,
+        playerInput,
+        failureState,
+        abortController.signal,
+        requestId
+      );
     } finally {
       if (activeTurnAbortControllerRef.current === abortController) {
         activeTurnAbortControllerRef.current = null;
@@ -713,6 +1203,7 @@ export function GameScreen({
 
     setIsAbortingTurn(true);
     setTurnExecutionStage('stopping_turn');
+    setLastTurnExecution((current) => advanceTurnExecutionDiagnostic(current, 'stopping_turn'));
     controller.abort(new DOMException('玩家已中止本回合生成。', 'AbortError'));
   }
 
@@ -775,6 +1266,60 @@ export function GameScreen({
     controller.abort(new DOMException('玩家已中止后台推演。', 'AbortError'));
   }
 
+  async function handleArchiveDynamicEntry(kind: 'matter' | 'signal', id: string) {
+    if (isRunningRef.current || manualEvolutionRunningRef.current) return;
+    const next = archiveDynamicEntry(state, { kind, id });
+    if (next === state) return;
+
+    onStateChange(next);
+    setManualEvolutionStatus(kind === 'signal' ? '该风声已移入归档。' : '该事项已移入归档。');
+    try {
+      await onAutoSave(next, true);
+    } catch {
+      setSaveStatus('归档后自动保存失败，请手动保存。');
+    }
+  }
+
+  async function handleDeleteRelationshipThread(threadId: string) {
+    if (isRunningRef.current || manualEvolutionRunningRef.current) {
+      throw new Error('回合生成或后台推演期间不能删除关系，请稍后再试。');
+    }
+    const thread = state.relationshipThreads[threadId];
+    const next = removeRelationshipThreadFromState(state, threadId);
+    if (next === state) return;
+
+    try {
+      await onAutoSave(next, true);
+    } catch {
+      setSaveStatus('关系删除未能保存，本次删除已取消。');
+      throw new Error('自动保存失败，关系没有被删除。请稍后重试。');
+    }
+
+    onStateChange(next);
+    setSaveStatus(`已永久删除这条${thread?.kind === 'fate' ? '缘份' : '人脉'}；人物、正文和既有记忆均已保留。`);
+  }
+
+  async function handleUpdateActorProfile(actorId: string, draft: ManualActorProfileDraft) {
+    if (isRunningRef.current || manualEvolutionRunningRef.current) {
+      throw new Error('回合生成或后台推演期间不能修改人物资料，请稍后再试。');
+    }
+    const next = applyManualActorProfileEdit(state, actorId, draft);
+    if (next === state) {
+      setSaveStatus('人物资料没有变化。');
+      return;
+    }
+
+    try {
+      await onAutoSave(next, true);
+    } catch {
+      setSaveStatus('人物资料未能保存，本次修改已取消。');
+      throw new Error('自动保存失败，人物资料没有被修改。请稍后重试。');
+    }
+
+    onStateChange(next);
+    setSaveStatus('人物资料已修改并保存；玩家修正的稳定字段将优先于后续AI写回。');
+  }
+
   async function handleSubmit(playerInput: string) {
     await runActionFromState(state, playerInput);
   }
@@ -824,17 +1369,22 @@ export function GameScreen({
       }
 
       const restored = restoreTurnRollbackSnapshot(snapshot);
-      const succeeded = await runActionFromState(restored.state, actionText, state);
-      if (!succeeded) return;
-
+      setHistoricalRegenerationPreview(restored.state);
       try {
-        const completedTurnNumber = restored.state.turnCounter + 1;
-        await snapshotRepository.deleteTurnSnapshotsAfter(effectiveRollbackChainId, completedTurnNumber);
-        setRollbackAvailableTurnNumbers((current) =>
-          current.filter((availableTurn) => availableTurn <= completedTurnNumber)
-        );
-      } catch {
-        setSaveStatus('旧回溯分支清理失败，新行动仍已完成。');
+        const succeeded = await runActionFromState(restored.state, actionText, state);
+        if (!succeeded) return;
+
+        try {
+          const completedTurnNumber = restored.state.turnCounter + 1;
+          await snapshotRepository.deleteTurnSnapshotsAfter(effectiveRollbackChainId, completedTurnNumber);
+          setRollbackAvailableTurnNumbers((current) =>
+            current.filter((availableTurn) => availableTurn <= completedTurnNumber)
+          );
+        } catch {
+          setSaveStatus('旧回溯分支清理失败，新行动仍已完成。');
+        }
+      } finally {
+        setHistoricalRegenerationPreview(null);
       }
     } catch (error) {
       setLastTurnErrorDetail(error instanceof Error ? error.message : String(error));
@@ -856,45 +1406,73 @@ export function GameScreen({
     setDraftAction((current) => ({ text: actionText, version: (current?.version ?? 0) + 1 }));
   }
 
-  function getPanelEntryAction(entry: string) {
-    return entry === '物品与资产'
+  function getPanelEntryAction(entryId: string) {
+    return entryId === assetPanelEntry.entryId
       ? () => openAssetArchive('allItems')
-      : entry === '案件'
+      : entryId === casePanelEntry.entryId
       ? () => setIsCaseArchiveOpen(true)
-      : entry === '金钱与收支'
+      : entryId === financePanelEntry.entryId
       ? () => setIsFinanceArchiveOpen(true)
-      : entry === '警队'
+      : entryId === policePanelEntry.entryId
       ? () => setIsPolicePanelOpen(true)
-      : entry === dynamicPanelEntry
+      : entryId === galleryPanelEntry.entryId
+      ? () => setIsImageGalleryOpen(true)
+      : entryId === dynamicPanelEntry.entryId
       ? () => setIsDynamicPanelOpen(true)
-      : entry === newsPanelEntry
+      : entryId === newsPanelEntry.entryId
       ? () => setIsNewsPaperOpen(true)
-      : entry === combatPanelEntry
+      : entryId === combatPanelEntry.entryId
       ? () => {
           setCombatInitialDetailId(null);
           setIsCombatArchiveOpen(true);
         }
-      : entry === memoryPanelEntry
+      : entryId === memoryPanelEntry.entryId
       ? () => setIsMemoryArchiveOpen(true)
-      : entry === '口碑'
+      : entryId === reputationPanelEntry.entryId
       ? () => setIsReputationArchiveOpen(true)
-      : entry === relationshipNetworkPanelEntry
+      : entryId === relationshipNetworkPanelEntry.entryId
       ? () => setIsRelationshipNetworkPanelOpen(true)
-      : entry === fatePanelEntry
+      : entryId === fatePanelEntry.entryId
       ? () => setIsFatePanelOpen(true)
-      : entry === '人物志'
+      : entryId === characterPanelEntry.entryId
       ? () => setIsCharacterArchiveOpen(true)
-      : entry === institutionPanelEntry
-      ? () => setIsSocialInstitutionPanelOpen(true)
-      : entry === grayNetworkPanelEntry
+      : entryId === livelihoodPanelEntry.entryId
+      ? () => setIsLivelihoodPanelOpen(true)
+      : entryId === institutionPanelEntry.entryId
+      ? () => {
+          setInstitutionInitialOrganizationId(null);
+          setIsSocialInstitutionPanelOpen(true);
+        }
+      : entryId === grayNetworkPanelEntry.entryId
       ? () => setIsGrayNetworkPanelOpen(true)
-      : entry === '地图'
+      : entryId === mapPanelEntry.entryId
         ? () => setIsMapArchiveOpen(true)
         : undefined;
   }
 
   const currentWeather = state.environment?.weather;
   const weatherLabel = currentWeather?.label ?? '天气未定';
+  const isOpeningTrace = isOpeningStarting || Boolean(openingError);
+  const firstOpeningAttempt = openingAttempts[0];
+  const openingTraceExecution: TurnExecutionDiagnostic | null =
+    isOpeningTrace && openingStage && firstOpeningAttempt
+      ? {
+          requestId: firstOpeningAttempt.attemptId,
+          turnId: 'opening',
+          status: openingError ? 'failed' : 'running',
+          stage: openingStage,
+          startedAt: firstOpeningAttempt.startedAt,
+          ...(openingError ? { finishedAt: firstOpeningAttempt.finishedAt } : {}),
+          stages: [{
+            stage: openingStage,
+            startedAt: firstOpeningAttempt.startedAt,
+            ...(openingError ? { finishedAt: firstOpeningAttempt.finishedAt } : {})
+          }]
+        }
+      : null;
+  const displayedTraceExecution = isOpeningTrace ? openingTraceExecution : lastTurnExecution;
+  const displayedTraceAttempts = isOpeningTrace ? openingAttempts : lastTurnNarratorAttempts;
+  const displayedTraceReasoning = isOpeningTrace ? openingReasoningText : turnReasoningText;
 
   return (
     <main className="game-shell game-shell--play">
@@ -908,7 +1486,7 @@ export function GameScreen({
           <button
             className="game-back-button"
             type="button"
-            disabled={isRunning}
+            disabled={isRunning || isOpeningStarting}
             onClick={onHome}
           >
             ← 返回首页
@@ -940,17 +1518,33 @@ export function GameScreen({
             <strong>{formatGameTime(state.time)}</strong>
             <span>{formatLocation(state)}</span>
           </div>
-          <div className="game-topbar-actions" role="group" aria-label="游戏操作">
-            <button className="diagnostic-export-button" type="button" onClick={handleOpenDiagnostic}>
-              导出原文
+          <div
+            className={`game-topbar-actions${isMobileToolbarOpen ? ' game-topbar-actions--mobile-open' : ''}`}
+            role="group"
+            aria-label="游戏操作"
+          >
+            <button
+              className="story-export-button"
+              type="button"
+              disabled={isRunning || isOpeningStarting}
+              onClick={() => setIsStoryExportOpen(true)}
+            >
+              导出剧情
             </button>
-            {isOpeningStarting ? <span className="game-status-pill">开局生成中</span> : null}
+            <button className="diagnostic-export-button" type="button" onClick={handleOpenDiagnostic}>
+              诊断导出
+            </button>
+            {isOpeningStarting ? (
+              <span className="game-status-pill">
+                {openingStage ? openingExecutionStageLabels[openingStage] : '开局生成中'}
+              </span>
+            ) : null}
             <button
               className="game-topbar-action-button"
               type="button"
               aria-label="保存进度"
               title="保存进度"
-              disabled={isRunning}
+              disabled={isRunning || isOpeningStarting}
               onClick={handleSave}
             >
               保存
@@ -960,7 +1554,7 @@ export function GameScreen({
               type="button"
               aria-label="读取进度"
               title="读取进度"
-              disabled={isRunning}
+              disabled={isRunning || isOpeningStarting}
               onClick={() => void onLoad()}
             >
               读取
@@ -970,12 +1564,21 @@ export function GameScreen({
               type="button"
               aria-label="设置"
               title="设置"
-              disabled={isRunning}
-              onClick={onSettings}
+              disabled={isRunning || isOpeningStarting}
+              onClick={() => onSettings()}
             >
               设置
             </button>
           </div>
+          <button
+            className="game-mobile-toolbar-toggle"
+            type="button"
+            aria-label={isMobileToolbarOpen ? '收起游戏操作' : '展开游戏操作'}
+            aria-expanded={isMobileToolbarOpen}
+            onClick={() => setIsMobileToolbarOpen((open) => !open)}
+          >
+            <span aria-hidden="true">{isMobileToolbarOpen ? '▴' : '▾'}</span>
+          </button>
         </header>
 
         <MobileGameRegionSwitcher activeRegion={mobileGameRegion} onSelect={setMobileGameRegion} />
@@ -989,8 +1592,18 @@ export function GameScreen({
             <PlayerPanel
               state={state}
               onOpenEquipment={() => openAssetArchive('equipment')}
-              onOpenDossier={() => setIsPlayerDossierOpen(true)}
+              onOpenDossier={() => {
+                setPlayerDossierInitialSection('overview');
+                setIsPlayerDossierOpen(true);
+              }}
+              onOpenVisualEditor={() => {
+                setPlayerDossierInitialSection('visuals');
+                setIsPlayerDossierOpen(true);
+              }}
               onSpendAttributePoint={handleSpendPlayerAttributePoint}
+              visualSaveId={visualSaveId}
+              visualRepository={supportsVisualWrites(imageVisualRepository) ? imageVisualRepository : undefined}
+              visualRefreshKey={visualRepositoryRevision}
             />
           </aside>
 
@@ -999,27 +1612,82 @@ export function GameScreen({
             className="game-story-column"
             data-mobile-active={mobileGameRegion === 'narrative'}
           >
-            <StoryLog
-              entries={state.storyLog}
-              streamingText={activeStreamingText || undefined}
-              streamingGameTime={activeStreamingGameTime ?? undefined}
-              pendingPlayerAction={pendingPlayerAction}
-              judgementChecks={state.judgementChecks}
-              isWaitingForNarrative={isRunning || isOpeningStarting}
-              renderLimit={storyRenderLimit}
+            <StoryPresentationPane
+              ref={storyPresentationRef}
+              entries={(historicalRegenerationPreview ?? state).storyLog}
+              runtimeState={historicalRegenerationPreview ?? state}
+              saveId={visualSaveId ?? `avg-session:${state.player.actorId}`}
+              playbackRevision={avgPlaybackRevision}
               displaySettings={displaySettings}
-              rollbackAvailableTurnNumbers={rollbackAvailableTurnNumbers}
-              onRegeneratePlayerAction={handleRegeneratePlayerAction}
+              onDisplaySettingsChange={onDisplaySettingsChange}
+              resourceRuntime={avgPresentationResourceRuntime}
+              resourceRevision={avgResourceRevision}
+              overrideRepository={visualSaveId ? avgVisualOverrideRepository : undefined}
+              overrideRevision={avgVisualOverrideRevision}
+              imageGenerationService={avgImageGenerationService}
+              onOpenImageSettings={() => onSettings('imageGeneration')}
+              onOverrideChanged={visualSaveId
+                ? () => setAvgVisualOverrideRevision((value) => value + 1)
+                : undefined}
+              textView={(
+                <StoryLog
+                  entries={(historicalRegenerationPreview ?? state).storyLog}
+                  streamingText={activeStreamingText || undefined}
+                  streamingGameTime={activeStreamingGameTime ?? undefined}
+                  pendingPlayerAction={pendingPlayerAction}
+                  judgementChecks={(historicalRegenerationPreview ?? state).judgementChecks}
+                  isWaitingForNarrative={isRunning || isOpeningStarting}
+                  renderLimit={storyRenderLimit}
+                  displaySettings={displaySettings}
+                  sceneVisuals={visualSaveId && supportsVisualWrites(imageVisualRepository) ? {
+                    saveId: visualSaveId,
+                    actors: state.actors,
+                    actorIdAliases: visualActorIdAliases,
+                    worldYear: state.time.year,
+                    repository: imageVisualRepository,
+                    revision: visualRepositoryRevision,
+                    createPromptConversion: createAuxiliaryGeneration ? () => {
+                      const client = createAuxiliaryGeneration();
+                      return client ? new ImagePromptConversionProbe(client, {
+                        inputModalities: imageConversionSupportsImages ? ['text', 'image'] : ['text'],
+                        loadConversionInstructions: async () => (
+                          await imagePromptTemplateRepository.load()
+                        ).conversionInstructions
+                      }) : null;
+                    } : undefined,
+                    onOpenSettings: () => onSettings('imageGeneration')
+                  } : undefined}
+                  rollbackAvailableTurnNumbers={rollbackAvailableTurnNumbers}
+                  onRegeneratePlayerAction={handleRegeneratePlayerAction}
+                />
+              )}
             />
             <div className="game-command-dock">
               {openingError ? (
+                <>
+                  <p className="command-error" role="status">
+                    当前开局阶段未完成；已经通过的阶段仍保留，可以从失败阶段继续。
+                  </p>
+                  <details className="reasoning-output-preview">
+                    <summary>查看失败字段</summary>
+                    <pre>{openingError}</pre>
+                  </details>
+                </>
+              ) : null}
+              {openingSaveError ? (
                 <p className="command-error" role="status">
-                  开局生成失败，请打开“导出原文”复制诊断信息给我排查。
+                  {openingSaveError}
                 </p>
               ) : null}
               {turnError ? (
                 <p className="command-error" role="status">
                   {turnError}
+                </p>
+              ) : null}
+              {!openingError && !turnError && hasPartialWritebackWarning ? (
+                <p className="command-warning" role="status">
+                  {state.turnCounter === 0 ? '开局' : '本回合'}已生成，但仍有
+                  {unresolvedPartialWritebackDiagnostics.length} 项状态未能写入；可打开“诊断导出”查看具体字段。
                 </p>
               ) : null}
               {saveStatus ? (
@@ -1033,9 +1701,39 @@ export function GameScreen({
                   <strong>{turnExecutionStageLabels[turnExecutionStage]}</strong>
                 </div>
               ) : null}
+              {(isOpeningStarting || openingError) && openingStage ? (
+                <div className="turn-execution-status" role="status" aria-live="polite">
+                  <span>{openingError ? '停在阶段：' : '系统正在：'}</span>
+                  <strong>{openingExecutionStageLabels[openingStage]}</strong>
+                  {openingStageDetail ? <small>{openingStageDetail}</small> : null}
+                </div>
+              ) : null}
+              {openingSaveError && onRetryOpeningSave ? (
+                <button className="opening-retry-button" type="button" onClick={onRetryOpeningSave}>
+                  重试保存
+                </button>
+              ) : null}
               {canRetryOpening ? (
                 <button className="opening-retry-button" type="button" onClick={onRetryOpening}>
-                  {openingError ? '重试开局' : '重掷开局'}
+                  {openingError ? '重试当前阶段' : '重掷开局'}
+                </button>
+              ) : null}
+              {openingError && onChangeOpeningModel ? (
+                <button
+                  className="opening-retry-button"
+                  type="button"
+                  onClick={onChangeOpeningModel}
+                >
+                  更换模型并继续
+                </button>
+              ) : null}
+              {openingError && onAbandonOpening ? (
+                <button
+                  className="opening-retry-button"
+                  type="button"
+                  onClick={onAbandonOpening}
+                >
+                  放弃本次开局
                 </button>
               ) : null}
               <CommandBar
@@ -1044,14 +1742,25 @@ export function GameScreen({
                 isAborting={isAbortingTurn}
                 onAbort={isRunning && canAbortTurn ? handleAbortTurn : undefined}
                 suggestedActions={suggestedActions}
+                suggestedActionMode={openingActionPreview.length > 0 ? 'opening-preview' : 'active'}
                 onSubmit={handleSubmit}
+                draftScopeKey={saveId ?? effectiveRollbackChainId ?? 'unsaved-game'}
                 draftActionText={draftAction?.text ?? null}
                 draftActionVersion={draftAction?.version}
                 canRollbackLatestTurn={canRollbackLatestTurn}
                 rollbackUnavailableReason={
                   canUseRollback ? '当前回合没有可用的回溯快照。' : '回溯链未启用或回溯快照数量为 0。'
                 }
-                onRollbackLatestTurn={canUseRollback ? handleRollbackLatestTurn : undefined}
+                onRollbackLatestTurn={handleRollbackLatestTurn}
+                persistentPrompts={promptSettings?.persistentPrompts ?? []}
+                onPersistentPromptsChange={
+                  onPromptSettingsChange
+                    ? (persistentPrompts) => onPromptSettingsChange({
+                        overrides: promptSettings?.overrides ?? {},
+                        persistentPrompts
+                      })
+                    : undefined
+                }
               />
             </div>
           </section>
@@ -1072,9 +1781,11 @@ export function GameScreen({
                 >
                   <div className="game-panel-group-buttons">
                     {group.entries.map((entry) => (
-                      <button key={entry} type="button" onClick={getPanelEntryAction(entry)}>
-                        {entry}
-                        {entry === '案件' && hasUnreadCases ? <span className="game-panel-red-dot" aria-hidden="true" /> : null}
+                      <button key={entry.entryId} type="button" onClick={getPanelEntryAction(entry.entryId)}>
+                        {entry.label}
+                        {entry.entryId === casePanelEntry.entryId && hasUnreadCases ? (
+                          <span className="game-panel-red-dot" aria-hidden="true" />
+                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -1085,8 +1796,33 @@ export function GameScreen({
           </aside>
         </section>
 
+        {isAiProcessTraceOpen ? (
+          <AiProcessTracePanel
+            turnNumber={state.turnCounter}
+            scopeLabel={isOpeningTrace ? '开局生成' : undefined}
+            execution={displayedTraceExecution}
+            stageLabels={aiProcessStageLabels}
+            attemptStarts={isOpeningTrace ? [] : lastTurnNarratorAttemptStarts}
+            attempts={displayedTraceAttempts}
+            streamingCharacterCount={activeStreamingText.length}
+            reasoningText={displayedTraceReasoning}
+            reasoningEnabled={Boolean(
+              tavernSettings?.reasoningOutput.showInUi &&
+              tavernSettings.reasoningOutput.mode !== 'off'
+            )}
+            safeError={isOpeningTrace ? openingError : lastTurnExecution?.status === 'failed' ? turnError : null}
+            onClose={() => setIsAiProcessTraceOpen(false)}
+          />
+        ) : null}
         <footer className="game-footer">
-          <span className="game-footer-turn">回合：{state.turnCounter}</span>
+          <span className="game-footer-turn-group">
+            <AiProcessTraceButton
+              open={isAiProcessTraceOpen}
+              active={isRunning || isOpeningStarting}
+              onClick={() => setIsAiProcessTraceOpen((open) => !open)}
+            />
+            <span className="game-footer-turn">回合：{state.turnCounter}</span>
+          </span>
           {footerTickerItems.length ? (
             <span className="game-footer-ticker" aria-label="城市滚动信息">
               <span className="game-footer-ticker-track">
@@ -1100,6 +1836,9 @@ export function GameScreen({
           ) : null}
         </footer>
       </section>
+      {isStoryExportOpen ? (
+        <StoryExportModal state={state} onClose={() => setIsStoryExportOpen(false)} />
+      ) : null}
       {isDiagnosticOpen ? (
         <DiagnosticExportModal text={diagnosticText} onClose={handleCloseDiagnostic} />
       ) : null}
@@ -1109,6 +1848,28 @@ export function GameScreen({
             state={state}
             onClose={() => setIsCharacterArchiveOpen(false)}
             onStateChange={onStateChange}
+            onUpdateActorProfile={handleUpdateActorProfile}
+            visualSaveId={visualSaveId}
+            visualRepository={supportsVisualWrites(imageVisualRepository) ? imageVisualRepository : undefined}
+            createPromptConversion={createAuxiliaryGeneration ? () => {
+              const client = createAuxiliaryGeneration();
+              return client ? new ImagePromptConversionProbe(client, {
+                inputModalities: imageConversionSupportsImages ? ['text', 'image'] : ['text'],
+                loadConversionInstructions: async () => (
+                  await imagePromptTemplateRepository.load()
+                ).conversionInstructions
+              }) : null;
+            } : undefined}
+            onOpenImageSettings={() => {
+              setIsCharacterArchiveOpen(false);
+              onSettings('imageGeneration');
+            }}
+            onVisualRepositoryChanged={() => setVisualRepositoryRevision((value) => value + 1)}
+            avgOverrideRepository={avgVisualOverrideRepository}
+            avgOverrideRevision={avgVisualOverrideRevision}
+            avgImageGenerationService={avgImageGenerationService}
+            avgResourceRuntime={avgPresentationResourceRuntime}
+            onAvgOverrideChanged={() => setAvgVisualOverrideRevision((value) => value + 1)}
           />
         ) : null}
       {isPlayerDossierOpen ? (
@@ -1116,6 +1877,28 @@ export function GameScreen({
           state={state}
           onStateChange={onStateChange}
           onClose={() => setIsPlayerDossierOpen(false)}
+          visualSaveId={visualSaveId}
+          visualRepository={supportsVisualWrites(imageVisualRepository) ? imageVisualRepository : undefined}
+          createPromptConversion={createAuxiliaryGeneration ? () => {
+            const client = createAuxiliaryGeneration();
+            return client ? new ImagePromptConversionProbe(client, {
+              inputModalities: imageConversionSupportsImages ? ['text', 'image'] : ['text'],
+              loadConversionInstructions: async () => (
+                await imagePromptTemplateRepository.load()
+              ).conversionInstructions
+            }) : null;
+          } : undefined}
+          onOpenImageSettings={() => {
+            setIsPlayerDossierOpen(false);
+            onSettings('imageGeneration');
+          }}
+          onVisualRepositoryChanged={() => setVisualRepositoryRevision((value) => value + 1)}
+          avgOverrideRepository={avgVisualOverrideRepository}
+          avgOverrideRevision={avgVisualOverrideRevision}
+          avgImageGenerationService={avgImageGenerationService}
+          avgResourceRuntime={avgPresentationResourceRuntime}
+          onAvgOverrideChanged={() => setAvgVisualOverrideRevision((value) => value + 1)}
+          initialVisualEditorOpen={playerDossierInitialSection === 'visuals'}
         />
       ) : null}
       {isAssetArchiveOpen ? (
@@ -1148,11 +1931,45 @@ export function GameScreen({
         <ReputationArchiveModal state={state} onClose={() => setIsReputationArchiveOpen(false)} />
       ) : null}
       {isRelationshipNetworkPanelOpen ? (
-        <RelationshipNetworkPanelModal state={state} onClose={() => setIsRelationshipNetworkPanelOpen(false)} />
+        <RelationshipNetworkPanelModal
+          state={state}
+          onClose={() => setIsRelationshipNetworkPanelOpen(false)}
+          onDeleteThread={handleDeleteRelationshipThread}
+        />
       ) : null}
-      {isFatePanelOpen ? <FatePanelModal state={state} onClose={() => setIsFatePanelOpen(false)} /> : null}
+      {isFatePanelOpen ? (
+        <FatePanelModal
+          state={state}
+          onClose={() => setIsFatePanelOpen(false)}
+          onDeleteThread={handleDeleteRelationshipThread}
+        />
+      ) : null}
+      {isLivelihoodPanelOpen && state.player.currentIdentity === 'civilian' ? (
+        <LivelihoodPanelModal
+          state={state}
+          onClose={() => setIsLivelihoodPanelOpen(false)}
+          onDraftPlayerAction={handleDraftPlayerAction}
+          onOpenInstitution={(organizationId) => {
+            setIsLivelihoodPanelOpen(false);
+            setInstitutionInitialOrganizationId(organizationId);
+            setIsSocialInstitutionPanelOpen(true);
+          }}
+        />
+      ) : null}
       {isSocialInstitutionPanelOpen ? (
-        <SocialInstitutionPanelModal state={state} onClose={() => setIsSocialInstitutionPanelOpen(false)} />
+        <SocialInstitutionPanelModal
+          state={state}
+          initialOrganizationId={institutionInitialOrganizationId ?? undefined}
+          onClose={() => setIsSocialInstitutionPanelOpen(false)}
+          onOpenLivelihood={
+            state.player.currentIdentity === 'civilian'
+              ? () => {
+                  setIsSocialInstitutionPanelOpen(false);
+                  setIsLivelihoodPanelOpen(true);
+                }
+              : undefined
+          }
+        />
       ) : null}
       {isGrayNetworkPanelOpen ? (
         <GrayNetworkPanelModal
@@ -1169,6 +1986,7 @@ export function GameScreen({
             onAbortEvolution={isManualEvolutionRunning ? handleAbortManualEvolution : undefined}
             isEvolutionRunning={isManualEvolutionRunning}
             evolutionStatus={manualEvolutionStatus}
+            onArchiveEntry={handleArchiveDynamicEntry}
           />
         ) : null}
       {isNewsPaperOpen ? (
@@ -1191,6 +2009,24 @@ export function GameScreen({
           onClose={() => setIsMemoryArchiveOpen(false)}
         />
       ) : null}
+        {isImageGalleryOpen && supportsVisualWrites(imageVisualRepository) ? (
+          <ImageGalleryModal
+            visualSaveId={visualSaveId}
+            repository={imageVisualRepository}
+            actors={state.actors}
+            actorIdAliases={visualActorIdAliases}
+            automationRuntimeRepository={imageAutomationRuntimeRepository}
+            onCancelAutomation={(triggerId) => imageAutomationCoordinator?.cancel(triggerId)}
+            onRetryAutomation={async (triggerId) => {
+              if (!visualSaveId || !imageAutomationCoordinator) return;
+              await imageAutomationCoordinator.retry(visualSaveId, state, triggerId);
+              setVisualRepositoryRevision((value) => value + 1);
+            }}
+            onRepositoryChanged={() => setVisualRepositoryRevision((value) => value + 1)}
+            onOpenSettings={() => onSettings('imageGeneration')}
+            onClose={() => setIsImageGalleryOpen(false)}
+          />
+        ) : null}
         {isMapArchiveOpen ? (
           <MapArchiveModal
             state={state}

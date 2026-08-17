@@ -369,7 +369,10 @@ function PropertyCard({
     item.category === 'fixedAsset'
       ? fixedAssetHoldingLabels[item.holdingRelation]
       : vehicleHoldingLabels[item.holdingRelation];
-  const statusLabel = item.category === 'vehicle' ? vehicleConditionLabels[item.condition] : holdingLabel;
+  const statusLabel =
+    item.category === 'vehicle'
+      ? `${holdingLabel} · ${vehicleConditionLabels[item.condition]}`
+      : holdingLabel;
   const subtitle = item.locationSummary;
   const detail = item.category === 'fixedAsset' ? item.ownershipSummary : item.accessSummary;
 
@@ -635,7 +638,7 @@ export function AssetArchiveModal({
 
         <div className="asset-archive-shell">
           <aside className="asset-sidebar" aria-label="物品与资产分类">
-            <NavButton view="allItems" activeView={activeView} count={normalItems.length} onClick={handleViewChange} />
+            <NavButton view="allItems" activeView={activeView} count={assets.length} onClick={handleViewChange} />
             <div className="asset-sidebar-children" aria-label="全部物品子分类">
               {normalCategories.map((category) => (
                 <NavButton
@@ -662,7 +665,7 @@ export function AssetArchiveModal({
                     ? '住所、出租物业、投资等长期资产。'
                     : activeView === 'vehicle'
                       ? '车辆、船只、通行工具等会影响移动的资产。'
-                      : '普通物品、装备、文件和贵重物品。证据只是筛选标签，不是独立物品分类。'}
+                      : '普通物品、装备、文件和贵重物品；下方同时概览固定资产与交通工具。证据只是筛选标签，不是独立物品分类。'}
                 </p>
               </div>
               {activeView === 'equipment' ? <span>点击装备可装备、卸下或替换三格装备位。</span> : null}
@@ -679,6 +682,43 @@ export function AssetArchiveModal({
                   />
                 ))}
               </div>
+            ) : null}
+
+            {activeView === 'allItems' && (fixedAssets.length > 0 || vehicles.length > 0) ? (
+              <section className="asset-long-term-overview" aria-label="固定资产与交通工具概览">
+                <header>
+                  <div>
+                    <h4>固定资产与交通工具</h4>
+                    <p>长期资产不会混入随身物品格，但会在这里明确显示。</p>
+                  </div>
+                  <div className="asset-long-term-overview-actions">
+                    {fixedAssets.length > 0 ? (
+                      <button type="button" onClick={() => handleViewChange('fixedAsset')}>
+                        查看固定资产 {fixedAssets.length}
+                      </button>
+                    ) : null}
+                    {vehicles.length > 0 ? (
+                      <button type="button" onClick={() => handleViewChange('vehicle')}>
+                        查看交通工具 {vehicles.length}
+                      </button>
+                    ) : null}
+                  </div>
+                </header>
+                {fixedAssets.length > 0 ? (
+                  <div className="asset-property-list">
+                    {fixedAssets.map((item) => (
+                      <PropertyCard key={item.itemId} item={item} onClick={() => setDetailItem(item)} />
+                    ))}
+                  </div>
+                ) : null}
+                {vehicles.length > 0 ? (
+                  <div className="asset-property-list">
+                    {vehicles.map((item) => (
+                      <PropertyCard key={item.itemId} item={item} onClick={() => setDetailItem(item)} />
+                    ))}
+                  </div>
+                ) : null}
+              </section>
             ) : null}
 
             {displayedFixedAssets.length > 0 ? (

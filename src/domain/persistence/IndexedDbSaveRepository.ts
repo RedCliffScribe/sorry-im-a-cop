@@ -144,4 +144,16 @@ export class IndexedDbSaveRepository implements SaveRepository {
       db.close();
     }
   }
+
+  async clearAll(): Promise<void> {
+    const db = await this.open();
+    try {
+      const transaction = db.transaction([SUMMARY_STORE_NAME, PAYLOAD_STORE_NAME], 'readwrite');
+      transaction.objectStore(SUMMARY_STORE_NAME).clear();
+      transaction.objectStore(PAYLOAD_STORE_NAME).clear();
+      await transactionDone(transaction);
+    } finally {
+      db.close();
+    }
+  }
 }

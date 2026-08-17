@@ -54,6 +54,7 @@ export function PromptManagementPanel({
     onChange({
       ...settings,
       prompts: {
+        ...settings.prompts,
         overrides: {
           ...settings.prompts.overrides,
           [selectedTemplate.id]: text
@@ -67,6 +68,7 @@ export function PromptManagementPanel({
     onChange({
       ...settings,
       prompts: {
+        ...settings.prompts,
         overrides
       }
     });
@@ -76,6 +78,7 @@ export function PromptManagementPanel({
     onChange({
       ...settings,
       prompts: {
+        ...settings.prompts,
         overrides: {}
       }
     });
@@ -103,6 +106,7 @@ export function PromptManagementPanel({
       onChange({
         ...settings,
         prompts: {
+          ...settings.prompts,
           overrides
         }
       });
@@ -142,7 +146,8 @@ export function PromptManagementPanel({
         </div>
       </div>
 
-      <div className="prompt-manager-layout">
+      <div className="settings-page-scroll">
+        <div className="prompt-manager-layout">
         <aside className="prompt-manager-rail" aria-label="提示词分类">
           {promptCategories.map((category) => (
             <button
@@ -189,6 +194,7 @@ export function PromptManagementPanel({
           />
           {importMessage ? <p className="muted">{importMessage}</p> : null}
         </section>
+        </div>
       </div>
     </section>
   );

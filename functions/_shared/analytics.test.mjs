@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ANALYTICS_HEARTBEAT_INTERVAL_SECONDS,
+  ANALYTICS_HEARTBEAT_MIN_WRITE_SECONDS,
+  ONLINE_WINDOW_SECONDS,
   dayKeyFor,
   hasAdminAuthorization,
   hashAnalyticsId,
+  isHeartbeatWriteDue,
   parseHeartbeatPayload,
   readCloudflareRegion
 } from './analytics.js';
@@ -37,6 +41,20 @@ describe('Cloudflare analytics shared boundary', () => {
     const instant = new Date('2026-07-19T16:30:00.000Z');
     expect(dayKeyFor(instant, 'Asia/Shanghai')).toBe('2026-07-20');
     expect(dayKeyFor(instant, 'UTC')).toBe('2026-07-19');
+  });
+
+  it('uses a five-minute heartbeat with a wider ten-minute active window', () => {
+    expect(ANALYTICS_HEARTBEAT_INTERVAL_SECONDS).toBe(300);
+    expect(ANALYTICS_HEARTBEAT_MIN_WRITE_SECONDS).toBe(240);
+    expect(ONLINE_WINDOW_SECONDS).toBe(600);
+  });
+
+  it('suppresses legacy clients that heartbeat again inside the server write gap', () => {
+    const now = new Date('2026-08-02T12:05:00.000Z');
+    expect(isHeartbeatWriteDue('2026-08-02T12:01:01.000Z', now)).toBe(false);
+    expect(isHeartbeatWriteDue('2026-08-02T12:01:00.000Z', now)).toBe(true);
+    expect(isHeartbeatWriteDue(null, now)).toBe(true);
+    expect(isHeartbeatWriteDue('invalid', now)).toBe(true);
   });
 
   it('reads Cloudflare region metadata without reading or returning a raw IP', () => {

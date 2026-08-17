@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OpeningSetup } from '../../domain/runtime/initialState';
-import type { AttributeBlock, CantoneseFlavorLevel, CurrentIdentity, OriginBackground, Trait } from '../../domain/runtime/types';
+import type {
+  AttributeBlock,
+  CantoneseFlavorLevel,
+  CurrentIdentity,
+  GameDifficultyLevel,
+  OriginBackground,
+  Trait
+} from '../../domain/runtime/types';
+import { cantoneseFlavorProfiles } from '../../domain/settings/cantoneseFlavor';
+import { gameDifficultyProfiles } from '../../domain/settings/gameDifficulty';
 import {
   getAllowedPoliceDepartments,
   getAllowedPolicePostings,
@@ -23,6 +32,7 @@ import {
   policeRankOptions,
   triadRankOptions,
   triadSocietyOptions,
+  type CivilianOpeningProfileOption,
   type PoliceDepartmentId,
   type PoliceRankId,
   type TriadRankId
@@ -36,11 +46,38 @@ import story1988Img from '../../assets/storypack/1988.webp';
 import story1990Img from '../../assets/storypack/1990.webp';
 import story1994Img from '../../assets/storypack/1994.webp';
 import story1996Img from '../../assets/storypack/1996.webp';
+import {
+  OpeningCharacterTemplateDialog,
+  type OpeningCharacterTemplateDialogMode
+} from '../components/OpeningCharacterTemplateDialog';
 import { OpeningLegalDisclaimerModal } from '../components/OpeningLegalDisclaimerModal';
 import {
   hasAcceptedOpeningLegalDisclaimer,
   recordOpeningLegalDisclaimerAcceptance
 } from '../legal/openingLegalDisclaimer';
+import { CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY } from '../opening/customOriginStorage';
+import {
+  dramaticOpeningDefinitions,
+  dramaticOpeningGroups,
+  getDramaticOpeningDefinition
+} from '../../domain/drama/openingRegistry';
+import { IndexedDbCustomContentRepository } from '../../domain/customContent/IndexedDbCustomContentRepository';
+import {
+  loadNewGameCustomContentLibrary,
+  MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES,
+  MAX_NEW_GAME_CUSTOM_CONTENT_SELECTIONS,
+  type NewGameCustomContentLibrary,
+  type NewGameCustomContentOption,
+  type NewGameCustomContentReviewItem
+} from '../../domain/customContent/newGameSelection';
+import {
+  OPENING_CHARACTER_TEMPLATE_WORLDPACK_ID,
+  deleteOpeningCharacterTemplate,
+  loadOpeningCharacterTemplates,
+  saveOpeningCharacterTemplate,
+  type OpeningCharacterTemplate,
+  type OpeningCharacterTemplateProfile
+} from '../../domain/opening/openingCharacterTemplateStore';
 
 interface OpeningScreenProps {
   onStartGame: (setup: OpeningSetup) => void;
@@ -48,6 +85,10 @@ interface OpeningScreenProps {
   isStarting?: boolean;
   error?: string | null;
   streamText?: string;
+  customContentReview?: NewGameCustomContentReviewItem[];
+  onApproveCustomContentReview?: () => void;
+  onCancelCustomContentReview?: () => void;
+  officialDlcIds?: string[];
 }
 
 interface AttributePreset {
@@ -63,19 +104,21 @@ interface OriginBackgroundDraft {
   backgroundSummary: string;
 }
 
-interface CantoneseFlavorOption {
-  id: CantoneseFlavorLevel;
-  label: string;
-  summary: string;
-}
-
 interface OpeningPressureOption {
   id: NonNullable<OpeningSetup['openingPressure']>;
   label: string;
   summary: string;
 }
 
-const openingSteps = ['世界与剧本', '身份选择', '基础档案', '能力与特质', '确认生成'];
+const openingSteps = [
+  '世界与剧本',
+  '身份选择',
+  '基础档案',
+  '能力与特质',
+  '戏剧化开局',
+  '自定义内容',
+  '确认生成'
+];
 const storypackInfluenceLabels: Record<string, string> = {
   off: '关闭',
   low: '低',
@@ -88,6 +131,16 @@ const maxOpeningTraits = 3;
 const attributeHoldDelayMs = 300;
 const attributeHoldRepeatMs = 75;
 const minOpeningAge = 16;
+const civilianOccupationGroups: Array<{
+  id: CivilianOpeningProfileOption['occupationGroup'];
+  label: string;
+  summary: string;
+}> = [
+  { id: 'frontline', label: '基层与街面职业', summary: '接触面广、收入较低，容易从日常事件进入城市关系。' },
+  { id: 'professional', label: '专业与办公室职业', summary: '拥有明确行业入口，但权限仍受岗位和保密边界约束。' },
+  { id: 'management', label: '中层管理与经营', summary: '能调动有限人手或经营资源，不等于机构高层。' },
+  { id: 'free', label: '自由选择', summary: '无业或自定义职业，保留更开放的生活起点。' }
+];
 const maxOpeningAge = 90;
 const fallbackOpeningAge = 25;
 const defaultBirthMonth = 4;
@@ -114,7 +167,6 @@ const scenarioYearMap: Record<string, string> = {
   hk_1994_urban_fracture: '1994',
   hk_1996_handover_eve: '1996'
 };
-const customOriginBackgroundsStorageKey = 'sorry-im-a-cop-v2-custom-origin-backgrounds';
 const civilianCustomLocationOptions = civilianOpeningProfileOptions
   .filter((profile) => profile.employmentStatus === 'employed')
   .map((profile) => ({
@@ -127,14 +179,6 @@ const defaultAppearanceByIdentity: Record<CurrentIdentity, string> = {
   civilian: '穿着符合当前生活与收入状况的日常衣服，神情带着普通生活的疲惫和警觉。',
   gang_member: '穿着不起眼的街头便服，神情谨慎，不敢把字头名号挂在脸上。'
 };
-
-const cantoneseFlavorOptions: CantoneseFlavorOption[] = [
-  { id: 'off', label: '关闭', summary: '对白保持标准中文，不主动加入粤语。' },
-  { id: 'light', label: '轻微', summary: '少量称呼、语气词和港式口吻。' },
-  { id: 'medium', label: '中等', summary: '主要对白带香港味，叙述仍易读。' },
-  { id: 'heavy', label: '较多', summary: '人物对白较多粤语和港式句式。' },
-  { id: 'full', label: '全粤语', summary: '对白尽量粤语化，适合强风味游玩。' }
-];
 
 const openingPressureOptions: OpeningPressureOption[] = [
   { id: 'relaxed', label: '轻松开局', summary: '普通日常第一幕：日常执勤、生活小事、街坊寒暄或普通人情请求。' },
@@ -407,6 +451,21 @@ function normalizeOpeningAge(age: number) {
   return Number.isFinite(age) ? Math.max(minOpeningAge, Math.min(maxOpeningAge, Math.floor(age))) : fallbackOpeningAge;
 }
 
+function readValidOpeningAgeDraft(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) &&
+    parsed >= minOpeningAge &&
+    parsed <= maxOpeningAge
+    ? parsed
+    : undefined;
+}
+
+function resolveOpeningAgeDraft(value: string): number {
+  if (!value.trim()) return fallbackOpeningAge;
+  return normalizeOpeningAge(Number(value));
+}
+
 function normalizeBirthMonth(month: number) {
   return Number.isFinite(month) ? Math.max(1, Math.min(12, Math.floor(month))) : defaultBirthMonth;
 }
@@ -475,7 +534,7 @@ function loadCustomOriginBackgrounds(): OriginBackground[] {
   if (typeof localStorage === 'undefined') return [];
 
   try {
-    const raw = localStorage.getItem(customOriginBackgroundsStorageKey);
+    const raw = localStorage.getItem(CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -506,16 +565,29 @@ export function OpeningScreen({
   onBack,
   isStarting = false,
   error = null,
-  streamText = ''
+  streamText = '',
+  customContentReview = [],
+  onApproveCustomContentReview,
+  onCancelCustomContentReview,
+  officialDlcIds = []
 }: OpeningScreenProps) {
+  const customContentRepository = useMemo(
+    () => new IndexedDbCustomContentRepository(),
+    []
+  );
   const [stepIndex, setStepIndex] = useState(0);
   const [scenarioId, setScenarioId] = useState('hk_1988_crosscurrents');
-  const [storypackInfluence, setStorypackInfluence] = useState<OpeningSetup['storypackInfluence']>('medium');
+  const [storypackInfluence, setStorypackInfluence] = useState<OpeningSetup['storypackInfluence']>('high');
+  const [screenCharacterSeedsEnabled, setScreenCharacterSeedsEnabled] = useState(true);
+  const [dramaticOpeningEnabled, setDramaticOpeningEnabled] = useState(false);
+  const [dramaticOpeningGroupId, setDramaticOpeningGroupId] = useState(dramaticOpeningGroups[0].id);
+  const [dramaticOpeningId, setDramaticOpeningId] = useState(dramaticOpeningDefinitions[0].id);
   const [currentIdentity, setCurrentIdentity] = useState<CurrentIdentity>('police');
   const [playerName, setPlayerName] = useState('');
   const [englishName, setEnglishName] = useState('');
   const [gender, setGender] = useState<OpeningSetup['gender']>('male');
-  const [age, setAge] = useState(25);
+  const [age, setAge] = useState(fallbackOpeningAge);
+  const [ageDraft, setAgeDraft] = useState(String(fallbackOpeningAge));
   const [birthMonth, setBirthMonth] = useState(defaultBirthMonth);
   const [birthDay, setBirthDay] = useState(defaultBirthDay);
   const [personality, setPersonality] = useState('谨慎，观察欲强，还没有完全适应街面规则。');
@@ -534,6 +606,7 @@ export function OpeningScreen({
   const [postingId, setPostingId] = useState('mong_kok_police_station');
   const [civilianProfileId, setCivilianProfileId] = useState(civilianOpeningProfileOptions[0].id);
   const [customCivilianOccupation, setCustomCivilianOccupation] = useState('');
+  const [customCivilianEmployerName, setCustomCivilianEmployerName] = useState('');
   const [customCivilianPlaceId, setCustomCivilianPlaceId] = useState(civilianCustomLocationOptions[0].placeId);
   const [customCivilianCommunitySummary, setCustomCivilianCommunitySummary] = useState('');
   const [triadSocietyId, setTriadSocietyId] = useState(triadSocietyOptions[0].id);
@@ -544,12 +617,48 @@ export function OpeningScreen({
   const [attributes, setAttributes] = useState<AttributeBlock>(attributePresets[0].attributes);
   const [selectedTraitIds, setSelectedTraitIds] = useState<string[]>([]);
   const [openingPressure, setOpeningPressure] = useState<NonNullable<OpeningSetup['openingPressure']>>('relaxed');
+  const [gameDifficulty, setGameDifficulty] = useState<GameDifficultyLevel>('standard');
   const [openingNote, setOpeningNote] = useState('');
+  const [customContentLibrary, setCustomContentLibrary] =
+    useState<NewGameCustomContentLibrary>({
+      characters: [],
+      events: [],
+      projects: []
+    });
+  const [customContentLibraryStatus, setCustomContentLibraryStatus] = useState<
+    'loading' | 'ready' | 'error'
+  >('loading');
+  const [customContentNotice, setCustomContentNotice] = useState<string | null>(
+    null
+  );
+  const [selectedCustomContentKeys, setSelectedCustomContentKeys] = useState<
+    string[]
+  >([]);
+  const [prioritizedCustomContentKeys, setPrioritizedCustomContentKeys] =
+    useState<string[]>([]);
+  const [
+    openingCustomSupportSelectionKey,
+    setOpeningCustomSupportSelectionKey
+  ] = useState<string | undefined>();
   const [isLegalDisclaimerOpen, setIsLegalDisclaimerOpen] = useState(false);
+  const [characterTemplates, setCharacterTemplates] = useState<
+    OpeningCharacterTemplate[]
+  >(() => loadOpeningCharacterTemplates());
+  const [characterTemplateDialogMode, setCharacterTemplateDialogMode] =
+    useState<OpeningCharacterTemplateDialogMode>();
+  const [characterTemplateName, setCharacterTemplateName] = useState('');
+  const [activeCharacterTemplateId, setActiveCharacterTemplateId] =
+    useState<string>();
+  const [characterTemplateStatus, setCharacterTemplateStatus] =
+    useState('');
   const attributeHoldTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const attributeHoldIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
   const selectedScenario = hk1980sOpeningScenarios.find((scenario) => scenario.id === scenarioId) ?? hk1980sOpeningScenarios[2];
+  const selectedDramaticOpening = getDramaticOpeningDefinition(dramaticOpeningId);
+  const visibleDramaticOpenings = dramaticOpeningDefinitions.filter(
+    (definition) => definition.groupId === dramaticOpeningGroupId
+  );
   const allowedDepartments = getAllowedPoliceDepartments(rankId);
   const selectedDepartment = allowedDepartments.find((department) => department.id === departmentId) ?? allowedDepartments[0];
   const allowedPostings = getAllowedPolicePostings(selectedDepartment.id);
@@ -562,6 +671,7 @@ export function OpeningScreen({
     publicOccupation: customCivilianOccupation,
     workplacePlaceId: selectedCustomCivilianPlace.placeId,
     workplaceLabel: selectedCustomCivilianPlace.label,
+    employerName: customCivilianEmployerName,
     communitySummary: customCivilianCommunitySummary
   };
   const selectedCivilianProfile = getCivilianOpeningProfile(civilianProfileId, civilianCustomProfile);
@@ -577,12 +687,29 @@ export function OpeningScreen({
     rankId: selectedTriadRank.id,
     roleId: selectedTriadRole.id
   });
-  const derivedBirthYear = calculateBirthYear(age, selectedScenario.time);
+  const validDraftAge = readValidOpeningAgeDraft(ageDraft);
+  const displayedAge = validDraftAge ?? age;
+  const resolvedAge = resolveOpeningAgeDraft(ageDraft);
+  const derivedBirthYear = calculateBirthYear(
+    displayedAge,
+    selectedScenario.time
+  );
   const safeBirthMonth = normalizeBirthMonth(birthMonth);
   const maxBirthDay = getDaysInMonth(derivedBirthYear, safeBirthMonth);
   const safeBirthDay = normalizeBirthDay(birthDay, maxBirthDay);
   const birthDayOptions = useMemo(() => Array.from({ length: maxBirthDay }, (_, index) => index + 1), [maxBirthDay]);
-  const derivedBirthDate = calculateBirthDate(age, selectedScenario.time, safeBirthMonth, safeBirthDay);
+  const derivedBirthDate = calculateBirthDate(
+    displayedAge,
+    selectedScenario.time,
+    safeBirthMonth,
+    safeBirthDay
+  );
+  const resolvedBirthDate = calculateBirthDate(
+    resolvedAge,
+    selectedScenario.time,
+    safeBirthMonth,
+    birthDay
+  );
   const resolvedPlayerName = playerName.trim();
   const resolvedEnglishName = englishName.trim();
   const playerNameSummary = resolvedPlayerName || '留空，开局生成';
@@ -600,9 +727,39 @@ export function OpeningScreen({
     allOriginBackgrounds.find((originBackground) => originBackground.originBackgroundId === originBackgroundId) ??
     hk1980sOriginBackgroundOptions[0];
   const selectedCantoneseFlavor =
-    cantoneseFlavorOptions.find((option) => option.id === cantoneseFlavor) ?? cantoneseFlavorOptions[2];
+    cantoneseFlavorProfiles.find((option) => option.id === cantoneseFlavor) ?? cantoneseFlavorProfiles[2];
   const selectedOpeningPressure =
     openingPressureOptions.find((option) => option.id === openingPressure) ?? openingPressureOptions[0];
+  const selectedGameDifficulty =
+    gameDifficultyProfiles.find((option) => option.id === gameDifficulty) ??
+    gameDifficultyProfiles[2];
+  const allCustomContentOptions = useMemo(
+    () => [
+      ...customContentLibrary.projects,
+      ...customContentLibrary.events,
+      ...customContentLibrary.characters
+    ],
+    [customContentLibrary]
+  );
+  const selectedCustomContentOptions = allCustomContentOptions.filter((option) =>
+    selectedCustomContentKeys.includes(option.selection.selectionKey)
+  );
+  const prioritizedCustomContentOptions = selectedCustomContentOptions.filter(
+    (option) =>
+      prioritizedCustomContentKeys.includes(option.selection.selectionKey)
+  );
+  const selectedOpeningCustomSupport = allCustomContentOptions.find(
+    (option) =>
+      option.selection.selectionKey === openingCustomSupportSelectionKey
+  );
+  const compatibleCharacterTemplates = characterTemplates.filter(
+    (template) =>
+      template.worldpackId === OPENING_CHARACTER_TEMPLATE_WORLDPACK_ID
+  );
+  const activeCharacterTemplate =
+    compatibleCharacterTemplates.find(
+      (template) => template.id === activeCharacterTemplateId
+    ) ?? null;
   const customCivilianOccupationMissing =
     currentIdentity === 'civilian' && civilianProfileId === 'custom_occupation' && customCivilianOccupation.trim().length === 0;
   const canGoNext = (stepIndex !== 3 || remainingPoints >= 0) && (stepIndex !== 2 || !customCivilianOccupationMissing);
@@ -620,6 +777,27 @@ export function OpeningScreen({
   }
 
   useEffect(() => stopAttributeHold, []);
+
+  useEffect(() => {
+    let active = true;
+    setCustomContentLibraryStatus('loading');
+    void loadNewGameCustomContentLibrary({
+      repository: customContentRepository,
+      worldpackId: 'hk_1988'
+    })
+      .then((library) => {
+        if (!active) return;
+        setCustomContentLibrary(library);
+        setCustomContentLibraryStatus('ready');
+      })
+      .catch(() => {
+        if (!active) return;
+        setCustomContentLibraryStatus('error');
+      });
+    return () => {
+      active = false;
+    };
+  }, [customContentRepository]);
 
   function selectIdentity(identity: CurrentIdentity) {
     setCurrentIdentity(identity);
@@ -673,7 +851,262 @@ export function OpeningScreen({
 
   function persistCustomOriginBackgrounds(nextOriginBackgrounds: OriginBackground[]) {
     setCustomOriginBackgrounds(nextOriginBackgrounds);
-    localStorage.setItem(customOriginBackgroundsStorageKey, JSON.stringify(nextOriginBackgrounds));
+    localStorage.setItem(CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY, JSON.stringify(nextOriginBackgrounds));
+  }
+
+  function buildOpeningCharacterTemplateProfile(): OpeningCharacterTemplateProfile {
+    const templateAge = resolveOpeningAgeDraft(ageDraft);
+    const templateBirthYear = calculateBirthYear(
+      templateAge,
+      selectedScenario.time
+    );
+    const templateBirthDay = normalizeBirthDay(
+      birthDay,
+      getDaysInMonth(templateBirthYear, safeBirthMonth)
+    );
+    return {
+      playerName,
+      englishName,
+      gender: gender === 'female' ? 'female' : 'male',
+      age: templateAge,
+      birthMonth: safeBirthMonth,
+      birthDay: templateBirthDay,
+      personality,
+      appearance,
+      cantoneseFlavor,
+      policeNumber,
+      currentIdentity,
+      police:
+        currentIdentity === 'police'
+          ? {
+              rankId,
+              departmentId: selectedDepartment.id,
+              postingId: selectedPosting?.id ?? '',
+              roleId: selectedRole?.id ?? ''
+            }
+          : undefined,
+      civilian:
+        currentIdentity === 'civilian'
+          ? {
+              profileId: civilianProfileId,
+              customOccupation: customCivilianOccupation,
+              customEmployerName: customCivilianEmployerName,
+              customPlaceId: selectedCustomCivilianPlace.placeId,
+              customCommunitySummary: customCivilianCommunitySummary
+            }
+          : undefined,
+      triad:
+        currentIdentity === 'gang_member'
+          ? {
+              societyId: selectedTriadSociety.id,
+              territoryPlaceId: selectedTriadTerritory.placeId,
+              rankId: selectedTriadRank.id,
+              roleId: selectedTriadRole.id
+            }
+          : undefined,
+      originBackground: { ...selectedOriginBackground },
+      attributePresetId: selectedPresetId,
+      attributes: { ...attributes },
+      traitIds: [...selectedTraitIds]
+    };
+  }
+
+  function openCharacterTemplateDialog(
+    mode: OpeningCharacterTemplateDialogMode
+  ) {
+    if (mode === 'save') commitAgeDraft();
+    const refreshedTemplates = loadOpeningCharacterTemplates();
+    setCharacterTemplates(refreshedTemplates);
+    setCharacterTemplateName(
+      activeCharacterTemplate?.label ||
+        resolvedPlayerName ||
+        '未命名人物'
+    );
+    setCharacterTemplateStatus('');
+    setCharacterTemplateDialogMode(mode);
+  }
+
+  function saveCharacterTemplate(mode: 'copy' | 'update') {
+    const label = characterTemplateName.trim();
+    if (!label) {
+      setCharacterTemplateStatus('请填写人物模板名称。');
+      return;
+    }
+    commitAgeDraft();
+    const targetId =
+      mode === 'update' ? activeCharacterTemplate?.id : undefined;
+    const templates = saveOpeningCharacterTemplate({
+      ...(targetId ? { id: targetId } : {}),
+      label,
+      worldpackId: OPENING_CHARACTER_TEMPLATE_WORLDPACK_ID,
+      profile: buildOpeningCharacterTemplateProfile()
+    });
+    const savedTemplate = targetId
+      ? templates.find((template) => template.id === targetId)
+      : templates[0];
+    setCharacterTemplates(templates);
+    setActiveCharacterTemplateId(savedTemplate?.id);
+    setCharacterTemplateName(savedTemplate?.label ?? label);
+    setCharacterTemplateStatus(
+      targetId
+        ? '当前人物模板已更新。'
+        : '当前人物已另存为新模板。'
+    );
+  }
+
+  function deleteCharacterTemplate(templateId: string) {
+    const templates = deleteOpeningCharacterTemplate(templateId);
+    setCharacterTemplates(templates);
+    if (activeCharacterTemplateId === templateId) {
+      setActiveCharacterTemplateId(undefined);
+    }
+    setCharacterTemplateStatus('人物模板已删除。');
+  }
+
+  function loadCharacterTemplate(template: OpeningCharacterTemplate) {
+    if (
+      template.worldpackId !== OPENING_CHARACTER_TEMPLATE_WORLDPACK_ID
+    ) {
+      setCharacterTemplateStatus(
+        '该人物模板属于另一个世界包，不能在当前开局读取。'
+      );
+      return;
+    }
+
+    const profile = template.profile;
+    if (profile.originBackground) {
+      const isBuiltInOrigin = hk1980sOriginBackgroundOptions.some(
+        (origin) =>
+          origin.originBackgroundId ===
+          profile.originBackground?.originBackgroundId
+      );
+      const isKnownCustomOrigin = customOriginBackgrounds.some(
+        (origin) =>
+          origin.originBackgroundId ===
+          profile.originBackground?.originBackgroundId
+      );
+      if (!isBuiltInOrigin && !isKnownCustomOrigin) {
+        persistCustomOriginBackgrounds([
+          ...customOriginBackgrounds,
+          profile.originBackground
+        ]);
+      }
+      setOriginBackgroundId(profile.originBackground.originBackgroundId);
+    }
+
+    setCurrentIdentity(profile.currentIdentity);
+    setPlayerName(profile.playerName);
+    setEnglishName(profile.englishName);
+    setGender(profile.gender);
+    setAge(profile.age);
+    setAgeDraft(String(profile.age));
+    setBirthMonth(profile.birthMonth);
+    setBirthDay(profile.birthDay);
+    setPersonality(profile.personality);
+    setAppearance(profile.appearance);
+    setCantoneseFlavor(profile.cantoneseFlavor);
+    setPoliceNumber(profile.policeNumber);
+
+    if (profile.currentIdentity === 'police') {
+      const nextRank =
+        policeRankOptions.find(
+          (option) => option.id === profile.police?.rankId
+        ) ?? policeRankOptions[0];
+      const nextDepartments = getAllowedPoliceDepartments(nextRank.id);
+      const nextDepartment =
+        nextDepartments.find(
+          (option) => option.id === profile.police?.departmentId
+        ) ?? nextDepartments[0];
+      const nextPostings = getAllowedPolicePostings(nextDepartment.id);
+      const nextPosting =
+        nextPostings.find(
+          (option) => option.id === profile.police?.postingId
+        ) ?? nextPostings[0];
+      const nextRoles = getAllowedPoliceRoles(
+        nextDepartment.id,
+        nextRank.id
+      );
+      const nextRole =
+        nextRoles.find(
+          (option) => option.id === profile.police?.roleId
+        ) ?? nextRoles[0];
+      setRankId(nextRank.id);
+      setDepartmentId(nextDepartment.id);
+      setPostingId(nextPosting?.id ?? '');
+      setRoleId(nextRole?.id ?? '');
+    } else if (profile.currentIdentity === 'civilian') {
+      const nextCivilianProfileId = civilianOpeningProfileOptions.some(
+        (option) => option.id === profile.civilian?.profileId
+      )
+        ? profile.civilian?.profileId
+        : civilianOpeningProfileOptions[0].id;
+      const nextCustomPlaceId = civilianCustomLocationOptions.some(
+        (option) => option.placeId === profile.civilian?.customPlaceId
+      )
+        ? profile.civilian?.customPlaceId
+        : civilianCustomLocationOptions[0].placeId;
+      setCivilianProfileId(nextCivilianProfileId ?? civilianOpeningProfileOptions[0].id);
+      setCustomCivilianOccupation(
+        profile.civilian?.customOccupation ?? ''
+      );
+      setCustomCivilianEmployerName(
+        profile.civilian?.customEmployerName ?? ''
+      );
+      setCustomCivilianPlaceId(
+        nextCustomPlaceId ?? civilianCustomLocationOptions[0].placeId
+      );
+      setCustomCivilianCommunitySummary(
+        profile.civilian?.customCommunitySummary ?? ''
+      );
+    } else {
+      const nextSociety =
+        triadSocietyOptions.find(
+          (option) => option.id === profile.triad?.societyId
+        ) ?? triadSocietyOptions[0];
+      const nextTerritories = getAllowedTriadTerritories(nextSociety.id);
+      const nextTerritory =
+        nextTerritories.find(
+          (option) =>
+            option.placeId === profile.triad?.territoryPlaceId
+        ) ?? nextTerritories[0];
+      const nextRank =
+        triadRankOptions.find(
+          (option) => option.id === profile.triad?.rankId
+        ) ?? triadRankOptions[0];
+      const nextRoles = getAllowedTriadRoles(nextRank.id);
+      const nextRole =
+        nextRoles.find(
+          (option) => option.id === profile.triad?.roleId
+        ) ?? nextRoles[0];
+      setTriadSocietyId(nextSociety.id);
+      setTriadTerritoryPlaceId(nextTerritory?.placeId ?? '');
+      setTriadRankId(nextRank.id);
+      setTriadRoleId(nextRole?.id ?? '');
+    }
+
+    setSelectedPresetId(
+      attributePresets.some(
+        (preset) => preset.id === profile.attributePresetId
+      )
+        ? profile.attributePresetId
+        : 'custom'
+    );
+    setAttributes({ ...profile.attributes });
+    setSelectedTraitIds(
+      profile.traitIds.filter((traitId) =>
+        openingTraits.some((trait) => trait.traitId === traitId)
+      )
+    );
+    setOriginEditorMode('closed');
+    setEditingOriginBackgroundId(null);
+    setOriginDraftError('');
+    setActiveCharacterTemplateId(template.id);
+    setCharacterTemplateName(template.label);
+    setCharacterTemplateDialogMode(undefined);
+    setCharacterTemplateStatus(
+      `已读取人物模板“${template.label}”；世界、剧本与戏剧化开局未改变。`
+    );
+    setStepIndex(2);
   }
 
   function startNewOriginBackground() {
@@ -782,11 +1215,35 @@ export function OpeningScreen({
     });
   }
 
-  function updateAge(value: string) {
-    const nextAge = normalizeOpeningAge(Number(value) || fallbackOpeningAge);
+  function updateBirthDayForAge(nextAge: number) {
     const nextBirthYear = calculateBirthYear(nextAge, selectedScenario.time);
-    setAge(nextAge);
     setBirthDay((current) => normalizeBirthDay(current, getDaysInMonth(nextBirthYear, safeBirthMonth)));
+  }
+
+  function updateAgeDraft(value: string) {
+    if (!/^\d*$/.test(value)) return;
+    setAgeDraft(value);
+    const nextAge = readValidOpeningAgeDraft(value);
+    if (nextAge === undefined) return;
+    setAge(nextAge);
+    updateBirthDayForAge(nextAge);
+  }
+
+  function commitAgeDraft(): number {
+    const nextAge = resolveOpeningAgeDraft(ageDraft);
+    setAge(nextAge);
+    setAgeDraft(String(nextAge));
+    updateBirthDayForAge(nextAge);
+    return nextAge;
+  }
+
+  function navigateToStep(nextStepIndex: number) {
+    if (stepIndex === 2 && nextStepIndex !== 2) {
+      commitAgeDraft();
+    }
+    setStepIndex(
+      Math.max(0, Math.min(openingSteps.length - 1, nextStepIndex))
+    );
   }
 
   function updateBirthMonth(value: string) {
@@ -807,17 +1264,124 @@ export function OpeningScreen({
       stationOrPost: posting.label,
       department: department.label,
       rank: rank.label,
-      assignmentSummary: role.label
+      assignmentSummary: role.label,
+      authoritySummary: role.authoritySummary,
+      accessSummary: role.accessSummary,
+      dutySummary: role.dutySummary
     };
   }
 
+  function toggleCustomContent(option: NewGameCustomContentOption) {
+    const key = option.selection.selectionKey;
+    const selected = selectedCustomContentKeys.includes(key);
+    if (selected) {
+      setSelectedCustomContentKeys((current) =>
+        current.filter((item) => item !== key)
+      );
+      setPrioritizedCustomContentKeys((current) =>
+        current.filter((item) => item !== key)
+      );
+      if (openingCustomSupportSelectionKey === key) {
+        setOpeningCustomSupportSelectionKey(undefined);
+      }
+      setCustomContentNotice(null);
+      return;
+    }
+    const effectiveTargetKey =
+      option.selection.kind === 'content_project'
+        ? `event_group:${option.selection.focusEventGroupId}:${option.selection.focusEventGroupRevision}`
+        : `${option.selection.kind}:${option.selection.assetId}:${option.selection.revision}`;
+    const duplicatesExistingTarget = selectedCustomContentOptions.some(
+      (selectedOption) => {
+        const selectedTargetKey =
+          selectedOption.selection.kind === 'content_project'
+            ? `event_group:${selectedOption.selection.focusEventGroupId}:${selectedOption.selection.focusEventGroupRevision}`
+            : `${selectedOption.selection.kind}:${selectedOption.selection.assetId}:${selectedOption.selection.revision}`;
+        return selectedTargetKey === effectiveTargetKey;
+      }
+    );
+    if (duplicatesExistingTarget) {
+      setCustomContentNotice(
+        '同一个焦点事件不能同时通过内容项目和事件组重复选择。'
+      );
+      return;
+    }
+    if (
+      selectedCustomContentKeys.length >=
+      MAX_NEW_GAME_CUSTOM_CONTENT_SELECTIONS
+    ) {
+      setCustomContentNotice(
+        `每个存档最多启用 ${MAX_NEW_GAME_CUSTOM_CONTENT_SELECTIONS} 项自定义内容。`
+      );
+      return;
+    }
+    const requiresOpeningAdaptation = option.deploymentMode !== 'native';
+    if (
+      requiresOpeningAdaptation &&
+      prioritizedCustomContentKeys.length >=
+        MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES
+    ) {
+      setCustomContentNotice(
+        `需要世界适配的内容必须设为本局重点；本局重点最多 ${MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES} 项，避免批量 AI 适配阻塞开局。`
+      );
+      return;
+    }
+    setSelectedCustomContentKeys((current) => [...current, key]);
+    if (
+      requiresOpeningAdaptation ||
+      prioritizedCustomContentKeys.length <
+        MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES
+    ) {
+      setPrioritizedCustomContentKeys((current) => [...current, key]);
+    }
+    setCustomContentNotice(null);
+  }
+
+  function toggleCustomContentPriority(option: NewGameCustomContentOption) {
+    const key = option.selection.selectionKey;
+    const prioritized = prioritizedCustomContentKeys.includes(key);
+    if (prioritized) {
+      if (option.deploymentMode !== 'native') {
+        setCustomContentNotice(
+          '需要世界适配的内容必须保持为本局重点，才能在开局前完成一次明确适配。'
+        );
+        return;
+      }
+      setPrioritizedCustomContentKeys((current) =>
+        current.filter((item) => item !== key)
+      );
+      if (openingCustomSupportSelectionKey === key) {
+        setOpeningCustomSupportSelectionKey(undefined);
+      }
+      setCustomContentNotice(null);
+      return;
+    }
+    if (
+      prioritizedCustomContentKeys.length >=
+      MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES
+    ) {
+      setCustomContentNotice(
+        `每个存档最多设置 ${MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES} 项本局重点内容。`
+      );
+      return;
+    }
+    setPrioritizedCustomContentKeys((current) => [...current, key]);
+    setCustomContentNotice(null);
+  }
+
   function createSetup(): OpeningSetup {
+    const setupAge = resolveOpeningAgeDraft(ageDraft);
     return {
       playerName: resolvedPlayerName || undefined,
       englishName: englishName.trim() || undefined,
       gender,
-      age,
-      birthDate: derivedBirthDate,
+      age: setupAge,
+      birthDate: calculateBirthDate(
+        setupAge,
+        selectedScenario.time,
+        safeBirthMonth,
+        birthDay
+      ),
       policeNumber: currentIdentity === 'police' && policeNumber.length === 4 ? policeNumber : undefined,
       currentIdentity,
       policePostingId: currentIdentity === 'police' ? postingId : undefined,
@@ -825,8 +1389,10 @@ export function OpeningScreen({
       civilianCustomProfile:
         currentIdentity === 'civilian' && civilianProfileId === 'custom_occupation'
           ? {
-              ...civilianCustomProfile,
               publicOccupation: customCivilianOccupation.trim(),
+              workplacePlaceId: civilianCustomProfile.workplacePlaceId,
+              workplaceLabel: civilianCustomProfile.workplaceLabel,
+              ...(customCivilianEmployerName.trim() ? { employerName: customCivilianEmployerName.trim() } : {}),
               communitySummary: customCivilianCommunitySummary.trim() || undefined
             }
           : undefined,
@@ -841,15 +1407,29 @@ export function OpeningScreen({
       cantoneseFlavor,
       startTime: selectedScenario.time,
       storypackInfluence,
+      screenCharacterSeedsEnabled,
+      dramaticOpeningId: dramaticOpeningEnabled ? dramaticOpeningId : undefined,
+      customContentSelections: selectedCustomContentOptions.map((option) => ({
+        ...option.selection,
+        prioritized: prioritizedCustomContentKeys.includes(
+          option.selection.selectionKey
+        )
+      })),
+      openingCustomSupportSelectionKey: dramaticOpeningEnabled
+        ? openingCustomSupportSelectionKey
+        : undefined,
       lawIdentity: createLawIdentitySetup(),
       attributes,
       traits: selectedTraits,
       openingPressure,
-      openingNote
+      gameDifficulty,
+      openingNote,
+      officialDlcIds
     };
   }
 
   function handleStartGameRequest() {
+    commitAgeDraft();
     if (hasAcceptedOpeningLegalDisclaimer()) {
       onStartGame(createSetup());
       return;
@@ -897,11 +1477,15 @@ export function OpeningScreen({
               <input
                 aria-label="年龄"
                 type="number"
+                inputMode="numeric"
                 min={minOpeningAge}
                 max={maxOpeningAge}
-                value={age}
-                onChange={(event) => updateAge(event.target.value)}
+                step={1}
+                value={ageDraft}
+                onChange={(event) => updateAgeDraft(event.target.value)}
+                onBlur={commitAgeDraft}
               />
+              <small className="field-note">可输入 16–90 岁的整数。</small>
             </label>
             <label className="opening-field profile-field--birth-month">
               出生月
@@ -1070,6 +1654,173 @@ export function OpeningScreen({
     );
   }
 
+  function renderCustomContentGroup(
+    title: string,
+    options: NewGameCustomContentOption[]
+  ) {
+    if (options.length === 0) return null;
+    return (
+      <section className="opening-custom-content-group" aria-label={title}>
+        <h4>{title}</h4>
+        <div className="opening-custom-content-grid">
+          {options.map((option) => {
+            const key = option.selection.selectionKey;
+            const isSelected = selectedCustomContentKeys.includes(key);
+            const isPrioritized = prioritizedCustomContentKeys.includes(key);
+            const isOpeningSupport =
+              openingCustomSupportSelectionKey === key;
+            return (
+              <article
+                key={key}
+                className={
+                  isSelected
+                    ? 'opening-custom-content-card selected'
+                    : 'opening-custom-content-card'
+                }
+              >
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`本局选择${option.title}`}
+                    checked={isSelected}
+                    onChange={() => toggleCustomContent(option)}
+                  />
+                  <span>
+                    <strong>{option.title}</strong>
+                    <small>{option.summary}</small>
+                    {option.projectTitle ? (
+                      <small>所属项目：{option.projectTitle}</small>
+                    ) : null}
+                    {option.focusTitle ? (
+                      <small>当前焦点事件组：{option.focusTitle}</small>
+                    ) : null}
+                  </span>
+                  <span className="opening-custom-content-badges">
+                    <em>
+                      {option.deploymentMode === 'native'
+                        ? '原生适配'
+                        : '开局前生成适配'}
+                    </em>
+                    {option.defaultEnabledForNewGame ? (
+                      <em>新游戏推荐</em>
+                    ) : null}
+                  </span>
+                </label>
+                {isSelected ? (
+                  <label className="opening-custom-priority-choice">
+                    <input
+                      type="checkbox"
+                      aria-label={`将${option.title}设为本局重点`}
+                      checked={isPrioritized}
+                      disabled={
+                        option.deploymentMode !== 'native' && isPrioritized
+                      }
+                      onChange={() => toggleCustomContentPriority(option)}
+                    />
+                    <span>
+                      本局重点（尽快登场）
+                      {option.deploymentMode !== 'native' ? (
+                        <small>需要世界适配，必须占用一个重点名额</small>
+                      ) : null}
+                    </span>
+                  </label>
+                ) : null}
+                {isSelected && isPrioritized && dramaticOpeningEnabled ? (
+                  <label className="opening-custom-support-choice">
+                    <input
+                      type="radio"
+                      name="opening-custom-support"
+                      aria-label={`将${option.title}用于第一幕支持`}
+                      checked={isOpeningSupport}
+                      onChange={() =>
+                        setOpeningCustomSupportSelectionKey(key)
+                      }
+                    />
+                    第一幕支持
+                  </label>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  function renderCustomContentSelection() {
+    const optionCount = allCustomContentOptions.length;
+    return (
+      <section
+        className="opening-custom-content-selection"
+        aria-label="本局自定义内容"
+      >
+        <header>
+          <div>
+            <h3>本局自定义内容</h3>
+            <p>
+              可启用多项已发布 revision；最多 3 项设为本局重点，其余原生内容只作为自然登场候选，不会挤进开局生成。
+            </p>
+          </div>
+          <strong aria-label="本局自定义内容选择数量">
+            已启用 {selectedCustomContentKeys.length}/
+            {MAX_NEW_GAME_CUSTOM_CONTENT_SELECTIONS} · 本局重点{' '}
+            {prioritizedCustomContentKeys.length}/
+            {MAX_NEW_GAME_CUSTOM_CONTENT_PRIORITIES}
+          </strong>
+        </header>
+        {customContentLibraryStatus === 'loading' ? (
+          <p className="muted" role="status">
+            正在读取香港 1988 可用内容……
+          </p>
+        ) : null}
+        {customContentLibraryStatus === 'error' ? (
+          <p className="opening-warning" role="alert">
+            本地自定义内容库读取失败；你仍可不选内容并继续开局。
+          </p>
+        ) : null}
+        {customContentLibraryStatus === 'ready' && optionCount === 0 ? (
+          <p className="muted">
+            当前没有已审核、已启用并投放到香港 1988 的人物、事件组或内容项目。
+          </p>
+        ) : null}
+        {renderCustomContentGroup('内容项目', customContentLibrary.projects)}
+        {renderCustomContentGroup('事件组', customContentLibrary.events)}
+        {renderCustomContentGroup('人物', customContentLibrary.characters)}
+        {customContentNotice ? (
+          <p className="opening-warning" role="alert">
+            {customContentNotice}
+          </p>
+        ) : null}
+        {selectedCustomContentKeys.length > 0 ? (
+          <div className="opening-custom-content-routing">
+            {dramaticOpeningEnabled ? (
+              <>
+                <p>
+                  第一幕最多使用一项“本局重点”作为支持；其余已启用内容不会注入第一幕，开局结构仍以当前戏剧化开局为主来源。
+                </p>
+                <button
+                  type="button"
+                  className={
+                    openingCustomSupportSelectionKey ? '' : 'selected'
+                  }
+                  onClick={() =>
+                    setOpeningCustomSupportSelectionKey(undefined)
+                  }
+                >
+                  第一幕不使用自定义支持
+                </button>
+              </>
+            ) : (
+              <p>
+                戏剧化开局关闭：所选内容不会改写自然第一幕。最多 3 项本局重点会尽快寻找合理入口，其余原生内容按场景和关系自然候选。
+              </p>
+            )}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   return (
     <main className="opening-screen">
       <section className="opening-shell" aria-label="开局向导">
@@ -1085,19 +1836,48 @@ export function OpeningScreen({
         </header>
 
         <div className="opening-layout">
-          <nav className="opening-step-list" aria-label="开局步骤">
-            {openingSteps.map((step, index) => (
-              <button
-                key={step}
-                type="button"
-                className={index === stepIndex ? 'active' : ''}
-                aria-current={index === stepIndex ? 'step' : undefined}
-                onClick={() => setStepIndex(index)}
-              >
-                {String(index + 1).padStart(2, '0')} {step}
-              </button>
-            ))}
-          </nav>
+          <aside className="opening-sidebar">
+            <nav className="opening-step-list" aria-label="开局步骤">
+              {openingSteps.map((step, index) => (
+                <button
+                  key={step}
+                  type="button"
+                  className={index === stepIndex ? 'active' : ''}
+                  aria-current={index === stepIndex ? 'step' : undefined}
+                  onClick={() => navigateToStep(index)}
+                >
+                  {String(index + 1).padStart(2, '0')} {step}
+                </button>
+              ))}
+            </nav>
+            <section
+              className="opening-template-tools"
+              aria-label="开局人物模板"
+            >
+              <p>人物模板</p>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => openCharacterTemplateDialog('save')}
+                >
+                  保存人物
+                </button>
+                <button
+                  type="button"
+                  aria-label="读取人物"
+                  onClick={() => openCharacterTemplateDialog('load')}
+                >
+                  读取人物
+                  {compatibleCharacterTemplates.length > 0 ? (
+                    <span>{compatibleCharacterTemplates.length}</span>
+                  ) : null}
+                </button>
+              </div>
+              {characterTemplateStatus ? (
+                <small role="status">{characterTemplateStatus}</small>
+              ) : null}
+            </section>
+          </aside>
 
           <section className={stepIndex === 1 ? 'opening-page opening-page-stretch' : 'opening-page'}>
             {stepIndex === 0 ? (
@@ -1111,6 +1891,19 @@ export function OpeningScreen({
                     </div>
                     <span>官方世界包</span>
                   </div>
+                  <label className="opening-field storypack-strength-field worldpack-toggle-field">
+                    影视角色入世
+                    <span className="opening-toggle-line">
+                      <input
+                        type="checkbox"
+                        aria-label="影视角色入世"
+                        checked={screenCharacterSeedsEnabled}
+                        onChange={(event) => setScreenCharacterSeedsEnabled(event.target.checked)}
+                      />
+                      <strong>{screenCharacterSeedsEnabled ? '开启' : '关闭'}</strong>
+                    </span>
+                    <small>仅允许影视角色作为候选 NPC 入世；不会复演原作剧情。</small>
+                  </label>
                   <label className="opening-field storypack-strength-field">
                     剧情素材影响
                     <select
@@ -1242,19 +2035,31 @@ export function OpeningScreen({
                       <fieldset className="opening-identity-profile-panel">
                         <legend>市民生活档案</legend>
                         <p className="field-note">选择工作、无业或自定义生活入口；它会成为后续家庭、街坊、警队和社团关系的出身层。</p>
-                        <div className="opening-identity-profile-grid">
-                          {civilianOpeningProfileOptions.map((profile) => (
-                            <button
-                              key={profile.id}
-                              type="button"
-                              aria-label={profile.label}
-                              className={profile.id === civilianProfileId ? 'opening-choice active' : 'opening-choice'}
-                              onClick={() => setCivilianProfileId(profile.id)}
-                            >
-                              <strong>{profile.label}</strong>
-                              <span>{profile.workplaceLabel}</span>
-                              <p>{profile.communitySummary}</p>
-                            </button>
+                        <div className="opening-identity-profile-groups">
+                          {civilianOccupationGroups.map((group) => (
+                            <section key={group.id} className="opening-identity-profile-group" aria-label={group.label}>
+                              <header>
+                                <h4>{group.label}</h4>
+                                <p>{group.summary}</p>
+                              </header>
+                              <div className="opening-identity-profile-grid">
+                                {civilianOpeningProfileOptions
+                                  .filter((profile) => profile.occupationGroup === group.id)
+                                  .map((profile) => (
+                                    <button
+                                      key={profile.id}
+                                      type="button"
+                                      aria-label={profile.label}
+                                      className={profile.id === civilianProfileId ? 'opening-choice active' : 'opening-choice'}
+                                      onClick={() => setCivilianProfileId(profile.id)}
+                                    >
+                                      <strong>{profile.label}</strong>
+                                      <span>{profile.employerName ?? profile.workplaceLabel}</span>
+                                      <p>{profile.communitySummary}</p>
+                                    </button>
+                                  ))}
+                              </div>
+                            </section>
                           ))}
                         </div>
                         {civilianProfileId === 'custom_occupation' ? (
@@ -1267,6 +2072,18 @@ export function OpeningScreen({
                                 value={customCivilianOccupation}
                                 onChange={(event) => setCustomCivilianOccupation(event.target.value)}
                               />
+                            </label>
+                            <label className="opening-field">
+                              雇主／经营机构（可选）
+                              <input
+                                aria-label="自定义职业雇主"
+                                placeholder="例如：明光摄影社；自由职业可留空"
+                                value={customCivilianEmployerName}
+                                onChange={(event) => setCustomCivilianEmployerName(event.target.value)}
+                              />
+                              <small className="field-note">
+                                如需建立正式工作关系，请在这里填写雇主／经营机构；只写在背景描述中的机构不会自动建档。留空时会改用朋友、邻居、房东或街坊等普通社会关系。
+                              </small>
                             </label>
                             <label className="opening-field">
                               工作／日常地点
@@ -1367,7 +2184,7 @@ export function OpeningScreen({
                       <legend>粤语风味</legend>
                       <p className="field-note">控制人物对白里粤语和港式口吻的比例，会写入开局提示词。</p>
                       <div className="cantonese-flavor-grid">
-                        {cantoneseFlavorOptions.map((option) => (
+                        {cantoneseFlavorProfiles.map((option) => (
                           <button
                             key={option.id}
                             type="button"
@@ -1502,6 +2319,99 @@ export function OpeningScreen({
 
             {stepIndex === 4 ? (
               <>
+                <h2>戏剧化开局</h2>
+                <label className="dramatic-opening-master-switch">
+                  <span>
+                    <strong>启用戏剧化开局</strong>
+                    <small>只编排第一幕结构，不替玩家决定，也不预设结果。</small>
+                  </span>
+                  <span className="opening-toggle-line">
+                    <input
+                      type="checkbox"
+                      aria-label="启用戏剧化开局"
+                      checked={dramaticOpeningEnabled}
+                      onChange={(event) => {
+                        setDramaticOpeningEnabled(event.target.checked);
+                        if (!event.target.checked) {
+                          setOpeningCustomSupportSelectionKey(undefined);
+                        }
+                      }}
+                    />
+                    <strong>{dramaticOpeningEnabled ? '开启' : '关闭'}</strong>
+                  </span>
+                </label>
+                {!dramaticOpeningEnabled ? (
+                  <section className="dramatic-opening-disabled-note">
+                    <strong>保持现有自然开局</strong>
+                    <p>
+                      游戏将根据世界、身份、岗位、出身、人物资料和开局要求自然生成第一幕，
+                      不额外保证特定事件、人物组合或戏剧结构。
+                    </p>
+                  </section>
+                ) : (
+                  <>
+                    <div className="dramatic-opening-group-tabs" role="tablist" aria-label="戏剧化开局分类">
+                      {dramaticOpeningGroups.map((group) => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={group.id === dramaticOpeningGroupId}
+                          className={group.id === dramaticOpeningGroupId ? 'active' : ''}
+                          onClick={() => {
+                            setDramaticOpeningGroupId(group.id);
+                            const firstDefinition = dramaticOpeningDefinitions.find(
+                              (definition) => definition.groupId === group.id
+                            );
+                            if (firstDefinition) setDramaticOpeningId(firstDefinition.id);
+                          }}
+                        >
+                          <strong>{group.title}</strong>
+                          <small>{group.summary}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="dramatic-opening-card-grid">
+                      {visibleDramaticOpenings.map((definition) => (
+                        <button
+                          key={definition.id}
+                          type="button"
+                          className={definition.id === dramaticOpeningId ? 'dramatic-opening-card selected' : 'dramatic-opening-card'}
+                          onClick={() => setDramaticOpeningId(definition.id)}
+                        >
+                          <strong>{definition.title}</strong>
+                          <span>{definition.summary}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <section className="dramatic-opening-selection-summary">
+                      <strong>当前结构：{selectedDramaticOpening?.title ?? '未选择'}</strong>
+                      <p>{selectedDramaticOpening?.planningInstruction}</p>
+                      <dl>
+                        <dt>开局素材量</dt>
+                        <dd>标准</dd>
+                        <dt>长期戏剧节奏</dt>
+                        <dd>原版节奏（游戏中可调整）</dd>
+                        <dt>内容来源</dt>
+                        <dd>动态事实优先；Storypack 与影视角色服从世界开关</dd>
+                        <dt>规划路由</dt>
+                        <dd>自动：有辅助线路时优先使用，否则跟随主剧情</dd>
+                      </dl>
+                    </section>
+                  </>
+                )}
+              </>
+            ) : null}
+
+            {stepIndex === 5 ? (
+              <>
+                <h2>自定义内容</h2>
+                {renderCustomContentSelection()}
+              </>
+            ) : null}
+
+            {stepIndex === 6 ? (
+              <>
                 <h2>确认生成</h2>
                 <label className="opening-field">
                   开局压力
@@ -1518,6 +2428,35 @@ export function OpeningScreen({
                   </select>
                   <small>{selectedOpeningPressure.summary}</small>
                 </label>
+                <fieldset className="cantonese-flavor-panel game-difficulty-opening-panel">
+                  <legend>游戏难度</legend>
+                  <p className="field-note">
+                    控制本局之后的本地判定目标值；不改变六维，也不会取消天然的大成功或大失败。
+                  </p>
+                  <div className="cantonese-flavor-grid" role="radiogroup" aria-label="游戏难度">
+                    {gameDifficultyProfiles.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={option.id === gameDifficulty}
+                        aria-label={`${option.label}，判定目标值${option.modifier >= 0 ? '+' : ''}${option.modifier}`}
+                        className={
+                          option.id === gameDifficulty
+                            ? 'opening-choice cantonese-flavor-card active'
+                            : 'opening-choice cantonese-flavor-card'
+                        }
+                        onClick={() => setGameDifficulty(option.id)}
+                      >
+                        <strong>
+                          {option.label}（{option.modifier >= 0 ? '+' : ''}
+                          {option.modifier}）
+                        </strong>
+                        <p>{option.summary}</p>
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
                 <label className="opening-field">
                   开局额外要求
                   <textarea
@@ -1549,7 +2488,9 @@ export function OpeningScreen({
                         : `${selectedTriadProfile.societyName} / ${selectedTriadProfile.startPlaceLabel} / ${selectedTriadProfile.rankSummary} / ${selectedTriadProfile.roleTitle}`}
                   </dd>
                   <dt>出生日期</dt>
-                  <dd>{derivedBirthDate}</dd>
+                  <dd>{resolvedBirthDate}</dd>
+                  <dt>年龄</dt>
+                  <dd>{resolvedAge} 岁</dd>
                   {currentIdentity === 'police' ? (
                     <>
                       <dt>警员编号</dt>
@@ -1562,9 +2503,37 @@ export function OpeningScreen({
                     {selectedOriginBackground.backgroundSummary}
                   </dd>
                   <dt>剧情素材影响</dt>
-                  <dd>{storypackInfluenceLabels[storypackInfluence ?? 'medium']}</dd>
+                  <dd>{storypackInfluenceLabels[storypackInfluence ?? 'high']}</dd>
+                  <dt>影视角色入世</dt>
+                  <dd>{screenCharacterSeedsEnabled ? '开启' : '关闭'}</dd>
+                  <dt>戏剧化开局</dt>
+                  <dd>{dramaticOpeningEnabled ? selectedDramaticOpening?.title ?? '已开启' : '关闭（自然开局）'}</dd>
+                  <dt>本局自定义内容</dt>
+                  <dd>
+                    {selectedCustomContentOptions
+                      .map((option) => option.title)
+                      .join('、') || '未选择'}
+                  </dd>
+                  <dt>本局重点内容</dt>
+                  <dd>
+                    {prioritizedCustomContentOptions
+                      .map((option) => option.title)
+                      .join('、') || '未设置'}
+                  </dd>
+                  <dt>第一幕自定义支持</dt>
+                  <dd>
+                    {dramaticOpeningEnabled
+                      ? selectedOpeningCustomSupport?.title ?? '不使用'
+                      : '关闭戏剧化开局，不注入第一幕'}
+                  </dd>
                   <dt>开局压力</dt>
                   <dd>{selectedOpeningPressure.label}</dd>
+                  <dt>游戏难度</dt>
+                  <dd>
+                    {selectedGameDifficulty.label}（判定目标值
+                    {selectedGameDifficulty.modifier >= 0 ? '+' : ''}
+                    {selectedGameDifficulty.modifier}）
+                  </dd>
                   <dt>粤语风味</dt>
                   <dd>{selectedCantoneseFlavor.label}</dd>
                   <dt>特质</dt>
@@ -1578,7 +2547,7 @@ export function OpeningScreen({
         </div>
 
         <footer className="opening-footer">
-          <span>步骤 {stepIndex + 1}/5</span>
+          <span>步骤 {stepIndex + 1}/{openingSteps.length}</span>
           {isStarting && streamText ? (
             <span className="opening-stream-preview" role="status">
               {streamText}
@@ -1586,14 +2555,14 @@ export function OpeningScreen({
           ) : null}
           {error ? <span className="opening-warning" role="alert">{error}</span> : null}
           <div>
-            <button type="button" disabled={stepIndex === 0 || isStarting} onClick={() => setStepIndex((current) => Math.max(0, current - 1))}>
+            <button type="button" disabled={stepIndex === 0 || isStarting} onClick={() => navigateToStep(stepIndex - 1)}>
               上一步
             </button>
             {stepIndex < openingSteps.length - 1 ? (
               <button
                 type="button"
                 disabled={!canGoNext || isStarting}
-                onClick={() => setStepIndex((current) => Math.min(openingSteps.length - 1, current + 1))}
+                onClick={() => navigateToStep(stepIndex + 1)}
               >
                 下一步
               </button>
@@ -1605,6 +2574,78 @@ export function OpeningScreen({
           </div>
         </footer>
       </section>
+      {characterTemplateDialogMode ? (
+        <OpeningCharacterTemplateDialog
+          mode={characterTemplateDialogMode}
+          templates={compatibleCharacterTemplates}
+          activeTemplateId={activeCharacterTemplateId}
+          templateName={characterTemplateName}
+          status={characterTemplateStatus}
+          onTemplateNameChange={setCharacterTemplateName}
+          onSaveCopy={() => saveCharacterTemplate('copy')}
+          onUpdate={() => saveCharacterTemplate('update')}
+          onLoad={loadCharacterTemplate}
+          onDelete={deleteCharacterTemplate}
+          onClose={() => setCharacterTemplateDialogMode(undefined)}
+        />
+      ) : null}
+      {customContentReview.length > 0 ? (
+        <div className="opening-custom-review-backdrop">
+          <section
+            className="opening-custom-review-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="opening-custom-review-title"
+          >
+            <header>
+              <div>
+                <p className="home-kicker">CUSTOM CONTENT ADAPTATION</p>
+                <h2 id="opening-custom-review-title">
+                  确认本局世界包适配
+                </h2>
+              </div>
+            </header>
+            <p>
+              以下内容已生成香港 1988 的存档级适配快照。确认只会固化这次适配并继续开局，不会把内容自动写成已经发生的事实。
+            </p>
+            <div
+              className="opening-custom-review-list"
+              role="region"
+              aria-label="本局世界包适配项目"
+              tabIndex={0}
+            >
+              {customContentReview.map((item) => (
+                <article key={item.selectionKey}>
+                  <strong>{item.title}</strong>
+                  <span>
+                    {item.kind === 'event_group' ? '事件组' : '人物'} ·
+                    待审核
+                  </span>
+                  <ul>
+                    {item.summaryLines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+            <footer>
+              <button
+                type="button"
+                onClick={onCancelCustomContentReview}
+              >
+                返回修改选择
+              </button>
+              <button
+                type="button"
+                onClick={onApproveCustomContentReview}
+              >
+                确认适配并继续生成
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
       {isLegalDisclaimerOpen ? (
         <OpeningLegalDisclaimerModal
           isStarting={isStarting}

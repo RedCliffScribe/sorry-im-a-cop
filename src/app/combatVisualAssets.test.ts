@@ -96,4 +96,37 @@ describe('combatVisualAssets', () => {
     expect(visual.resultLabel).toBe('失敗');
     expect(visual.resultTone).toBe('failure');
   });
+
+  it('renders an opponent advantage as a failure-side combat result', () => {
+    const visual = resolveCombatVisualAssets(
+      makeCombat({
+        outcome: 'opponent_advantage',
+        resultSummary: '对手抢到主动。',
+        combatText: '对手逼近一步，玩家被迫后退调整站位。'
+      }),
+      makeState()
+    );
+
+    expect(visual.resultLabel).toBe('失敗');
+    expect(visual.resultTone).toBe('failure');
+  });
+
+  it.each([
+    'Chief Inspector（总督察 CIP）',
+    'Superintendent（警司 SP）',
+    'Senior Superintendent（高级警司 SSP）',
+    'Chief Superintendent（总警司 CSP）',
+    'Assistant Commissioner of Police（助理处长 ACP）',
+    'Senior Assistant Commissioner of Police（高级助理处长 SACP）',
+    'Deputy Commissioner of Police（副处长 DCP）',
+    'Commissioner of Police（警务处长 CP）'
+  ])('keeps %s on the command-uniform combat layer', (rank) => {
+    const state = makeState();
+    state.lawIdentity.rank = rank;
+    state.policePanel.careerPath.currentRank = rank;
+
+    const visual = resolveCombatVisualAssets(makeCombat(), state);
+
+    expect(visual.player.id).toBe('command_uniform_baton');
+  });
 });

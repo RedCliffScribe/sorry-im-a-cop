@@ -217,6 +217,64 @@ describe('selectBackgroundEvolutionCandidates', () => {
     expect(selection.organizationCandidates.every((candidate) => candidate.allowMaterialProgress === false)).toBe(true);
   });
 
+  it('keeps the current public triad first and carries its patron, peer, and responsibility actors', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    const profile = state.actors.player.roleProfiles.triad!;
+    const organizationId = profile.organizationId!;
+    state.actors.actor_patron = {
+      ...state.actors.player,
+      actorId: 'actor_patron',
+      name: '阿成',
+      presence: 'absent'
+    } as Actor;
+    state.actors.actor_peer = {
+      ...state.actors.player,
+      actorId: 'actor_peer',
+      name: '阿杰',
+      presence: 'absent'
+    } as Actor;
+    state.actors.actor_contact = {
+      ...state.actors.player,
+      actorId: 'actor_contact',
+      name: '摊档联系人',
+      presence: 'absent'
+    } as Actor;
+    state.actors.player.roleProfiles.triad = {
+      ...profile,
+      patronActorIds: ['actor_patron'],
+      peerActorIds: ['actor_peer']
+    };
+    state.dynamicEvents.currentMatters.matter_triad_responsibility = {
+      id: 'matter_triad_responsibility',
+      title: '了解摊档争执',
+      summary: '先了解来龙去脉。',
+      status: 'active',
+      priority: 70,
+      visibility: 'known',
+      source: 'triad_responsibility',
+      matterKind: 'social',
+      relatedActorIds: ['actor_contact'],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      relatedOrganizationIds: [organizationId],
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+    state.actors.player.organizationRelations.push(
+      { organizationId: 'org_tvb', relationType: 'contractor', summary: '协助采访', visibility: 'player_known' },
+      { organizationId: 'org_atv', relationType: 'source', summary: '报料关系', visibility: 'player_known' }
+    );
+
+    const selection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_triad_priority' });
+
+    expect(selection.organizationCandidates[0]?.organizationId).toBe(organizationId);
+    expect(selection.organizationCandidates[0]?.relatedActorIds.slice(0, 3)).toEqual([
+      'actor_patron',
+      'actor_peer',
+      'actor_contact'
+    ]);
+  });
+
   it('reviews an active organization only when due and never bypasses the 24-hour material gate', () => {
     const state = createInitialRuntimeState();
     const track = activeOrganizationTrack(state);
@@ -236,5 +294,156 @@ describe('selectBackgroundEvolutionCandidates', () => {
       trigger: 'due',
       allowMaterialProgress: true
     });
+  });
+
+  it('selects an important known remote actor even without a case or relationship thread', () => {
+    const state = createInitialRuntimeState();
+    addRemoteActor(state, 'actor_known_supervisor');
+    Object.assign(state.actors.actor_known_supervisor, {
+      name: '陈国斌',
+      importance: 80,
+      interactionScore: 30,
+      relationshipSummary: '玩家的直属上司，答应替玩家探听消息。',
+      recentInteractionMemory: '刚交代玩家低调整理旧案卷宗。'
+    });
+
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_important_actor'
+    });
+
+    expect(selection.npcCandidates).toContainEqual(
+      expect.objectContaining({
+        actorId: 'actor_known_supervisor',
+        trigger: 'important-actor',
+        visibilityHint: 'rumor'
+      })
+    );
+  });
+
+  it('keeps an active relationship eligible even when its optional pull fields are empty', () => {
+    const state = createInitialRuntimeState();
+    addRemoteActor(state);
+    state.relationshipThreads.thread_liu = {
+      threadId: 'thread_liu',
+      kind: 'network',
+      title: '同僚',
+      summary: '与玩家共同办过事。',
+      relatedActorIds: ['player', 'actor_liu'],
+      primaryActorId: 'actor_liu',
+      relationshipRole: '同僚',
+      status: 'active',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 60,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_relationship_without_pull'
+    });
+
+    expect(selection.npcCandidates[0]).toMatchObject({
+      actorId: 'actor_liu',
+      trigger: 'relationship',
+      visibilityHint: 'player_known'
+    });
+  });
+
+  it.each(['network', 'fate'] as const)(
+    'keeps a %s relationship actor eligible when the model incorrectly used the player as primaryActorId',
+    (kind) => {
+      const state = createInitialRuntimeState();
+      addRemoteActor(state, `actor_${kind}`);
+      state.relationshipThreads[`thread_${kind}`] = {
+        threadId: `thread_${kind}`,
+        kind,
+        title: kind === 'network' ? '长期人脉' : '长期缘分',
+        summary: '这名人物与玩家存在持续关系。',
+        relatedActorIds: ['player', `actor_${kind}`],
+        primaryActorId: 'player',
+        relationshipRole: kind === 'network' ? '长期联系人' : '情感对象',
+        status: 'active',
+        milestones: [],
+        visibility: 'player_known',
+        importance: 60,
+        createdAt: state.time,
+        updatedAt: state.time
+      };
+
+      const selection = selectBackgroundEvolutionCandidates({
+        state,
+        foregroundTurnId: `turn_${kind}_fallback_actor`
+      });
+
+      expect(selection.npcCandidates).toContainEqual(
+        expect.objectContaining({
+          actorId: `actor_${kind}`,
+          trigger: 'relationship',
+          relatedRelationshipThreadIds: [`thread_${kind}`]
+        })
+      );
+    }
+  );
+
+  it('keeps every remote NPC in a multi-actor relationship eligible for bounded evolution', () => {
+    const state = createInitialRuntimeState();
+    addRemoteActor(state, 'actor_family_a');
+    addRemoteActor(state, 'actor_family_b');
+    state.relationshipThreads.thread_family = {
+      threadId: 'thread_family',
+      kind: 'network',
+      title: '家庭关系',
+      summary: '两名亲属都与玩家保持长期联系。',
+      relatedActorIds: ['player', 'actor_family_a', 'actor_family_b'],
+      primaryActorId: 'actor_family_a',
+      relationshipRole: '家人',
+      status: 'active',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 70,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_multi_actor_relationship'
+    });
+
+    expect(selection.npcCandidates.map((candidate) => candidate.actorId)).toEqual(
+      expect.arrayContaining(['actor_family_a', 'actor_family_b'])
+    );
+    expect(selection.npcCandidates.every((candidate) => candidate.relatedRelationshipThreadIds.includes('thread_family'))).toBe(true);
+  });
+
+  it('uses per-actor review cooldowns and importance ordering to avoid candidate starvation', () => {
+    const state = createInitialRuntimeState();
+    addRemoteActor(state, 'actor_lower');
+    addRemoteActor(state, 'actor_higher');
+    Object.assign(state.actors.actor_lower, {
+      importance: 65,
+      interactionScore: 10,
+      relationshipSummary: '近期见过玩家。'
+    });
+    Object.assign(state.actors.actor_higher, {
+      importance: 90,
+      interactionScore: 10,
+      relationshipSummary: '近期见过玩家。'
+    });
+    state.backgroundEvolution.npcReviewCooldownUntil = {
+      actor_lower: addGameHours(state.time, 24)
+    };
+
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_fairness'
+    });
+
+    expect(selection.npcCandidates.map((candidate) => candidate.actorId)).toEqual([
+      'actor_higher'
+    ]);
   });
 });

@@ -1,7 +1,14 @@
 import type { AssetCategory, AssetItem, RuntimeState, StoryEntry } from '../../domain/runtime/types';
 import { selectContext } from '../../domain/context/selectContext';
 import { selectNpcSimulationMemoryProjection } from '../../domain/npc/npcSimulation';
+import type {
+  NarratorAttemptRecord,
+  NarratorAttemptStartRecord
+} from '../../domain/narrator/NarratorClient';
+import type { JudgementRecoveryTrace } from '../../domain/conflict/judgementRecoveryTrace';
 import { formatGameTimeWithWeekday } from '../../domain/time/gameTime';
+import { collectUnresolvedPartialWritebackDiagnostics } from '../../domain/writeback/writebackDiagnostics';
+import type { OfficialDlcDramaAuditRecord } from '../../domain/dlc/dramaAudit';
 
 const DIAGNOSTIC_STORY_TURN_LIMIT = 10;
 
@@ -11,11 +18,246 @@ interface CreateNarrativeDiagnosticInput {
   streamingText?: string;
   lastError?: string | null;
   lastRawNarratorResponse?: string | null;
+  lastNarratorAttempts?: NarratorAttemptRecord[];
+  lastTurnNarratorAttemptStarts?: NarratorAttemptStartRecord[];
+  lastTurnNarratorAttempts?: NarratorAttemptRecord[];
+  lastTurnExecution?: TurnExecutionDiagnostic | null;
   lastPlayerInput?: string;
+  lastJudgementRecoveryTrace?: JudgementRecoveryTrace | null;
+  lastOfficialDlcDramaAudit?: OfficialDlcDramaAuditRecord[];
+}
+
+export interface TurnExecutionDiagnostic {
+  requestId: string;
+  turnId: string;
+  status: 'running' | 'succeeded' | 'failed' | 'aborted';
+  stage: string;
+  startedAt: string;
+  finishedAt?: string;
+  errorMessage?: string;
+  stages?: TurnExecutionStageDiagnostic[];
+}
+
+export interface TurnExecutionStageDiagnostic {
+  stage: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
 function formatGameTime(time: RuntimeState['time']): string {
   return formatGameTimeWithWeekday(time);
+}
+
+function classifyNarratorAttemptFailure(errorMessage: string): string {
+  if (/abort|已中止/i.test(errorMessage)) {
+    return 'aborted（请求被玩家或界面中止）';
+  }
+  if (/timeout|timed out|超时/i.test(errorMessage)) {
+    return 'timeout（接口在本地超时门槛内没有完成）';
+  }
+  const httpStatus = errorMessage.match(
+    /(?:请求失败|http(?:\s+status)?)[：:\s]+(\d{3})/i
+  )?.[1];
+  if (httpStatus) {
+    return `http_${httpStatus}（服务商已返回明确 HTTP 状态）`;
+  }
+  if (
+    /failed to fetch|fetch failed|network ?error|network request failed|econn|enotfound|网络连接|连接失败/i.test(
+      errorMessage
+    )
+  ) {
+    return 'browser_transport_or_cors（浏览器没有取得可用 HTTP 响应；可能是网络、代理或 CORS）';
+  }
+  if (/json|schema|parse|解析|格式|校验|验证/i.test(errorMessage)) {
+    return 'response_format（已收到内容，但返回格式未通过处理）';
+  }
+  return 'unknown（现有信息不足以归类）';
+}
+
+function formatNarratorAttempt(
+  attempt: NarratorAttemptRecord,
+  index: number,
+  scope: '开局' | '本次主回合'
+): string {
+  const usage = attempt.usage
+    ? [
+        attempt.usage.promptTokens === undefined
+          ? null
+          : `prompt_tokens=${attempt.usage.promptTokens}`,
+        attempt.usage.completionTokens === undefined
+          ? null
+          : `completion_tokens=${attempt.usage.completionTokens}`
+      ]
+        .filter((item): item is string => Boolean(item))
+        .join(' ')
+    : '';
+
+  const outputBudget = attempt.outputBudget;
+  const isOpeningRepair =
+    attempt.purpose.startsWith('opening_') &&
+    attempt.purpose.includes('repair');
+  const budgetLines = outputBudget
+    ? [
+        `玩家线路上限：${outputBudget.configuredMaxTokens}${
+          outputBudget.configuredMaxTokensSource === 'system_default'
+            ? '（系统默认）'
+            : ''
+        }`,
+        `${isOpeningRepair ? '当前修复可用上限' : '当前阶段预算'}：${
+          outputBudget.stageMaxTokens ?? '未声明'
+        }`,
+        `服务商能力上限：${outputBudget.providerMaxOutputTokens ?? '未声明'}`,
+        `最终请求上限：${outputBudget.requestedMaxTokens}`,
+        `限制来源：${
+          outputBudget.limitingSource === 'configured_max_tokens'
+            ? '玩家线路上限'
+            : outputBudget.limitingSource === 'stage_budget'
+              ? '当前阶段预算'
+              : '服务商能力上限'
+        }`,
+        ...(isOpeningRepair
+          ? ['预算策略：局部修复继承线路上限；实际输出量以 completion_tokens 为准。']
+          : [])
+      ]
+    : [`最大输出：${attempt.requestedMaxTokens ?? '未记录'}`];
+
+  return [
+    `## ${scope}请求尝试 ${index + 1}`,
+    `请求状态：${attempt.errorMessage ? '失败' : '成功'}`,
+    `阶段：${attempt.purpose}`,
+    `尝试编号：${attempt.attemptId}`,
+    `流式：${attempt.stream ? 'true' : 'false'}`,
+    ...budgetLines,
+    `finish_reason：${attempt.finishReason}`,
+    `解析结果：${attempt.parseStatus}`,
+    `本地 JSON 修复：${attempt.localJsonRepairApplied ? '是' : '否'}`,
+    `原始字符数：${attempt.rawText.length}`,
+    `开始时间：${attempt.startedAt}`,
+    `完成时间：${attempt.finishedAt}`,
+    usage ? `usage：${usage}` : 'usage：未提供',
+    ...(attempt.errorMessage
+      ? [`失败分类：${classifyNarratorAttemptFailure(attempt.errorMessage)}`]
+      : []),
+    attempt.errorMessage ? `错误：${attempt.errorMessage}` : '错误：无',
+    '',
+    attempt.rawText.trim() || '- 空响应'
+  ].join('\n');
+}
+
+function formatPendingNarratorAttempt(
+  attempt: NarratorAttemptStartRecord,
+  index: number
+): string {
+  return [
+    `## 本次主回合请求尝试 ${index + 1}`,
+    '请求状态：进行中',
+    `阶段：${attempt.purpose}`,
+    `尝试编号：${attempt.attemptId}`,
+    `流式：${attempt.stream ? 'true' : 'false'}`,
+    `最大输出：${attempt.requestedMaxTokens ?? '未记录'}`,
+    `开始时间：${attempt.startedAt}`,
+    '完成时间：未完成',
+    '说明：该请求尚未产生完成或失败记录，不能据此判断为网络错误。'
+  ].join('\n');
+}
+
+function formatTurnNarratorAttempts(
+  starts: NarratorAttemptStartRecord[],
+  attempts: NarratorAttemptRecord[]
+): string {
+  const completedById = new Map(
+    attempts.map((attempt) => [attempt.attemptId, attempt])
+  );
+  const ordered = starts.map((start) => ({
+    startedAt: start.startedAt,
+    start,
+    attempt: completedById.get(start.attemptId)
+  }));
+  const knownIds = new Set(starts.map((start) => start.attemptId));
+  for (const attempt of attempts) {
+    if (knownIds.has(attempt.attemptId)) continue;
+    ordered.push({
+      startedAt: attempt.startedAt,
+      start: attempt,
+      attempt
+    });
+  }
+  ordered.sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+  if (ordered.length === 0) return '- 无';
+  return ordered
+    .map(({ start, attempt }, index) =>
+      attempt
+        ? formatNarratorAttempt(attempt, index, '本次主回合')
+        : formatPendingNarratorAttempt(start, index)
+    )
+    .join('\n\n');
+}
+
+function formatTurnExecutionDiagnostic(
+  execution: TurnExecutionDiagnostic | null | undefined
+): string {
+  if (!execution) return '- 本次界面会话没有主回合执行记录。';
+  const statusLabel = {
+    running: '进行中',
+    succeeded: '成功',
+    failed: '失败',
+    aborted: '玩家中止'
+  }[execution.status];
+  const stageTimeline = execution.stages?.length
+    ? execution.stages.map((stage, index) => [
+        `${index + 1}. ${stage.stage}`,
+        `startedAt=${stage.startedAt}`,
+        `finishedAt=${stage.finishedAt ?? (index === execution.stages!.length - 1 ? execution.finishedAt ?? '未完成' : '未记录')}`
+      ].join(' · ')).join('\n')
+    : '- 未记录阶段时间线';
+  return [
+    `requestId=${execution.requestId}`,
+    `turnId=${execution.turnId}`,
+    `status=${execution.status}（${statusLabel}）`,
+    `stage=${execution.stage}`,
+    `startedAt=${execution.startedAt}`,
+    `finishedAt=${execution.finishedAt ?? '未完成'}`,
+    execution.errorMessage
+      ? `error=${execution.errorMessage}`
+      : execution.status === 'running'
+        ? '说明=本回合仍在执行，尚未产生失败结论。'
+        : 'error=无',
+    'stageTimeline=',
+    stageTimeline
+  ].join('\n');
+}
+
+function formatJudgementRecoveryTrace(trace: JudgementRecoveryTrace | null | undefined): string {
+  if (!trace) return '- 本次界面会话没有判定恢复记录。';
+  const stageLines = trace.stages.map((stage) => [
+    `stage=${stage.stage}`,
+    `status=${stage.status}`,
+    `occurredAt=${stage.occurredAt}`,
+    `detail=${stage.detail}`,
+    stage.paths?.length ? `paths=${stage.paths.join(',')}` : null
+  ].filter((line): line is string => Boolean(line)).join('\n'));
+  return [
+    `requestId=${trace.requestId}`,
+    `turnId=${trace.turnId}`,
+    `startedAt=${trace.startedAt}`,
+    `finishedAt=${trace.finishedAt ?? '未完成'}`,
+    `terminalStatus=${trace.terminalStatus ?? (trace.persisted ? 'persisted' : 'unknown')}`,
+    trace.terminalError ? `terminalError=${trace.terminalError}` : null,
+    `persisted=${trace.persisted}`,
+    `presetRoll=${trace.presetRoll}`,
+    'rawPreflight=',
+    trace.rawPreflight === undefined
+      ? '- none'
+      : JSON.stringify(trace.rawPreflight, null, 2),
+    'rawPreflightAttempts=',
+    trace.rawPreflightAttempts === undefined
+      ? '- none'
+      : JSON.stringify(trace.rawPreflightAttempts, null, 2),
+    'rawJudgementPatches=',
+    JSON.stringify(trace.rawJudgementPatches, null, 2),
+    'stages=',
+    stageLines.join('\n\n') || '- none'
+  ].filter((line): line is string => line !== null).join('\n');
 }
 
 function formatStoryEntry(entry: StoryEntry, index: number): string {
@@ -24,6 +266,30 @@ function formatStoryEntry(entry: StoryEntry, index: number): string {
     ? `\n建议行动：${entry.suggestedActions.map((action) => `「${action}」`).join(' / ')}`
     : '';
   return `### ${index + 1}. ${speaker} | ${entry.turnId} | ${formatGameTime(entry.gameTime)}\n${entry.text}${suggestions}`;
+}
+
+function formatLatestExperienceAward(state: RuntimeState): string {
+  const entry = [...state.storyLog]
+    .reverse()
+    .find((candidate) => candidate.speaker === 'narrator' && candidate.experienceAward);
+  const award = entry?.experienceAward;
+  if (!entry || !award) return '- 无';
+  return [
+    `turnId=${entry.turnId}`,
+    `gameTime=${formatGameTime(entry.gameTime)}`,
+    `awardId=${award.awardId}`,
+    `total=${award.total}`,
+    `sources=${award.sources
+      .map(
+        (source) =>
+          `${source.sourceId ?? source.kind}(${source.amount}) ${source.reason}`
+      )
+      .join(' / ')}`,
+    `modelSuggestedGain=${award.modelSuggestedGain ?? 0}`,
+    `capped=${award.capped}`,
+    `levelsGained=${award.levelsGained}`,
+    `attributePointsGained=${award.attributePointsGained}`
+  ].join('\n');
 }
 
 function getStoryEntryTurnNumber(entry: StoryEntry): number | null {
@@ -118,6 +384,20 @@ function summarizeActors(state: RuntimeState) {
   };
 }
 
+function summarizePendingActorWritebacks(state: RuntimeState) {
+  return (state.pendingActorWritebackRecoveries ?? []).map((pending) => ({
+    recoveryId: pending.recoveryId,
+    actorId: pending.actorId,
+    sourceTurnId: pending.sourceTurnId,
+    attemptCount: pending.attemptCount,
+    lastAttemptTurn: pending.lastAttemptTurn ?? null,
+    nextRetryTurn: pending.nextRetryTurn ?? null,
+    consecutiveFailureCount: pending.consecutiveFailureCount ?? 0,
+    lastFailureKind: pending.lastFailureKind ?? null,
+    lastRouteMode: pending.lastRouteMode ?? null
+  }));
+}
+
 function summarizeOrganizations(state: RuntimeState) {
   const organizations = Object.values(state.organizations);
   const visibleOrganizations = organizations.filter((organization) => organization.visibility !== 'hidden');
@@ -159,6 +439,7 @@ function createCollectionCounts(state: RuntimeState) {
     cases: Object.keys(state.cases).length,
     caseEvidence: Object.keys(state.caseEvidence).length,
     deferredEvents: Object.keys(state.deferredEvents).length,
+    narrativeArcs: state.narrativeArcs?.length ?? 0,
     pressures: Object.keys(state.pressures).length,
     assetItems: Object.keys(state.assets.items).length,
     financeLedgerEntries: state.finance.ledger.length,
@@ -181,6 +462,7 @@ function createDiagnosticRuntimeSnapshot(state: RuntimeState, recentStoryEntries
     currentPlace: state.places[state.location.currentPlaceId] ?? null,
     currentScene: state.location.currentSceneId ? (state.scenes[state.location.currentSceneId] ?? null) : null,
     actorSummary: summarizeActors(state),
+    pendingActorWritebackSummary: summarizePendingActorWritebacks(state),
     organizationSummary: summarizeOrganizations(state),
     collectionCounts: createCollectionCounts(state),
     memorySummary: summarizeMemories(state),
@@ -335,8 +617,10 @@ function formatFinanceProjection(context: ReturnType<typeof selectContext>): str
   ].join('\n');
 }
 
-function formatReputationProjection(context: ReturnType<typeof selectContext>): string {
+function formatReputationProjection(context: ReturnType<typeof selectContext>, state: RuntimeState): string {
   const { reputationProjection } = context;
+  const overallReputationBaseline =
+    state.player.reputation.overallReputationBaseline ?? state.player.reputation.overallReputation;
   const circles = reputationProjection.circles.map(
     (entry) =>
       `- circle=${entry.circle} visibility=${entry.entry.visibility}/1000 standing=${entry.entry.standing} score=${entry.score} reasons=${entry.reasons.join(',') || 'none'} summary=${entry.entry.summary}`
@@ -347,6 +631,7 @@ function formatReputationProjection(context: ReturnType<typeof selectContext>): 
 
   return [
     `overall notoriety=${reputationProjection.overall.notoriety}/1000 overallReputation=${reputationProjection.overall.overallReputation} summary=${reputationProjection.overall.summary}`,
+    `overallCalculation=local_circle_weighted baseline=${overallReputationBaseline}`,
     `selectedCircles=${reputationProjection.diagnostics.selectedCircles.join(',') || 'none'} omittedCircles=${reputationProjection.diagnostics.omittedCircleCount}`,
     `selectedLogs=${reputationProjection.diagnostics.selectedLogIds.join(',') || 'none'} omittedLogs=${reputationProjection.diagnostics.omittedLogCount}`,
     'circles:',
@@ -506,19 +791,182 @@ function formatDeferredEventDiagnostics(context: ReturnType<typeof selectContext
   ].join('\n');
 }
 
-function formatWeatherProjectionDiagnostics(context: ReturnType<typeof selectContext>): string {
+function formatWeatherProjectionDiagnostics(
+  context: ReturnType<typeof selectContext>,
+  state: RuntimeState
+): string {
   const weather = context.weatherProjection;
+  const recentConditions =
+    state.environment.recentConditions?.length
+      ? state.environment.recentConditions
+      : [weather.condition];
+  const wetConditions = new Set([
+    'light_rain',
+    'heavy_rain',
+    'thunderstorm',
+    'typhoon_signal'
+  ]);
+  let consecutiveWetSegments = 0;
+  for (const condition of [...recentConditions].reverse()) {
+    if (!wetConditions.has(condition)) break;
+    consecutiveWetSegments += 1;
+  }
 
   return [
     `condition=${weather.condition}`,
     `label=${weather.label}`,
     `intensity=${weather.intensity}`,
     `source=${weather.source}`,
+    `startedAt=${formatGameTime(weather.startedAt)}`,
     `validUntil=${formatGameTime(weather.validUntil)}`,
+    `recentConditions=${recentConditions.join(',')}`,
+    `consecutiveWetSegments=${consecutiveWetSegments}`,
     `tags=${weather.tags.join(',') || 'none'}`,
     `impact=${weather.impactSummary}`,
     weather.reason ? `reason=${weather.reason}` : 'reason=none'
   ].join('\n');
+}
+
+function formatDramaExecutionDiagnostics(state: RuntimeState): string {
+  const dramaticContent = state.dramaticContent;
+  if (!dramaticContent) return '- 未启用或旧存档尚无戏剧化内容状态。';
+
+  const settings = dramaticContent.settings;
+  const executions = (dramaticContent.recentExecutions ?? []).slice(-20);
+  const recentDiagnostics = dramaticContent.recentDiagnostics.slice(-20);
+  const diagnosticCodes = recentDiagnostics.map((item) => item.code);
+  const narrativeArcProgressDiagnostics = recentDiagnostics
+    .filter((item) => item.narrativeArcProgressAudit)
+    .map((item) => {
+      const audit = item.narrativeArcProgressAudit as NonNullable<
+        typeof item.narrativeArcProgressAudit
+      >;
+      const refs = audit.supportingWritebackRefs
+        .map((ref) => {
+          const stages = [
+            `raw=${ref.presentInRawResponse}`,
+            `schema=${ref.passedSchemaValidation}`,
+            `accepted=${ref.acceptedByDomainGate}`,
+            `applied=${ref.appliedToRuntime}`
+          ].join('/');
+          return `${ref.kind}:${ref.originalRefId}(${stages})`;
+        })
+        .join(',');
+      const refSet = (items: readonly { kind: string; id: string }[]) =>
+        items.map((ref) => `${ref.kind}:${ref.id}`).join(',') || 'none';
+      const stagedRefs = audit.writebackReferenceAudit;
+      return [
+        `code=${item.code}`,
+        `turn=${audit.turnId ?? 'unknown'}`,
+        `requestId=${audit.requestId ?? 'unknown'}`,
+        `arc=${audit.arcInstanceId ?? 'unknown'}`,
+        `decision=${audit.decision ?? 'unknown'}`,
+        `classification=${audit.classification}`,
+        `accepted=${audit.accepted}`,
+        `reasons=${audit.rejectionReasons.join(',') || 'none'}`,
+        `advisory=${audit.advisoryReasons?.join(',') || 'none'}`,
+        `beforeStage=${audit.beforeStageId ?? 'none'}`,
+        `requestedCurrent=${audit.requestedCurrentStageId ?? 'none'}`,
+        `requestedNext=${audit.requestedNextStageId ?? 'none'}`,
+        `nodes=${audit.requestedNodeIds.join(',') || 'none'}`,
+        `allowedNext=${audit.allowedNextStageIds?.join(',') || 'none'}`,
+        `allowedNodes=${audit.allowedNodeIds?.join(',') || 'none'}`,
+        `writebackRefs=${refs || 'none'}`,
+        `refSets=raw[${refSet(stagedRefs.rawResponseRefs)}] schema[${refSet(stagedRefs.schemaValidatedRefs)}] accepted[${refSet(stagedRefs.acceptedWritebackRefs)}] applied[${refSet(stagedRefs.appliedWritebackRefs)}]`
+      ].join(' ');
+    });
+  const executionLines = executions.map((receipt) =>
+    [
+      `turn=${receipt.turnCounter}`,
+      `pacing=${receipt.pacing}`,
+      `route=${receipt.planningRoute}`,
+      `resolvedRoute=${receipt.resolvedPlanningRoute ?? 'auto'}`,
+      `material=${receipt.materialLevel}`,
+      `storypack=${receipt.storypackInfluence}`,
+      `screenCharacters=${receipt.screenCharacterSeedsEnabled}`,
+      `called=${receipt.planningCalled}`,
+      `success=${receipt.planningSucceeded}`,
+      `durationMs=${receipt.planningDurationMs}`,
+      `candidates=${receipt.inputCandidateCount}`,
+      `officialDlcSources=${receipt.officialDlcSourceCount ?? 0}`,
+      `officialDlcSelected=${receipt.officialDlcSelected ?? false}`,
+      `officialDlcExecuted=${receipt.officialDlcExecuted ?? false}`,
+      `inputChars=${receipt.inputCharacterCount}`,
+      `estimatedTokens=${receipt.estimatedInputTokens}`,
+      `mode=${receipt.planMode ?? 'none'}`,
+      `primary=${receipt.primarySourceRef ? `${receipt.primarySourceRef.providerId}:${receipt.primarySourceRef.sourceType}:${receipt.primarySourceRef.sourceId}` : 'none'}`,
+      `support=${receipt.supportSourceRefs.length}`,
+      `used=${receipt.usedSourceRefs.length}`,
+      `trace=${receipt.traceStatus ?? 'none'}`,
+      `persistentWrites=${receipt.persistentWriteCount}`,
+      `arcProgress=${(receipt.narrativeArcProgressAudits ?? [])
+        .map((audit) => `${audit.classification}:${audit.rejectionReasons.join(',') || 'none'}`)
+        .join('|') || 'none'}`,
+      `degrade=${receipt.degradeReason ?? 'none'}`,
+      `filters=${receipt.filterRuleIds.join(',') || 'none'}`
+    ].join(' ')
+  );
+
+  return [
+    `openingId=${dramaticContent.openingId ?? 'none'}`,
+    `pacing=${settings?.pacing ?? 'original'}`,
+    `planningRoute=${settings?.planningRoute ?? 'auto'}`,
+    `materialLevel=${settings?.materialLevel ?? 'standard'}`,
+    `screenCharacterSeedsEnabled=${state.world.screenCharacterSeedsEnabled !== false}`,
+    `storypackInfluence=${state.world.storypackInfluence ?? 'off'}`,
+    `instanceCount=${dramaticContent.instances.length}`,
+    `diagnosticCodes=${diagnosticCodes.join(',') || 'none'}`,
+    'narrativeArcProgressDiagnostics:',
+    narrativeArcProgressDiagnostics.join('\n') || '- none',
+    'recentExecutions:',
+    executionLines.join('\n') || '- none'
+  ].join('\n');
+}
+
+function formatNarrativeArcDiagnostics(state: RuntimeState): string {
+  const arcs = Array.isArray(state.narrativeArcs) ? state.narrativeArcs : [];
+  if (arcs.length === 0) return '- 当前没有已持久化的剧情弧实例。';
+  return arcs
+    .slice(-30)
+    .map((arc) => [
+      `arcInstanceId=${arc.arcInstanceId}`,
+      `arcType=${arc.arcType}`,
+      `status=${arc.status}`,
+      `source=${arc.sourceRef.providerId}:${arc.sourceRef.sourceType}:${arc.sourceRef.sourceId}`,
+      `currentStageId=${arc.currentStageId ?? 'none'}`,
+      `previousStageId=${arc.previousStageId ?? 'none'}`,
+      `createdTurn=${arc.createdTurn}`,
+      `lastProgressTurn=${arc.lastProgressTurn}`,
+      `usedNodeIds=${arc.usedNodeIds.join(',') || 'none'}`,
+      `writebackRefs=${arc.writebackRefs.map((ref) => `${ref.kind}:${ref.id}`).join(',') || 'none'}`,
+      `summary=${arc.lastSummary ?? 'none'}`
+    ].join(' '))
+    .join('\n');
+}
+
+function formatOfficialDlcDramaAudit(
+  records: readonly OfficialDlcDramaAuditRecord[] | undefined
+): string {
+  if (!records?.length) return '- 当前回合没有官方 DLC 来源审计记录。';
+  return records
+    .map((record) => [
+      `requestId=${record.requestId}`,
+      `turn=${record.turn}`,
+      `dlcId=${record.dlcId}`,
+      `status=${record.status}`,
+      `sourceType=${record.sourceType}`,
+      `sourceId=${record.sourceId}`,
+      `generated=${record.sourceGenerated}`,
+      `projected=${record.sourceProjected}`,
+      `planningContext=${record.sourceInPlanningContext}`,
+      `selected=${record.selected}`,
+      `executionPayload=${record.executionPayloadCreated}`,
+      `tracePresent=${record.executionTracePresent}`,
+      `executed=${record.executed}`,
+      `omittedReason=${record.omittedReason ?? 'none'}`,
+      `createdAt=${record.createdAt}`
+    ].join('\n'))
+    .join('\n\n');
 }
 
 function formatCaseRuntimeSnapshot(state: RuntimeState): string {
@@ -539,7 +987,13 @@ export function createNarrativeDiagnostic({
   streamingText,
   lastError,
   lastRawNarratorResponse,
-  lastPlayerInput
+  lastNarratorAttempts = [],
+  lastTurnNarratorAttemptStarts = [],
+  lastTurnNarratorAttempts = [],
+  lastTurnExecution,
+  lastPlayerInput,
+  lastJudgementRecoveryTrace,
+  lastOfficialDlcDramaAudit
 }: CreateNarrativeDiagnosticInput): string {
   const place = state.places[state.location.currentPlaceId];
   const scene = state.location.currentSceneId ? state.scenes[state.location.currentSceneId] : undefined;
@@ -555,19 +1009,153 @@ export function createNarrativeDiagnostic({
   const assetProjectionText = formatAssetProjection(context);
   const assetSnapshotText = formatAssetSnapshot(state);
   const financeProjectionText = formatFinanceProjection(context);
-  const reputationProjectionText = formatReputationProjection(context);
+  const reputationProjectionText = formatReputationProjection(context, state);
   const institutionProjectionText = formatInstitutionProjectionDiagnostics(context);
   const relationshipProjectionText = formatRelationshipProjectionDiagnostics(context);
   const npcDynamicProjectionText = formatNpcDynamicProjectionDiagnostics(context);
   const dynamicProjectionText = formatDynamicProjectionDiagnostics(context);
   const conflictProjectionText = formatConflictProjectionDiagnostics(context);
-  const weatherProjectionText = formatWeatherProjectionDiagnostics(context);
+  const weatherProjectionText = formatWeatherProjectionDiagnostics(context, state);
   const dynamicRuntimeSnapshotText = formatDynamicRuntimeSnapshot(state);
   const grayNetworkProjectionText = formatGrayNetworkProjectionDiagnostics(context);
   const grayNetworkSnapshotText = formatGrayNetworkRuntimeSnapshot(state, context);
   const caseProjectionText = formatCaseProjectionDiagnostics(state, context);
   const deferredProjectionText = formatDeferredEventDiagnostics(context);
   const caseRuntimeSnapshotText = formatCaseRuntimeSnapshot(state);
+  const dramaExecutionDiagnosticText = formatDramaExecutionDiagnostics(state);
+  const officialDlcDramaAuditText = formatOfficialDlcDramaAudit(lastOfficialDlcDramaAudit);
+  const latestExperienceAwardText = formatLatestExperienceAward(state);
+  const currentPlayerVitalsText = [
+    `health=${state.player.vitals.health}/${state.player.vitals.maxHealth}`,
+    `stamina=${state.player.vitals.stamina}/${state.player.vitals.maxStamina}`,
+    `conditionSummary=${state.player.vitals.conditionSummary}`,
+    `conditionPersistence=${state.player.vitals.conditionLifecycle?.persistence ?? 'unreviewed_legacy'}`,
+    `establishedAt=${state.player.vitals.conditionLifecycle
+      ? formatGameTime(state.player.vitals.conditionLifecycle.establishedAt)
+      : '未记录'}`,
+    `lastReviewedAt=${state.player.vitals.conditionLifecycle
+      ? formatGameTime(state.player.vitals.conditionLifecycle.lastReviewedAt)
+      : '未记录'}`
+  ].join('\n');
+  const latestWritebackIssue = [...state.storyLog]
+    .reverse()
+    .flatMap((entry) => [...(entry.writebackDiagnostics ?? [])].reverse())
+    .find((issue) =>
+      [
+        'actor_writeback_repair_network_failed',
+        'actor_writeback_repair_main_fallback_failed',
+        'actor_writeback_recovery_queued'
+      ].includes(issue.code ?? '')
+    );
+  const latestPartialWritebackRecord = [...state.storyLog]
+    .reverse()
+    .map((entry) => ({
+      entry,
+      issues: collectUnresolvedPartialWritebackDiagnostics(entry.writebackDiagnostics)
+    }))
+    .find(({ issues }) => issues.length > 0);
+  const latestWeatherWritebackIssue = [...state.storyLog]
+    .reverse()
+    .flatMap((entry) => [...(entry.writebackDiagnostics ?? [])].reverse())
+    .find((issue) => issue.code === 'weather_same_condition_not_extended');
+  const latestPlayerVitalsDiagnosticEntry = [...state.storyLog]
+    .reverse()
+    .find((entry) =>
+      entry.writebackDiagnostics?.some((issue) => issue.code?.startsWith('player_vitals_'))
+    );
+  const latestPlayerVitalsDiagnostics = (latestPlayerVitalsDiagnosticEntry?.writebackDiagnostics ?? [])
+    .filter((issue) => issue.code?.startsWith('player_vitals_'))
+    .slice(-10);
+  const recentLocalJudgementDiagnostics = [...state.storyLog]
+    .reverse()
+    .flatMap((entry) => [...(entry.writebackDiagnostics ?? [])].reverse())
+    .filter((issue) => issue.code?.startsWith('local_judgement_'))
+    .slice(0, 10);
+  const latestRelationshipRecoveryEntry = [...state.storyLog]
+    .reverse()
+    .find((entry) =>
+      entry.speaker === 'narrator' &&
+      entry.writebackDiagnostics?.some((issue) => issue.code?.startsWith('relationship_'))
+    );
+  const relationshipRecoveryDiagnostics = (latestRelationshipRecoveryEntry?.writebackDiagnostics ?? [])
+    .filter((issue) => issue.code?.startsWith('relationship_'))
+    .slice(-20);
+  const recentErrorText = lastError?.trim()
+    ? lastError.trim()
+    : latestWritebackIssue
+      ? `${latestWritebackIssue.code ?? 'writeback_issue'}: ${latestWritebackIssue.message}`
+      : '- 无';
+  const recentWritebackWarningText = latestPartialWritebackRecord
+    ? [
+        `sourceTurnId=${latestPartialWritebackRecord.entry.turnId}`,
+        `sourceGameTime=${formatGameTime(latestPartialWritebackRecord.entry.gameTime)}`,
+        ...(lastTurnExecution?.turnId && lastTurnExecution.turnId !== latestPartialWritebackRecord.entry.turnId
+          ? ['scope=以下警告来自之前已写入的回合，不属于当前正在执行的请求。']
+          : []),
+        `unresolvedCount=${latestPartialWritebackRecord.issues.length}`,
+        ...latestPartialWritebackRecord.issues.map((issue) => [
+          `code=${issue.code ?? 'writeback_issue'}`,
+          `path=${issue.path?.join('.') || '(root)'}`,
+          `message=${issue.message}`
+        ].join('\n'))
+      ].join('\n')
+    : '- 无';
+  const recentWeatherWritebackText = latestWeatherWritebackIssue
+    ? [
+        `code=${latestWeatherWritebackIssue.code}`,
+        `path=${latestWeatherWritebackIssue.path.join('.')}`,
+        `message=${latestWeatherWritebackIssue.message}`
+      ].join('\n')
+    : '- 无';
+  const latestPlayerVitalsDiagnosticText = latestPlayerVitalsDiagnosticEntry
+    ? [
+        `turnId=${latestPlayerVitalsDiagnosticEntry.turnId}`,
+        `gameTime=${formatGameTime(latestPlayerVitalsDiagnosticEntry.gameTime)}`,
+        ...latestPlayerVitalsDiagnostics.map((issue) =>
+          [
+            `code=${issue.code ?? 'player_vitals_diagnostic'}`,
+            `path=${issue.path?.join('.') || '(root)'}`,
+            `message=${issue.message}`
+          ].join('\n')
+        )
+      ].join('\n\n')
+    : '- 无';
+  const recentLocalJudgementDiagnosticText = recentLocalJudgementDiagnostics.length
+    ? recentLocalJudgementDiagnostics
+        .map((issue) =>
+          [
+            `code=${issue.code ?? 'local_judgement_diagnostic'}`,
+            `path=${issue.path?.join('.') || '(root)'}`,
+            `message=${issue.message}`
+          ].join('\n')
+        )
+        .join('\n\n')
+    : '- 无';
+  const relationshipRecoveryDiagnosticText = latestRelationshipRecoveryEntry
+    ? [
+        `turnId=${latestRelationshipRecoveryEntry.turnId}`,
+        `gameTime=${formatGameTime(latestRelationshipRecoveryEntry.gameTime)}`,
+        ...relationshipRecoveryDiagnostics.map((issue) =>
+          [
+            `code=${issue.code ?? 'relationship_recovery_diagnostic'}`,
+            `path=${issue.path?.join('.') || '(root)'}`,
+            `message=${issue.message}`
+          ].join('\n')
+        )
+      ].join('\n\n')
+    : '- 无';
+  const currentJudgementRecoveryText = formatJudgementRecoveryTrace(
+    lastJudgementRecoveryTrace
+  );
+  const openingAttemptsText = lastNarratorAttempts.length
+    ? lastNarratorAttempts
+        .map((attempt, index) => formatNarratorAttempt(attempt, index, '开局'))
+        .join('\n\n')
+    : '- 无';
+  const turnNarratorAttemptsText = formatTurnNarratorAttempts(
+    lastTurnNarratorAttemptStarts,
+    lastTurnNarratorAttempts
+  );
 
   return [
     '# Sorry, I’m a Cop V2 诊断导出',
@@ -579,10 +1167,46 @@ export function createNarrativeDiagnostic({
     `身份：${playerActor?.publicIdentity ?? state.player.currentIdentity}`,
     '',
     '## 最近错误',
-    lastError?.trim() ? lastError.trim() : '- 无',
+    recentErrorText,
+    '',
+    '## 最近部分写回警告',
+    recentWritebackWarningText,
+    '',
+    '## 当前玩家身体状态',
+    currentPlayerVitalsText,
+    '',
+    '## 最近玩家状态复核诊断',
+    latestPlayerVitalsDiagnosticText,
+    '',
+    '## 本次主回合执行状态',
+    formatTurnExecutionDiagnostic(lastTurnExecution),
+    '',
+    '## 本次主回合 API 请求',
+    turnNarratorAttemptsText,
+    '',
+    '## 本次判定请求恢复诊断',
+    currentJudgementRecoveryText,
+    '',
+    '## 已写入回合的本地判定校正诊断',
+    lastError?.trim()
+      ? '注意：以下内容来自之前已经成功写入存档的回合，不代表上方当前失败请求。'
+      : '以下内容只来自已经成功写入存档的回合。',
+    recentLocalJudgementDiagnosticText,
+    '',
+    '## 最近已写入回合的关系证据恢复诊断',
+    relationshipRecoveryDiagnosticText,
+    '',
+    '## 最近经验结算',
+    latestExperienceAwardText,
+    '',
+    '## 最近天气写回诊断',
+    recentWeatherWritebackText,
     '',
     '## 流式正文',
     streamingText?.trim() ? streamingText.trim() : '- 无',
+    '',
+    '## 最近开局 API 请求',
+    openingAttemptsText,
     '',
     '## 最近原始返回',
     lastRawNarratorResponse?.trim() ? lastRawNarratorResponse.trim() : '- 无',
@@ -631,6 +1255,15 @@ export function createNarrativeDiagnostic({
     '',
     '## Weather Projection',
     weatherProjectionText,
+    '',
+    '## Dramatic Content Execution Diagnostics / 戏剧化内容执行诊断',
+    dramaExecutionDiagnosticText,
+    '',
+    '## Official DLC Drama Source Audit / 官方 DLC 剧情来源审计',
+    officialDlcDramaAuditText,
+    '',
+    '## Narrative Arc Progress / 通用剧情弧推进',
+    formatNarrativeArcDiagnostics(state),
     '',
     '## Dynamic Runtime Snapshot / 动态事项与新闻状态',
     dynamicRuntimeSnapshotText,

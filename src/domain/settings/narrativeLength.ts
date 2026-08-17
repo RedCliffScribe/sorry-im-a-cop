@@ -10,9 +10,8 @@ export interface NarrativeLengthProfile {
   openingTarget: string;
   openingMinimum: number;
   turnTarget: string;
+  turnMinimum: number;
   complexTurnTarget: string;
-  transitionMinimum: number;
-  paragraphTarget: string;
 }
 
 export const narrativeLengthProfiles: NarrativeLengthProfile[] = [
@@ -22,11 +21,10 @@ export const narrativeLengthProfiles: NarrativeLengthProfile[] = [
     uiRange: '约300-600字',
     description: '节奏更快，适合调试、过渡和短行动。',
     openingTarget: '600-900',
-    openingMinimum: 500,
+    openingMinimum: 600,
     turnTarget: '300-600',
+    turnMinimum: 300,
     complexTurnTarget: '600-1000',
-    transitionMinimum: 180,
-    paragraphTarget: '3-5'
   },
   {
     level: 'standard',
@@ -34,11 +32,10 @@ export const narrativeLengthProfiles: NarrativeLengthProfile[] = [
     uiRange: '约500-900字',
     description: '默认篇幅，兼顾现场感、节奏和 token 消耗。',
     openingTarget: '900-1400',
-    openingMinimum: 700,
+    openingMinimum: 900,
     turnTarget: '500-900',
+    turnMinimum: 500,
     complexTurnTarget: '900-1500',
-    transitionMinimum: 250,
-    paragraphTarget: '4-8'
   },
   {
     level: 'long',
@@ -46,11 +43,10 @@ export const narrativeLengthProfiles: NarrativeLengthProfile[] = [
     uiRange: '约900-1400字',
     description: '更重视场面、人物反馈和关系承接。',
     openingTarget: '1300-2000',
-    openingMinimum: 1000,
+    openingMinimum: 1300,
     turnTarget: '900-1400',
+    turnMinimum: 900,
     complexTurnTarget: '1400-2200',
-    transitionMinimum: 350,
-    paragraphTarget: '7-12'
   },
   {
     level: 'immersive',
@@ -58,11 +54,10 @@ export const narrativeLengthProfiles: NarrativeLengthProfile[] = [
     uiRange: '约1400-2200字',
     description: '更长的沉浸式正文，适合关键剧情，消耗更多 token。',
     openingTarget: '1800-2800',
-    openingMinimum: 1200,
+    openingMinimum: 1800,
     turnTarget: '1400-2200',
+    turnMinimum: 1400,
     complexTurnTarget: '2200-3200',
-    transitionMinimum: 500,
-    paragraphTarget: '10-16'
   }
 ];
 

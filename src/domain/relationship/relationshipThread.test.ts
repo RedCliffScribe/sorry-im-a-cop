@@ -3,8 +3,10 @@ import type { Actor, GameTime, RelationshipThread } from '../runtime/types';
 import {
   applyRelationshipThreadPatch,
   buildRelationshipHeartbeatCandidates,
+  removeRelationshipThreadFromState,
   sortRelationshipThreadsForPanel
 } from './relationshipThread';
+import { createInitialRuntimeState } from '../runtime/initialState';
 
 const time: GameTime = { year: 1988, month: 9, day: 12, hour: 21, minute: 15 };
 
@@ -136,6 +138,49 @@ describe('relationship thread domain', () => {
     expect(result.thread?.updatedAt.minute).toBe(30);
   });
 
+  it('keeps stable actor anchors and members while promoting network to fate', () => {
+    const existing = createThread();
+    const result = applyRelationshipThreadPatch(
+      { rel_lam: existing },
+      {
+        threadId: 'rel_lam',
+        kind: 'fate',
+        relatedActorIds: ['npc_chan'],
+        primaryActorId: 'npc_chan',
+        visibility: 'hidden',
+        summary: '本回合新增一个相关人物，但不能替换原核心人物。'
+      },
+      { ...time, minute: 45 },
+      {
+        npc_lam: createActor('npc_lam', '林长旺'),
+        npc_chan: createActor('npc_chan', '陈国斌')
+      }
+    );
+
+    expect(result.thread).toMatchObject({
+      kind: 'fate',
+      primaryActorId: 'npc_lam',
+      visibility: 'player_known',
+      relatedActorIds: ['npc_lam', 'npc_chan']
+    });
+    expect(result.diagnostics).toHaveLength(3);
+  });
+
+  it('does not downgrade a fate relationship on an ordinary network update', () => {
+    const existing = createThread({ kind: 'fate' });
+    const result = applyRelationshipThreadPatch(
+      { rel_lam: existing },
+      { threadId: 'rel_lam', kind: 'network', summary: '本回合只是普通联络。' },
+      { ...time, minute: 50 },
+      { npc_lam: createActor('npc_lam', '林长旺') }
+    );
+
+    expect(result.thread?.kind).toBe('fate');
+    expect(result.diagnostics).toEqual([
+      expect.stringContaining('remained fate')
+    ]);
+  });
+
   it('rejects incomplete new threads without losing diagnostics', () => {
     const result = applyRelationshipThreadPatch(
       {},
@@ -171,5 +216,29 @@ describe('relationship thread domain', () => {
     ]);
 
     expect(sorted.map((thread) => thread.threadId)).toEqual(['rel_low_new', 'rel_high_old']);
+  });
+
+  it('permanently removes only the selected relationship record from runtime state', () => {
+    const state = createInitialRuntimeState();
+    state.relationshipThreads.rel_lam = createThread();
+    state.relationshipThreads.rel_other = createThread({ threadId: 'rel_other' });
+    const actorsBefore = state.actors;
+    const memoriesBefore = state.memories;
+    const storyLogBefore = state.storyLog;
+
+    const next = removeRelationshipThreadFromState(state, 'rel_lam');
+
+    expect(next).not.toBe(state);
+    expect(next.relationshipThreads.rel_lam).toBeUndefined();
+    expect(next.relationshipThreads.rel_other).toBe(state.relationshipThreads.rel_other);
+    expect(next.actors).toBe(actorsBefore);
+    expect(next.memories).toBe(memoriesBefore);
+    expect(next.storyLog).toBe(storyLogBefore);
+  });
+
+  it('returns the original state when the relationship record is already absent', () => {
+    const state = createInitialRuntimeState();
+
+    expect(removeRelationshipThreadFromState(state, 'missing_thread')).toBe(state);
   });
 });

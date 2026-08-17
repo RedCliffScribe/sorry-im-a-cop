@@ -10,6 +10,7 @@ import type {
   TraitProgress,
   Vitals
 } from './types';
+import { projectStableIdentityRef } from '../avgResourcePack/stableIdentity';
 
 export type ActorDraft = Pick<Actor, 'actorId' | 'name' | 'currentIdentity'> & Partial<Omit<Actor, 'actorId' | 'name' | 'currentIdentity'>>;
 
@@ -63,7 +64,10 @@ function cloneWombProfile(womb: ActorAdultPrivateWombProfile | undefined): Actor
   if (!womb) return undefined;
   return {
     ...womb,
-    records: womb.records.map((record) => ({ ...record })),
+    records: womb.records.map((record) => ({
+      ...record,
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    })),
     pregnancy: womb.pregnancy
       ? {
           ...womb.pregnancy,
@@ -82,6 +86,22 @@ function cloneWombProfile(womb: ActorAdultPrivateWombProfile | undefined): Actor
           paternityCandidates: womb.pregnancy.paternityCandidates.map((candidate) => ({ ...candidate }))
         }
       : undefined,
+    pendingPregnancyChecks: womb.pendingPregnancyChecks?.map((pregnancy) => ({
+      ...pregnancy,
+      registeredAt: cloneTime(pregnancy.registeredAt),
+      checkDueAt: cloneTime(pregnancy.checkDueAt),
+      confirmationDueAt: cloneTime(pregnancy.confirmationDueAt),
+      deliveryWindowAt: cloneTime(pregnancy.deliveryWindowAt),
+      dueAt: cloneTime(pregnancy.dueAt),
+      deliveryDeadlineAt: cloneTime(pregnancy.deliveryDeadlineAt),
+      suspectedAt: pregnancy.suspectedAt ? cloneTime(pregnancy.suspectedAt) : undefined,
+      confirmedAt: pregnancy.confirmedAt ? cloneTime(pregnancy.confirmedAt) : undefined,
+      deliveredAt: pregnancy.deliveredAt ? cloneTime(pregnancy.deliveredAt) : undefined,
+      postpartumUntil: pregnancy.postpartumUntil ? cloneTime(pregnancy.postpartumUntil) : undefined,
+      riskTypes: [...pregnancy.riskTypes],
+      riskSummaries: [...pregnancy.riskSummaries],
+      paternityCandidates: pregnancy.paternityCandidates.map((candidate) => ({ ...candidate }))
+    })),
     lastPregnancyCheck: womb.lastPregnancyCheck
       ? {
           ...womb.lastPregnancyCheck,
@@ -92,7 +112,8 @@ function cloneWombProfile(womb: ActorAdultPrivateWombProfile | undefined): Actor
     pregnancyHistory: womb.pregnancyHistory?.map((record) => ({
       ...record,
       startedAt: cloneTime(record.startedAt),
-      endedAt: cloneTime(record.endedAt)
+      endedAt: cloneTime(record.endedAt),
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
     }))
   };
 }
@@ -147,7 +168,14 @@ function cloneRoleProfiles(roleProfiles: ActorRoleProfiles | undefined): ActorRo
           rivalActorIds: [...roleProfiles.triad.rivalActorIds]
         }
       : undefined,
-    civilian: roleProfiles.civilian ? { ...roleProfiles.civilian } : undefined
+    civilian: roleProfiles.civilian
+      ? {
+          ...roleProfiles.civilian,
+          sectorIds: [...(roleProfiles.civilian.sectorIds ?? [])],
+          roleTags: [...(roleProfiles.civilian.roleTags ?? [])],
+          livelihoodActorIds: [...(roleProfiles.civilian.livelihoodActorIds ?? [])]
+        }
+      : undefined
   };
 }
 
@@ -204,6 +232,15 @@ export function createActorDefaults(draft: ActorDraft): Actor {
     childActorIds: draft.childActorIds ? [...draft.childActorIds] : undefined,
     visibility: draft.visibility ?? 'player_known',
     importance: draft.importance ?? 50,
+    manualProfileOverride: draft.manualProfileOverride
+      ? {
+          lockedFields: [...draft.manualProfileOverride.lockedFields],
+          updatedAt: { ...draft.manualProfileOverride.updatedAt }
+      }
+      : undefined,
+    stableIdentityRef: draft.stableIdentityRef
+      ? { ...draft.stableIdentityRef }
+      : undefined,
     worldpackActorData: { ...(draft.worldpackActorData ?? {}) }
   };
 
@@ -212,7 +249,10 @@ export function createActorDefaults(draft: ActorDraft): Actor {
     actor.vitals = vitals;
   }
 
-  return actor;
+  const stableIdentityRef = projectStableIdentityRef(actor, 'hk1988', {
+    allowRuntimeActorId: false
+  });
+  return stableIdentityRef ? { ...actor, stableIdentityRef } : actor;
 }
 
 export function normalizeActor(actor: ActorDraft): Actor {

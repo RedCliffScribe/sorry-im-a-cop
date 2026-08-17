@@ -71,6 +71,7 @@ describe('projectRemoteNpcPresence', () => {
 
     const relationshipProjection: RelationshipContextProjection = {
       threads: [],
+      identityRegistry: [],
       heartbeatCandidates: [
         {
           threadId: 'rel_ah_ling',
@@ -99,6 +100,8 @@ describe('projectRemoteNpcPresence', () => {
         projectedThreadIds: [],
         heartbeatCandidateCount: 2,
         heartbeatCandidateThreadIds: ['rel_ah_ling', 'rel_present'],
+        identityRegistryCount: 0,
+        identityRegistryTruncatedCount: 0,
         omittedHiddenCount: 0,
         omittedIrrelevantCount: 0,
         missingActorRefs: []
@@ -183,6 +186,7 @@ describe('projectRemoteNpcPresence', () => {
     });
     const relationshipProjection: RelationshipContextProjection = {
       threads: [],
+      identityRegistry: [],
       heartbeatCandidates: [
         {
           threadId: 'rel_ah_ling',
@@ -201,6 +205,8 @@ describe('projectRemoteNpcPresence', () => {
         projectedThreadIds: [],
         heartbeatCandidateCount: 1,
         heartbeatCandidateThreadIds: ['rel_ah_ling'],
+        identityRegistryCount: 0,
+        identityRegistryTruncatedCount: 0,
         omittedHiddenCount: 0,
         omittedIrrelevantCount: 0,
         missingActorRefs: []
@@ -242,7 +248,147 @@ describe('projectRemoteNpcPresence', () => {
 
     expect(projection.candidates[0].triggerReasons).not.toContain('player_input_mention');
   });
+
+  it('routes a structured duty contact who is marked present at another place', () => {
+    const state = createInitialRuntimeState();
+    addActor(state, {
+      actorId: 'npc_duty_sergeant_chan',
+      name: '陈伟强',
+      presence: 'present',
+      currentPlaceId: 'place_mong_kok_police_station',
+      visibility: 'player_known',
+      importance: 72,
+      publicIdentity: '旺角警署值日警长',
+      roleProfiles: {
+        police: {
+          ...state.actors.player.roleProfiles.police!,
+          rank: 'Sergeant',
+          stationOrPost: 'Mong Kok Police Station',
+          department: 'Uniform Branch'
+        }
+      }
+    });
+    state.location.currentPlaceId = 'place_portland_street';
+    state.location.currentSceneId = undefined;
+
+    const projection = projectRemoteNpcPresence(
+      state,
+      emptyRelationshipProjection(),
+      emptyDynamicProjection(),
+      {
+        playerInput: '用电台向值日警长报告现场情况。',
+        roleContactActorIds: ['npc_duty_sergeant_chan']
+      }
+    );
+
+    expect(projection.candidates[0]).toMatchObject({
+      actorId: 'npc_duty_sergeant_chan',
+      actorName: '陈伟强',
+      source: 'roleContact',
+      sourceId: 'player_role_chain'
+    });
+    expect(projection.candidates[0].basis.join('\n')).toContain('Mong Kok Police Station');
+    expect(projection.candidates[0].presenceHint).toContain('警队电台');
+  });
+
+  it('routes a structured triad contact through society channels instead of police channels', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member' });
+    const playerTriadProfile = state.actors.player.roleProfiles.triad!;
+    addActor(state, {
+      actorId: 'npc_triad_patron_sing',
+      name: '阿成',
+      currentIdentity: 'gang_member',
+      publicIdentity: '庙街地区线联络人',
+      presence: 'absent',
+      visibility: 'player_known',
+      importance: 78,
+      roleProfiles: {
+        police: undefined,
+        civilian: undefined,
+        triad: {
+          ...playerTriadProfile,
+          status: 'active',
+          roleTitle: '地区线联络人',
+          rankSummary: '资深成员',
+          territorySummary: '庙街及油麻地一带'
+        }
+      }
+    });
+
+    const projection = projectRemoteNpcPresence(
+      state,
+      emptyRelationshipProjection(),
+      emptyDynamicProjection(),
+      {
+        playerInput: '等阿成托人带话。',
+        roleContactActorIds: ['npc_triad_patron_sing']
+      }
+    );
+
+    expect(projection.candidates[0]).toMatchObject({
+      actorId: 'npc_triad_patron_sing',
+      actorName: '阿成',
+      source: 'roleContact',
+      sourceId: 'player_role_chain'
+    });
+    expect(projection.candidates[0].basis.join('\n')).toContain('当前公开社团身份的直属或同组联系人');
+    expect(projection.candidates[0].basis.join('\n')).toContain('庙街及油麻地一带');
+    expect(projection.candidates[0].presenceHint).toContain('托话、场所联络或街面碰头');
+    expect(projection.candidates[0].presenceHint).not.toContain('警队电台');
+  });
 });
+
+function emptyRelationshipProjection(): RelationshipContextProjection {
+  return {
+    threads: [],
+    identityRegistry: [],
+    heartbeatCandidates: [],
+    diagnostics: {
+      sourceThreadCount: 0,
+      projectedThreadCount: 0,
+      projectedThreadIds: [],
+      heartbeatCandidateCount: 0,
+      heartbeatCandidateThreadIds: [],
+      identityRegistryCount: 0,
+      identityRegistryTruncatedCount: 0,
+      omittedHiddenCount: 0,
+      omittedIrrelevantCount: 0,
+      missingActorRefs: []
+    }
+  };
+}
+
+function emptyDynamicProjection(): DynamicContextProjection {
+  return {
+    currentMatters: [],
+    recentResolvedMatters: [],
+    signals: [],
+    newsIssues: [],
+    dueDeferredEvents: [],
+    diagnostics: {
+      sourceCurrentMatterCount: 0,
+      projectedCurrentMatterCount: 0,
+      currentMatterIds: [],
+      omittedCurrentMatterCount: 0,
+      sourceRecentResolvedMatterCount: 0,
+      projectedRecentResolvedMatterCount: 0,
+      recentResolvedMatterIds: [],
+      omittedRecentResolvedMatterCount: 0,
+      sourceSignalCount: 0,
+      projectedSignalCount: 0,
+      signalIds: [],
+      omittedSignalCount: 0,
+      sourceNewsIssueCount: 0,
+      projectedNewsIssueCount: 0,
+      newsIssueIds: [],
+      omittedNewsIssueCount: 0,
+      omittedHiddenCount: 0,
+      dueCurrentMatterIds: [],
+      dueDeferredEventIds: [],
+      omittedDueDeferredEventCount: 0
+    }
+  };
+}
 
 function addActor(state: RuntimeState, overrides: Partial<Actor> & { actorId: string; name: string }): void {
   const { actorId, name, ...actorOverrides } = overrides;

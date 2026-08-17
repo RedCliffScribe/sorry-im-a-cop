@@ -1,8 +1,14 @@
-import { useRef, useState } from 'react';
-import type { RuntimeSaveRecord, RuntimeSaveSummary } from '../../domain/persistence/SaveRepository';
-import { readPortableSaveArchiveFile } from '../../domain/persistence/portableSaveZipArchive';
+import { useId, useRef, useState } from 'react';
+import type { RuntimeSaveSummary } from '../../domain/persistence/SaveRepository';
+import {
+  readPortableSaveBundleFile,
+  type PortableSaveBundle
+} from '../../domain/persistence/portableSaveZipArchive';
 
 type SaveManagerMode = 'save' | 'load';
+
+const saveRepairHelpText =
+  '只审计并修复已识别的结构缺口，使用主剧情 API 小范围补齐；成功前会自动建立备份，不会让 AI 重写整份存档。';
 
 interface SaveManagerModalProps {
   mode: SaveManagerMode;
@@ -12,10 +18,11 @@ interface SaveManagerModalProps {
   canSave: boolean;
   onSaveCurrent: () => Promise<void>;
   onLoadSave: (saveId: string) => void | Promise<void>;
+  onRepairSave: (saveId: string) => Promise<string>;
   onDeleteSave: (saveId: string) => Promise<void>;
   onClearSaves: () => Promise<void>;
-  onImportSaves: (records: RuntimeSaveRecord[]) => Promise<void>;
-  onExportSaves: () => Promise<void>;
+  onImportSaves: (bundle: PortableSaveBundle) => Promise<void>;
+  onExportSaves: (includeImages: boolean) => Promise<void>;
   onClose: () => void;
 }
 
@@ -32,17 +39,26 @@ function SaveList({
   emptyText,
   saves,
   onLoadSave,
+  onRepairSave,
+  repairingSaveId,
   onDeleteSave
 }: {
   title: string;
   emptyText: string;
   saves: RuntimeSaveSummary[];
   onLoadSave: (saveId: string) => void | Promise<void>;
+  onRepairSave: (saveId: string) => Promise<void>;
+  repairingSaveId: string | null;
   onDeleteSave: (saveId: string) => Promise<void>;
 }) {
+  const repairHelpId = useId();
+
   return (
     <section className="save-manager-column" role="region" aria-label={title}>
       <h3>{title}</h3>
+      <span id={repairHelpId} className="visually-hidden">
+        {saveRepairHelpText}
+      </span>
       {saves.length === 0 ? <p className="empty-state">{emptyText}</p> : null}
       <ul className="save-manager-list">
         {saves.map((save) => (
@@ -53,6 +69,15 @@ function SaveList({
               <small>保存时间：{formatUpdatedAt(save.updatedAt)}</small>
             </div>
             <div className="save-manager-item-actions">
+              <button
+                type="button"
+                title={saveRepairHelpText}
+                aria-describedby={repairHelpId}
+                disabled={repairingSaveId !== null}
+                onClick={() => void onRepairSave(save.saveId)}
+              >
+                {repairingSaveId === save.saveId ? '正在修复…' : '存档修复'}
+              </button>
               <button type="button" onClick={() => void onLoadSave(save.saveId)}>
                 读取存档
               </button>
@@ -75,6 +100,7 @@ export function SaveManagerModal({
   canSave,
   onSaveCurrent,
   onLoadSave,
+  onRepairSave,
   onDeleteSave,
   onClearSaves,
   onImportSaves,
@@ -82,6 +108,8 @@ export function SaveManagerModal({
   onClose
 }: SaveManagerModalProps) {
   const [status, setStatus] = useState<string | null>(null);
+  const [includeImages, setIncludeImages] = useState(false);
+  const [repairingSaveId, setRepairingSaveId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const manualSaves = saves.filter((save) => saveKindOf(save) === 'manual');
   const autoSaves = saves.filter((save) => saveKindOf(save) === 'auto');
@@ -99,7 +127,8 @@ export function SaveManagerModal({
 
   async function handleClearSaves() {
     if (!saves.length) return;
-    if (!window.confirm('确定清空全部存档？这个操作无法撤销。')) return;
+    if (!window.confirm('第一次确认：确定要清空全部存档吗？继续后还需要再次确认。')) return;
+    if (!window.confirm('第二次确认：全部手动与自动存档将永久删除，确定继续吗？')) return;
 
     setStatus(null);
     try {
@@ -115,9 +144,10 @@ export function SaveManagerModal({
 
     setStatus(null);
     try {
-      const records = await readPortableSaveArchiveFile(file);
-      await onImportSaves(records);
-      setStatus(`已导入 ${records.length} 个存档。`);
+      const bundle = await readPortableSaveBundleFile(file);
+      await onImportSaves(bundle);
+      const visualCount = Object.keys(bundle.visualArchives).length;
+      setStatus(`已导入 ${bundle.records.length} 个存档${visualCount ? `及 ${visualCount} 个视觉资料分区` : ''}。`);
     } catch {
       setStatus('导入失败，请确认文件是 CopV2 存档。');
     } finally {
@@ -130,10 +160,30 @@ export function SaveManagerModal({
   async function handleExportSaves() {
     setStatus(null);
     try {
-      await onExportSaves();
-      setStatus('存档已导出。');
+      await onExportSaves(includeImages);
+      setStatus(includeImages ? '存档与文生图图片已导出。' : '存档已导出（不含文生图图片）。');
     } catch {
       setStatus('导出失败。');
+    }
+  }
+
+  async function handleRepairSave(saveId: string) {
+    if (
+      !window.confirm(
+        '存档修复只会审计明确的结构缺口，并用主剧情 API 小范围补齐；成功前会自动建立“修复前备份”。是否继续？'
+      )
+    ) {
+      return;
+    }
+
+    setStatus(null);
+    setRepairingSaveId(saveId);
+    try {
+      setStatus(await onRepairSave(saveId));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '存档修复失败，原存档未被覆盖。');
+    } finally {
+      setRepairingSaveId(null);
     }
   }
 
@@ -167,6 +217,14 @@ export function SaveManagerModal({
             <button type="button" disabled={saves.length === 0} onClick={() => void handleExportSaves()}>
               导出存档
             </button>
+            <label className="save-manager-export-images">
+              <input
+                type="checkbox"
+                checked={includeImages}
+                onChange={(event) => setIncludeImages(event.target.checked)}
+              />
+              <span>包含文生图图片（文件可能较大）</span>
+            </label>
             <button type="button" onClick={() => fileInputRef.current?.click()}>
               导入存档
             </button>
@@ -201,6 +259,8 @@ export function SaveManagerModal({
             emptyText="暂无手动存档。"
             saves={manualSaves}
             onLoadSave={onLoadSave}
+            onRepairSave={handleRepairSave}
+            repairingSaveId={repairingSaveId}
             onDeleteSave={onDeleteSave}
           />
           <SaveList
@@ -208,6 +268,8 @@ export function SaveManagerModal({
             emptyText="暂无自动存档。"
             saves={autoSaves}
             onLoadSave={onLoadSave}
+            onRepairSave={handleRepairSave}
+            repairingSaveId={repairingSaveId}
             onDeleteSave={onDeleteSave}
           />
         </div>

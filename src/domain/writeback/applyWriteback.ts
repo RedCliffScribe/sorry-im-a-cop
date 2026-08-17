@@ -1,6 +1,12 @@
 import { createActorDefaults, normalizeActor } from '../runtime/actorFactory';
+import {
+  missingActorProfileEnrichmentFields,
+  normalizePendingActorProfileEnrichment
+} from '../runtime/actorProfileEnrichment';
 import { applyActorFemaleProfilePatch } from '../runtime/femaleProfile';
-import { applyEquippedAssetsToRuntimeState, normalizeEquippedItemIds, syncPlayerEquipmentAssetsFromNames } from '../assets/equipmentSlots';
+import { applyEquippedAssetsToRuntimeState, normalizeEquippedItemIds } from '../assets/equipmentSlots';
+import { isSpendableCashAsset } from '../assets/assetWritebackPolicy';
+import { enforceAssetPurchaseWritebackAtomicity } from '../assets/assetWritebackIntent';
 import { applyPlayerClothingPatch } from '../clothing/clothingState';
 import { applyCombatEventPatch, applyJudgementCheckPatch, linkConflictRecordsToStoryEntry } from '../conflict/conflictRuntime';
 import { applyFinancePatch, applyGrayLedgerPatch } from '../finance/applyFinancePatch';
@@ -8,9 +14,13 @@ import { syncPlayerEconomyWithFinance } from '../finance/financeState';
 import { applyDueMonthlySettlements } from '../finance/monthlySettlement';
 import { syncPlayerPoliceSalaryCashflow } from '../finance/playerSalaryCashflow';
 import { synchronizeNpcMemoryCaches } from '../memory/npcMemoryLayers';
-import { applyExperienceGain } from '../progression/playerProgression';
+import { normalizeMemoryTemporalText } from '../time/memoryTemporal';
+import { enforcePlayerNewsworthiness } from '../news/newsworthiness';
+import { enforcePlayerCaseLead } from '../cases/caseLeadContract';
+import { settleTurnExperience } from '../progression/turnExperience';
 import {
   actorMatchesSeedIdentity,
+  findSeedIdentityByCanonicalId,
   findSeedIdentityMatch,
   isProtectedSeedName,
   redactSeedProtectedNames,
@@ -18,24 +28,68 @@ import {
   type SeedIdentityMatch
 } from '../eraSeed/seedIdentityLock';
 import {
+  actorMatchesScreenCharacterIdentity,
+  findScreenCharacterIdentityByCanonicalId,
+  findScreenCharacterIdentityMatch,
+  findScreenCharacterIdentityMatchForSource,
+  screenCharacterMatchFromStoredActor,
+  type ScreenCharacterIdentityMatch
+} from '../screenCharacterSeed/screenCharacterIdentityLock';
+import {
   cityPowerMatchFromStoredActor,
+  findCityPowerIdentityByCanonicalId,
   findCityPowerIdentityMatch,
   redactCityPowerProtectedNames,
   type CityPowerIdentityMatch
 } from '../cityPower/cityPowerIdentityLock';
 import { applyCitySituationTrackPatches } from '../cityPower/citySituationTrackPatch';
 import { applyGrayNetworkPatch, type GrayNetworkPatch } from '../grayNetwork/grayNetwork';
+import {
+  applyTriadOrganizationStatePatch,
+  remapTriadOrganizationStateActorIds
+} from '../grayNetwork/triadOrganizationState';
 import { applyPolicePanelPatch, type PolicePanelPatch } from '../police/policePanel';
+import { synchronizePlayerPoliceRank } from '../police/playerPoliceRank';
 import { applyPregnancyLifecycle } from '../pregnancy/pregnancyLifecycle';
+import { evaluateRelationshipCreationEvidence } from '../relationship/relationshipEvidence';
+import { resolveRelationshipThreadIdentity } from '../relationship/relationshipIdentity';
 import { applyRelationshipThreadPatch, type RelationshipThreadPatch } from '../relationship/relationshipThread';
-import { clampReputationScore, clampReputationVisibility } from '../reputation/reputation';
-import { applyWeatherPatchToEnvironment, refreshWeatherIfExpired } from '../weather/weather';
+import { reconcileActorRelationshipProfiles } from '../relationship/relationshipActorProfile';
+import {
+  clampReputationScore,
+  clampReputationVisibility,
+  deriveOverallReputationFromCircles,
+  resolveOverallReputationBaseline
+} from '../reputation/reputation';
+import {
+  applyWeatherPatchToEnvironmentWithDiagnostics,
+  refreshWeatherIfExpired
+} from '../weather/weather';
+import { createStoryDialogueSpeakerActorIds } from '../runtime/storyDialogueActors';
+import { buildStoryBlocks } from '../runtime/storyBlocks';
+import { filterManuallyLockedActorPatch } from '../runtime/manualActorProfile';
+import { resolveCurrentMatterIdentity } from '../dynamicEvents/currentMatterIdentity';
+import { advanceSignalLifecycle } from '../dynamic/signalLifecycle';
+import { deriveActorAgeAt, normalizeActorBirthDate, normalizeRuntimeActorAges } from '../runtime/actorAge';
 import {
   applyPlayerIdentityContextPatch,
   applySecretFactPatches,
   type PlayerIdentityContextPatch,
   type SecretFactPatch
 } from '../identity/playerIdentityContext';
+import {
+  applyPlayerCivilianRoleProfilePatch,
+  type PlayerCivilianRoleProfilePatch
+} from '../identity/playerCivilianRoleProfile';
+import {
+  applyPlayerPoliceRoleProfilePatch,
+  type PlayerPoliceRoleProfilePatch
+} from '../identity/playerPoliceRoleProfile';
+import { resolveOrganizationWritebackIdentity } from '../institution/organizationIdentity';
+import {
+  createVitalsConditionLifecycle,
+  inferConditionPersistence
+} from '../vitals/playerVitalsLifecycle';
 import type {
   Actor,
   AssetItem,
@@ -52,6 +106,7 @@ import type {
   NewsIssue,
   Organization,
   OrganizationStructureNode,
+  PendingActorProfileEnrichment,
   Place,
   PlayerReputationLogEntry,
   PlayerReputationState,
@@ -67,6 +122,7 @@ import type {
   TraitProgress,
   Vitals
 } from '../runtime/types';
+import { createStoryVisualContext } from '../runtime/storyVisualContext';
 import type { NarratorResponse } from './schema';
 import type { PregnancyMode } from '../settings/types';
 
@@ -89,6 +145,8 @@ type ReputationPatch = PlayerPatch['reputationPatches'][number];
 type AssetPatch = NonNullable<NarratorResponse['writeback']['assetPatch']>;
 type FinancePatch = NonNullable<NarratorResponse['writeback']['financePatch']>;
 type GrayLedgerPatch = NonNullable<NarratorResponse['writeback']['grayLedgerPatch']>;
+type CivilianRoleProfilePatch = NonNullable<NarratorResponse['writeback']['civilianRoleProfilePatch']>;
+type PoliceRoleProfilePatch = NonNullable<NarratorResponse['writeback']['policeRoleProfilePatch']>;
 
 interface ActorReferenceResolution {
   actorId: string;
@@ -161,26 +219,6 @@ function mergeUnique<T extends string>(existing: T[] | undefined, incoming: T[] 
   return Array.from(new Set([...(existing ?? []), ...(incoming ?? [])]));
 }
 
-function relationshipCreationEvidenceDiagnostics(
-  patch: RelationshipThreadPatch,
-  stores: Pick<RuntimeState, 'memories' | 'cases' | 'deferredEvents'>
-): string[] {
-  if (!patch.creationBasis) return ['creationBasis'];
-  const evidenceRefs = patch.evidenceRefs ?? [];
-  if (evidenceRefs.length === 0) return ['evidenceRefs'];
-  const requiredCount = patch.creationBasis === 'repeated_contact' || patch.creationBasis === 'sustained_conflict' ? 2 : 1;
-  const validKeys = new Set<string>();
-  for (const ref of evidenceRefs) {
-    const valid =
-      (ref.kind === 'current_turn' && ref.refId === 'current_turn') ||
-      (ref.kind === 'memory' && Boolean(stores.memories[ref.refId])) ||
-      (ref.kind === 'case' && Boolean(stores.cases[ref.refId])) ||
-      (ref.kind === 'deferred_event' && Boolean(stores.deferredEvents[ref.refId]));
-    if (valid) validKeys.add(`${ref.kind}:${ref.refId}`);
-  }
-  return validKeys.size >= requiredCount ? [] : [`evidenceRefs(${validKeys.size}/${requiredCount})`];
-}
-
 function organizationRelationKey(relation: Pick<OrganizationRelationPatch, 'organizationId' | 'relationType' | 'roleTitle'>): string {
   return [relation.organizationId, relation.relationType, relation.roleTitle ?? ''].join('\u0000');
 }
@@ -211,6 +249,60 @@ function remapActorIds(actorIds: string[] | undefined, actorIdAliases: Map<strin
   if (!actorIds) return undefined;
 
   return Array.from(new Set(actorIds.map((actorId) => actorIdAliases.get(actorId) ?? actorId)));
+}
+
+function remapPlayerIdentityContextPatchActorIds(
+  patch: PlayerIdentityContextPatch,
+  actorIdAliases: Map<string, string>
+): PlayerIdentityContextPatch {
+  const targetRoleProfile = patch.targetRoleProfile;
+  const remappedTargetRoleProfile =
+    targetRoleProfile.identity === 'police'
+      ? {
+          ...targetRoleProfile,
+          profile: {
+            ...targetRoleProfile.profile,
+            supervisorActorIds:
+              remapActorIds(targetRoleProfile.profile.supervisorActorIds, actorIdAliases) ?? [],
+            peerActorIds: remapActorIds(targetRoleProfile.profile.peerActorIds, actorIdAliases) ?? []
+          }
+        }
+      : targetRoleProfile.identity === 'gang_member'
+        ? {
+            ...targetRoleProfile,
+            profile: {
+              ...targetRoleProfile.profile,
+              patronActorIds:
+                remapActorIds(targetRoleProfile.profile.patronActorIds, actorIdAliases) ?? [],
+              peerActorIds: remapActorIds(targetRoleProfile.profile.peerActorIds, actorIdAliases) ?? [],
+              rivalActorIds: remapActorIds(targetRoleProfile.profile.rivalActorIds, actorIdAliases) ?? []
+            }
+          }
+        : {
+            ...targetRoleProfile,
+            profile: {
+              ...targetRoleProfile.profile,
+              livelihoodActorIds:
+                remapActorIds(targetRoleProfile.profile.livelihoodActorIds, actorIdAliases) ?? []
+            }
+          };
+
+  return {
+    ...patch,
+    targetRoleProfile: remappedTargetRoleProfile,
+    secretFactPatches: patch.secretFactPatches?.map((secretPatch) =>
+      secretPatch.operation === 'upsert'
+        ? {
+            ...secretPatch,
+            fact: {
+              ...secretPatch.fact,
+              knownByActorIds:
+                remapActorIds(secretPatch.fact.knownByActorIds, actorIdAliases) ?? []
+            }
+          }
+        : secretPatch
+    )
+  };
 }
 
 function remapOrganizationStructureActorIds(
@@ -300,65 +392,97 @@ function hasReputationAuditFields(patch: { summary?: string; reason?: string }):
   return hasText(patch.summary) && hasText(patch.reason);
 }
 
-function hasOverallReputationMutation(patch: NonNullable<PlayerPatch['reputation']>): boolean {
+function hasReputationOverviewMutation(patch: NonNullable<PlayerPatch['reputation']>): boolean {
   return (
     hasNumber(patch.notorietySet) ||
     hasNumber(patch.notorietyDelta) ||
-    hasNumber(patch.overallReputationSet) ||
-    hasNumber(patch.overallReputationDelta) ||
     hasText(patch.summary) ||
     hasText(patch.reason)
   );
 }
 
-function missingRequiredNewActorFields(patch: ActorPatch): string[] {
+export function missingMinimumNewActorFields(patch: ActorPatch, currentTime: GameTime): string[] {
   const missing: string[] = [];
-  const requiredTextFields: Array<[keyof ActorPatch, string]> = [
-    ['name', 'name'],
-    ['publicIdentity', 'publicIdentity'],
-    ['actualIdentitySummary', 'actualIdentitySummary'],
-    ['positionSummary', 'positionSummary'],
-    ['profileSummary', 'profileSummary'],
-    ['appearance', 'appearance'],
-    ['clothing', 'clothing'],
-    ['personality', 'personality'],
-    ['speechStyle', 'speechStyle'],
-    ['motivation', 'motivation'],
-    ['longTermGoal', 'longTermGoal'],
-    ['values', 'values'],
-    ['relationshipSummary', 'relationshipSummary'],
-    ['attitudeTowardPlayer', 'attitudeTowardPlayer'],
-    ['trustTendency', 'trustTendency'],
-    ['entanglementSummary', 'entanglementSummary'],
-    ['longTermMemorySummary', 'longTermMemorySummary'],
-    ['recentInteractionMemory', 'recentInteractionMemory'],
-    ['statusSummary', 'statusSummary']
-  ];
-
-  for (const [field, label] of requiredTextFields) {
-    if (!hasText(patch[field] as string | undefined)) missing.push(label);
-  }
+  if (!hasText(patch.name)) missing.push('name');
   if (!patch.gender || patch.gender === 'unknown') missing.push('gender');
-  if (!hasNumber(patch.computedAge)) missing.push('computedAge');
-  if (!patch.currentIdentity) missing.push('currentIdentity');
-  if (!hasNumber(patch.interactionScore)) missing.push('interactionScore');
-  if (!patch.presence) missing.push('presence');
-  if (!patch.visibility) missing.push('visibility');
-  if (!hasNumber(patch.importance)) missing.push('importance');
-  const attributes = patch.attributes;
-  if (
-    !attributes ||
-    !hasNumber(attributes.body) ||
-    !hasNumber(attributes.action) ||
-    !hasNumber(attributes.perception) ||
-    !hasNumber(attributes.thinking) ||
-    !hasNumber(attributes.negotiation) ||
-    !hasNumber(attributes.will)
-  ) {
-    missing.push('attributes');
+
+  const hasValidComputedAge =
+    typeof patch.computedAge === 'number' &&
+    Number.isInteger(patch.computedAge) &&
+    patch.computedAge >= 0 &&
+    patch.computedAge <= 130;
+  const normalizedBirthDate = normalizeActorBirthDate(patch.birthDate);
+  const hasValidBirthDate = Boolean(
+    normalizedBirthDate && deriveActorAgeAt({ birthDate: normalizedBirthDate }, currentTime) !== undefined
+  );
+  if (!hasValidComputedAge && !hasValidBirthDate) missing.push('birthDate|computedAge');
+
+  if (!patch.currentIdentity && !hasText(patch.publicIdentity)) {
+    missing.push('currentIdentity|publicIdentity');
   }
 
   return missing;
+}
+
+function sanitizeActorDemographicPatch<T extends Pick<ActorPatch, 'birthDate' | 'computedAge'>>({
+  patch,
+  actorExists,
+  currentTime,
+  path,
+  diagnostics
+}: {
+  patch: T;
+  actorExists: boolean;
+  currentTime: GameTime;
+  path: Array<string | number>;
+  diagnostics: StoryDiagnosticIssue[];
+}): T {
+  const protectedFields = [
+    ...(patch.birthDate !== undefined ? ['birthDate'] : []),
+    ...(patch.computedAge !== undefined ? ['computedAge'] : [])
+  ];
+
+  if (actorExists) {
+    if (protectedFields.length > 0) {
+      diagnostics.push({
+        path,
+        code: 'actor_immutable_demographic_ignored',
+        message: `Protected demographic fields were ignored for an existing actor: ${protectedFields.join(', ')}.`
+      });
+    }
+    const { birthDate: _birthDate, computedAge: _computedAge, ...safePatch } = patch;
+    return safePatch as unknown as T;
+  }
+
+  if (patch.birthDate === undefined) return patch;
+
+  const normalizedBirthDate = normalizeActorBirthDate(patch.birthDate);
+  const derivedAge = normalizedBirthDate
+    ? deriveActorAgeAt({ birthDate: normalizedBirthDate }, currentTime)
+    : undefined;
+  if (!normalizedBirthDate || derivedAge === undefined) {
+    diagnostics.push({
+      path: [...path, 'birthDate'],
+      code: 'actor_invalid_birth_date_ignored',
+      message: 'The new actor birthDate was ignored because it is not a valid past or current calendar date.'
+    });
+    const { birthDate: _birthDate, ...safePatch } = patch;
+    return safePatch as unknown as T;
+  }
+
+  if (patch.computedAge !== undefined && patch.computedAge !== derivedAge) {
+    diagnostics.push({
+      path,
+      code: 'actor_age_rederived_from_birth_date',
+      message: 'The new actor computedAge conflicted with birthDate and was replaced with the age derived at turn end.'
+    });
+  }
+
+  return {
+    ...patch,
+    birthDate: normalizedBirthDate,
+    computedAge: derivedAge
+  } as T;
 }
 
 function resolveActorReferenceWithAliases(
@@ -374,12 +498,33 @@ function resolveActorReferenceWithAliases(
   return { actorId, remapped: false };
 }
 
-function applyVitalsPatch(vitals: Vitals, patch: NonNullable<ActorPatch['vitalsPatch']>): Vitals {
-  return {
+function applyVitalsPatch(
+  vitals: Vitals,
+  patch: NonNullable<ActorPatch['vitalsPatch']>,
+  reviewedAt: GameTime
+): Vitals {
+  const nextVitals = {
     ...vitals,
     health: clamp(vitals.health + patch.healthDelta, 0, vitals.maxHealth),
     stamina: clamp(vitals.stamina + patch.staminaDelta, 0, vitals.maxStamina),
     conditionSummary: patch.conditionSummary ?? vitals.conditionSummary
+  };
+  const summaryChanged =
+    patch.conditionSummary !== undefined && patch.conditionSummary.trim() !== vitals.conditionSummary.trim();
+  const persistence =
+    patch.conditionPersistence ??
+    (summaryChanged
+      ? inferConditionPersistence(nextVitals)
+      : vitals.conditionLifecycle?.persistence ?? inferConditionPersistence(nextVitals));
+  return {
+    ...nextVitals,
+    conditionLifecycle: createVitalsConditionLifecycle(
+      persistence,
+      summaryChanged
+        ? reviewedAt
+        : vitals.conditionLifecycle?.establishedAt ?? reviewedAt,
+      reviewedAt
+    )
   };
 }
 
@@ -427,9 +572,11 @@ function appendActorMemoryItem(
   actorId: string,
   turnId: string,
   time: GameTime,
+  referenceTime: GameTime,
   memory: Pick<MemoryItem, 'text' | 'visibility'> & Partial<Pick<MemoryItem, 'certainty'>>
 ): void {
-  const duplicate = findSameTurnActorMemory(memories, actorId, turnId, memory.text);
+  const normalized = normalizeMemoryTemporalText(memory.text, referenceTime);
+  const duplicate = findSameTurnActorMemory(memories, actorId, turnId, normalized.text);
   if (duplicate) {
     duplicate.visibility = mergeVisibility(duplicate.visibility, memory.visibility);
     return;
@@ -438,7 +585,7 @@ function appendActorMemoryItem(
   const memoryId = nextAvailableId('memory', memories);
   memories[memoryId] = {
     memoryId,
-    text: memory.text,
+    text: normalized.text,
     kind: 'actor',
     tier: 'short_term',
     relatedActorIds: [actorId],
@@ -450,7 +597,8 @@ function appendActorMemoryItem(
     importance: 50,
     visibility: memory.visibility,
     certainty: memory.certainty ?? 'claim',
-    embeddingText: memory.text
+    embeddingText: normalized.text,
+    temporalReferences: normalized.temporalReferences.length > 0 ? normalized.temporalReferences : undefined
   };
 }
 
@@ -555,6 +703,121 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function findExistingActorIdForScreenCharacterIdentity(
+  actors: Record<string, Actor>,
+  match: ScreenCharacterIdentityMatch
+): string | undefined {
+  if (actors[match.runtimeActorId]) return match.runtimeActorId;
+  return Object.values(actors).find((actor) => actorMatchesScreenCharacterIdentity(actor, match))?.actorId;
+}
+
+function screenCharacterIdentityMetadata(match: ScreenCharacterIdentityMatch): Record<string, unknown> {
+  return {
+    canonicalCharacterId: match.canonicalCharacterId,
+    seedCharacterId: match.seedCharacterId,
+    sourceWorkId: match.sourceWorkId,
+    displayName: match.displayName
+  };
+}
+
+function mergeScreenCharacterWorldpackActorData(
+  worldpackActorData: ActorPatch['worldpackActorData'] | undefined,
+  match: ScreenCharacterIdentityMatch
+): ActorPatch['worldpackActorData'] {
+  const base = isRecord(worldpackActorData) ? worldpackActorData : {};
+  const hk1988 = isRecord(base.hk1988) ? base.hk1988 : {};
+  const {
+    eraSeedIdentity: _discardEraSeedIdentity,
+    cityPowerIdentity: _discardCityPowerIdentity,
+    ...screenCharacterData
+  } = hk1988;
+  return {
+    ...base,
+    hk1988: {
+      ...screenCharacterData,
+      screenCharacterIdentity: screenCharacterIdentityMetadata(match)
+    }
+  };
+}
+
+function mergeScreenCharacterAliases(
+  existing: string[] | undefined,
+  incoming: string[] | undefined,
+  match: ScreenCharacterIdentityMatch
+): string[] {
+  return mergeUnique(existing, [...match.recognitionAliases, ...(incoming ?? [])]).filter(
+    (alias) => alias !== match.displayName && alias !== match.englishName
+  );
+}
+
+function screenCharacterMatchFromPatchMetadata(patch: ActorPatch): ScreenCharacterIdentityMatch | undefined {
+  const base = isRecord(patch.worldpackActorData) ? patch.worldpackActorData : undefined;
+  const hk1988 = base && isRecord(base.hk1988) ? base.hk1988 : undefined;
+  const identity = hk1988 && isRecord(hk1988.screenCharacterIdentity)
+    ? hk1988.screenCharacterIdentity
+    : undefined;
+  const canonicalCharacterId = typeof identity?.canonicalCharacterId === 'string'
+    ? identity.canonicalCharacterId
+    : undefined;
+  const canonicalMatch = findScreenCharacterIdentityByCanonicalId(canonicalCharacterId);
+  if (canonicalMatch) return canonicalMatch;
+
+  const sourceWorkId = typeof identity?.sourceWorkId === 'string' ? identity.sourceWorkId : undefined;
+  const displayName = typeof identity?.displayName === 'string' ? identity.displayName : undefined;
+  return findScreenCharacterIdentityMatchForSource(displayName, sourceWorkId);
+}
+
+function patchClaimsNonScreenIdentity(patch: ActorPatch): boolean {
+  if (patch.actorId.startsWith('npc_seed_') || patch.actorId.startsWith('npc_power_')) return true;
+  const base = isRecord(patch.worldpackActorData) ? patch.worldpackActorData : undefined;
+  const hk1988 = base && isRecord(base.hk1988) ? base.hk1988 : undefined;
+  return Boolean(hk1988 && (isRecord(hk1988.eraSeedIdentity) || isRecord(hk1988.cityPowerIdentity)));
+}
+
+function findScreenCharacterIdentityMatchForActorPatch(
+  actors: Record<string, Actor>,
+  patch: ActorPatch
+): ScreenCharacterIdentityMatch | undefined {
+  if (patch.actorId === 'player') return undefined;
+
+  const explicitRuntimeMatch = patch.actorId.startsWith('npc_screen_')
+    ? findScreenCharacterIdentityMatch(patch.actorId)
+    : undefined;
+  if (explicitRuntimeMatch) return explicitRuntimeMatch;
+
+  const metadataMatch = screenCharacterMatchFromPatchMetadata(patch);
+  if (metadataMatch) return metadataMatch;
+  if (patchClaimsNonScreenIdentity(patch)) return undefined;
+
+  const existingActor = actors[patch.actorId];
+  if (existingActor) return screenCharacterMatchFromStoredActor(existingActor);
+  return undefined;
+}
+
+function normalizeScreenCharacterActorPatch(
+  actors: Record<string, Actor>,
+  patch: ActorPatch
+): { patch: ActorPatch; match?: ScreenCharacterIdentityMatch; targetActorId?: string } {
+  const match = findScreenCharacterIdentityMatchForActorPatch(actors, patch);
+  if (!match) return { patch };
+
+  const targetActorId = findExistingActorIdForScreenCharacterIdentity(actors, match);
+  const targetActor = targetActorId ? actors[targetActorId] : undefined;
+  const actorId = targetActor?.actorId ?? match.runtimeActorId;
+  return {
+    patch: {
+      ...patch,
+      actorId,
+      name: targetActor?.name ?? match.displayName,
+      englishName: targetActor?.englishName ?? patch.englishName ?? match.englishName,
+      aliases: mergeScreenCharacterAliases(targetActor?.aliases, patch.aliases, match),
+      worldpackActorData: mergeScreenCharacterWorldpackActorData(patch.worldpackActorData, match)
+    },
+    match,
+    targetActorId: actorId
+  };
+}
+
 function findExistingActorIdForSeedIdentity(
   actors: Record<string, Actor>,
   match: SeedIdentityMatch
@@ -609,20 +872,44 @@ function mergeSeedWorldpackActorData(
   };
 }
 
-function findSeedIdentityMatchForActorPatch(patch: ActorPatch): SeedIdentityMatch | undefined {
-  return (
-    findSeedIdentityMatch(patch.name) ??
-    findSeedIdentityMatch(patch.callName) ??
-    findSeedIdentityMatch(patch.englishName) ??
-    patch.aliases?.map((alias) => findSeedIdentityMatch(alias)).find(Boolean)
+function seedMatchFromPatchMetadata(patch: ActorPatch): SeedIdentityMatch | undefined {
+  const base = isRecord(patch.worldpackActorData) ? patch.worldpackActorData : undefined;
+  const hk1988 = base && isRecord(base.hk1988) ? base.hk1988 : undefined;
+  const identity = hk1988 && isRecord(hk1988.eraSeedIdentity)
+    ? hk1988.eraSeedIdentity
+    : undefined;
+  return findSeedIdentityByCanonicalId(
+    typeof identity?.canonicalSeedId === 'string' ? identity.canonicalSeedId : undefined
   );
+}
+
+function stableSeedNameMatch(value: string | undefined): SeedIdentityMatch | undefined {
+  const match = findSeedIdentityMatch(value);
+  return match?.matchedBy === 'displayName' || match?.matchedBy === 'englishName'
+    ? match
+    : undefined;
+}
+
+function findSeedIdentityMatchForActorPatch(
+  actors: Record<string, Actor>,
+  patch: ActorPatch
+): SeedIdentityMatch | undefined {
+  if (patch.actorId === 'player') return undefined;
+  if (patch.actorId.startsWith('npc_seed_')) {
+    return findSeedIdentityByCanonicalId(patch.actorId.slice('npc_seed_'.length));
+  }
+  const metadataMatch = seedMatchFromPatchMetadata(patch);
+  if (metadataMatch) return metadataMatch;
+  const existingActor = actors[patch.actorId];
+  if (existingActor) return seedMatchFromStoredActor(existingActor);
+  return stableSeedNameMatch(patch.name) ?? stableSeedNameMatch(patch.englishName);
 }
 
 function normalizeSeedActorPatch(
   actors: Record<string, Actor>,
   patch: ActorPatch
 ): { patch: ActorPatch; match?: SeedIdentityMatch; targetActorId?: string } {
-  const match = findSeedIdentityMatchForActorPatch(patch);
+  const match = findSeedIdentityMatchForActorPatch(actors, patch);
   if (!match) return { patch };
 
   const targetActorId = findExistingActorIdForSeedIdentity(actors, match);
@@ -714,20 +1001,44 @@ function mergeCityPowerWorldpackActorData(
   };
 }
 
-function findCityPowerIdentityMatchForActorPatch(patch: ActorPatch): CityPowerIdentityMatch | undefined {
-  return (
-    findCityPowerIdentityMatch(patch.name) ??
-    findCityPowerIdentityMatch(patch.callName) ??
-    findCityPowerIdentityMatch(patch.englishName) ??
-    patch.aliases?.map((alias) => findCityPowerIdentityMatch(alias)).find(Boolean)
+function cityPowerMatchFromPatchMetadata(patch: ActorPatch): CityPowerIdentityMatch | undefined {
+  const base = isRecord(patch.worldpackActorData) ? patch.worldpackActorData : undefined;
+  const hk1988 = base && isRecord(base.hk1988) ? base.hk1988 : undefined;
+  const identity = hk1988 && isRecord(hk1988.cityPowerIdentity)
+    ? hk1988.cityPowerIdentity
+    : undefined;
+  return findCityPowerIdentityByCanonicalId(
+    typeof identity?.canonicalSeedId === 'string' ? identity.canonicalSeedId : undefined
   );
+}
+
+function stableCityPowerNameMatch(value: string | undefined): CityPowerIdentityMatch | undefined {
+  const match = findCityPowerIdentityMatch(value);
+  return match?.matchedBy === 'displayName' || match?.matchedBy === 'englishName'
+    ? match
+    : undefined;
+}
+
+function findCityPowerIdentityMatchForActorPatch(
+  actors: Record<string, Actor>,
+  patch: ActorPatch
+): CityPowerIdentityMatch | undefined {
+  if (patch.actorId === 'player') return undefined;
+  if (patch.actorId.startsWith('npc_power_')) {
+    return findCityPowerIdentityByCanonicalId(patch.actorId.slice('npc_power_'.length));
+  }
+  const metadataMatch = cityPowerMatchFromPatchMetadata(patch);
+  if (metadataMatch) return metadataMatch;
+  const existingActor = actors[patch.actorId];
+  if (existingActor) return cityPowerMatchFromStoredActor(existingActor);
+  return stableCityPowerNameMatch(patch.name) ?? stableCityPowerNameMatch(patch.englishName);
 }
 
 function normalizeCityPowerActorPatch(
   actors: Record<string, Actor>,
   patch: ActorPatch
 ): { patch: ActorPatch; match?: CityPowerIdentityMatch; targetActorId?: string } {
-  const match = findCityPowerIdentityMatchForActorPatch(patch);
+  const match = findCityPowerIdentityMatchForActorPatch(actors, patch);
   if (!match) return { patch };
 
   const targetActorId = findExistingActorIdForCityPowerIdentity(actors, match);
@@ -1254,40 +1565,30 @@ function applyReputationPatch(
   time: GameTime,
   turnId: string
 ): PlayerReputationState {
-  let nextReputation = reputation;
+  const overallReputationBaseline = resolveOverallReputationBaseline(reputation);
+  let nextReputation: PlayerReputationState = {
+    ...reputation,
+    overallReputationBaseline
+  };
+  let overviewSummary = nextReputation.summary;
+  let overviewReason = '';
+  let notorietyDelta = 0;
 
   if (patch) {
-    if (hasOverallReputationMutation(patch) && hasReputationAuditFields(patch)) {
+    if (hasReputationOverviewMutation(patch) && hasReputationAuditFields(patch)) {
       const nextNotoriety =
         patch.notorietySet ??
         (patch.notorietyDelta === undefined ? nextReputation.notoriety : nextReputation.notoriety + patch.notorietyDelta);
-      const nextOverall =
-        patch.overallReputationSet ??
-        (patch.overallReputationDelta === undefined
-          ? nextReputation.overallReputation
-          : nextReputation.overallReputation + patch.overallReputationDelta);
       const normalizedNotoriety = clampReputationVisibility(nextNotoriety);
-      const normalizedOverall = clampReputationScore(nextOverall);
-      const notorietyDelta = normalizedNotoriety - nextReputation.notoriety;
-      const overallReputationDelta = normalizedOverall - nextReputation.overallReputation;
+      notorietyDelta = normalizedNotoriety - nextReputation.notoriety;
+      overviewSummary = patch.summary ?? nextReputation.summary;
+      overviewReason = patch.reason ?? '';
 
       nextReputation = {
         ...nextReputation,
         notoriety: normalizedNotoriety,
-        overallReputation: normalizedOverall,
-        summary: patch.summary ?? nextReputation.summary
+        summary: overviewSummary
       };
-      if (notorietyDelta !== 0 || overallReputationDelta !== 0 || patch.summary || patch.reason) {
-        nextReputation = appendReputationLog(nextReputation, {
-          gameTime: time,
-          turnId,
-          kind: 'overall',
-          notorietyDelta,
-          overallReputationDelta,
-          summary: patch.summary ?? nextReputation.summary,
-          reason: patch.reason ?? ''
-        });
-      }
     }
 
     for (const circlePatch of patch.circlePatches) {
@@ -1297,6 +1598,29 @@ function applyReputationPatch(
 
   for (const legacyPatch of legacyPatches) {
     nextReputation = applySingleCircleReputationPatch(nextReputation, legacyPatch, time, turnId);
+  }
+
+  const derivedOverallReputation = deriveOverallReputationFromCircles(
+    nextReputation.circles,
+    overallReputationBaseline
+  );
+  const overallReputationDelta = derivedOverallReputation - reputation.overallReputation;
+  nextReputation = {
+    ...nextReputation,
+    overallReputation: derivedOverallReputation,
+    overallReputationBaseline
+  };
+
+  if (notorietyDelta !== 0 || overallReputationDelta !== 0) {
+    nextReputation = appendReputationLog(nextReputation, {
+      gameTime: time,
+      turnId,
+      kind: 'overall',
+      notorietyDelta,
+      overallReputationDelta,
+      summary: overviewSummary,
+      reason: overviewReason || '根据已确认的圈层知名度与评价在本地重新综合。'
+    });
   }
 
   return nextReputation;
@@ -1326,13 +1650,6 @@ function applyPlayerPatch(
         monthlyPressure: clamp(monthlyPressure, 0, 100),
         financeSummary: patch.economy.financeSummary ?? nextPlayer.economy.financeSummary
       }
-    };
-  }
-
-  if (patch.progression?.experienceGain) {
-    nextPlayer = {
-      ...nextPlayer,
-      progression: applyExperienceGain(nextPlayer.progression, patch.progression.experienceGain).progression
     };
   }
 
@@ -1536,9 +1853,13 @@ export function applyCasePatch(existing: CaseFile | undefined, patch: CasePatch,
 
 
 function applyOrganizationPatch(existing: Organization | undefined, patch: OrganizationPatch): Organization {
+  const nextVisibility = patch.visibility ?? existing?.visibility ?? 'player_known';
+  const previousNameAlias =
+    existing && patch.name && existing.name !== patch.name ? [existing.name] : undefined;
   return {
     organizationId: patch.organizationId,
     name: patch.name ?? existing?.name ?? patch.organizationId,
+    aliases: mergeUnique(existing?.aliases, mergeUnique(previousNameAlias, patch.aliases)),
     type: patch.type ?? existing?.type ?? 'generated_organization',
     summary: patch.summary ?? existing?.summary ?? '由剧情写回生成的组织。',
     publicKnowledge: patch.publicKnowledge ?? existing?.publicKnowledge ?? '公开信息尚少。',
@@ -1546,10 +1867,15 @@ function applyOrganizationPatch(existing: Organization | undefined, patch: Organ
     stanceTowardPlayer: patch.stanceTowardPlayer ?? existing?.stanceTowardPlayer ?? '暂未形成明确关系。',
     pressureSummary: patch.pressureSummary ?? existing?.pressureSummary ?? '暂未形成明确压力。',
     structureTree: patch.structureTree ?? existing?.structureTree,
+    triadProfile: existing?.triadProfile,
+    triadState:
+      nextVisibility === 'hidden'
+        ? existing?.triadState
+        : applyTriadOrganizationStatePatch(existing?.triadState, patch.triadState),
     relatedActorIds: mergeUnique(existing?.relatedActorIds, patch.relatedActorIds),
     relatedPlaceIds: mergeUnique(existing?.relatedPlaceIds, patch.relatedPlaceIds),
     relatedCaseIds: mergeUnique(existing?.relatedCaseIds, patch.relatedCaseIds),
-    visibility: patch.visibility ?? existing?.visibility ?? 'player_known',
+    visibility: nextVisibility,
     importance: patch.importance ?? existing?.importance ?? 50
   };
 }
@@ -1757,18 +2083,80 @@ export function applyAssetPatch(assets: RuntimeAssetsState, patch: AssetPatch | 
 
   const next = cloneAssetsState(assets);
   for (const item of patch.upsertItems ?? []) {
+    if (isSpendableCashAsset(item)) continue;
     next.items[item.itemId] = cloneAssetBase(item);
   }
   for (const removed of patch.removeItems ?? []) {
     delete next.items[removed.itemId];
   }
+  if (patch.equippedItemIds !== undefined) {
+    next.equippedItemIds = [...patch.equippedItemIds];
+  }
   next.equippedItemIds = normalizeEquippedItemIds(next);
   return next;
 }
 
+function reconcileActorProfileEnrichmentQueue({
+  state,
+  actors,
+  response,
+  actorIdAliases,
+  turnId
+}: {
+  state: RuntimeState;
+  actors: RuntimeState['actors'];
+  response: NarratorResponse;
+  actorIdAliases: Map<string, string>;
+  turnId: string;
+}): PendingActorProfileEnrichment[] {
+  const pendingByActorId = new Map<string, PendingActorProfileEnrichment>();
+  for (const rawPending of state.pendingActorProfileEnrichments ?? []) {
+    const pending = normalizePendingActorProfileEnrichment(rawPending);
+    if (!pending) continue;
+    const actorId = actorIdAliases.get(pending.actorId) ?? pending.actorId;
+    if (!actors[actorId] || actorId === state.player.actorId) continue;
+    const previous = pendingByActorId.get(actorId);
+    pendingByActorId.set(actorId, {
+      ...pending,
+      actorId,
+      missingFields: Array.from(new Set([...(previous?.missingFields ?? []), ...pending.missingFields])),
+      sourceTurnId: previous?.sourceTurnId ?? pending.sourceTurnId,
+      attemptCount: Math.max(previous?.attemptCount ?? 0, pending.attemptCount),
+      consecutiveFailureCount: Math.max(
+        previous?.consecutiveFailureCount ?? 0,
+        pending.consecutiveFailureCount ?? 0
+      )
+    });
+  }
+
+  for (const [actorId, actor] of Object.entries(actors)) {
+    if (actorId === state.player.actorId) continue;
+    const previous = pendingByActorId.get(actorId);
+    const remainingFields = missingActorProfileEnrichmentFields(actor);
+    if (remainingFields.length === 0) {
+      pendingByActorId.delete(actorId);
+      continue;
+    }
+
+    pendingByActorId.set(actorId, {
+      actorId,
+      sourceTurnId: previous?.sourceTurnId ?? turnId,
+      missingFields: remainingFields,
+      attemptCount: previous?.attemptCount ?? 0,
+      lastAttemptTurn: previous?.lastAttemptTurn,
+      nextRetryTurn: previous?.nextRetryTurn,
+      consecutiveFailureCount: previous?.consecutiveFailureCount ?? 0,
+      lastFailureKind: previous?.lastFailureKind,
+      lastRouteMode: previous?.lastRouteMode
+    });
+  }
+
+  return [...pendingByActorId.values()].slice(-200);
+}
+
 export function applyNarratorResponse(
   state: RuntimeState,
-  response: NarratorResponse,
+  rawResponse: NarratorResponse,
   meta: {
     playerInput?: string;
     rawNarratorResponse?: string;
@@ -1778,6 +2166,15 @@ export function applyNarratorResponse(
     pregnancyMode?: PregnancyMode;
   } = {}
 ): RuntimeState {
+  const assetPurchaseAtomicity = enforceAssetPurchaseWritebackAtomicity(
+    state,
+    rawResponse
+  );
+  const organizationIdentityResolution = resolveOrganizationWritebackIdentity(
+    state,
+    assetPurchaseAtomicity.response
+  );
+  const response = organizationIdentityResolution.response;
   const nextTime = resolveTurnEndTime(state.time, response.timePatch);
   const elapsedMinutes = elapsedMinutesBetween(state.time, nextTime);
   const turnId = nextId('turn', state.turnCounter);
@@ -1804,11 +2201,15 @@ export function applyNarratorResponse(
   let location = state.location;
   let policePanel = state.policePanel;
   let environment = refreshWeatherIfExpired(state.environment, nextTime);
-  const applicationDiagnostics: StoryDiagnosticIssue[] = [];
+  const applicationDiagnostics: StoryDiagnosticIssue[] = [
+    ...assetPurchaseAtomicity.diagnostics,
+    ...organizationIdentityResolution.diagnostics
+  ];
   const actorIdAliases = new Map(Object.entries(meta.actorIdAliases ?? {}));
   const patchedPlaceIds = new Set<string>();
   const patchedSceneIds: string[] = [];
   const updatedCurrentMatterIds: string[] = [];
+  const appliedRelationshipThreadIds = new Set<string>();
   const actorMemoryWrittenThisTurn = new Set<string>();
   const legacyActorMemoryCandidates: Array<{
     actorId: string;
@@ -1817,13 +2218,38 @@ export function applyNarratorResponse(
   }> = [];
 
   if (response.writeback.weatherPatch) {
-    environment = applyWeatherPatchToEnvironment(environment, response.writeback.weatherPatch, nextTime);
+    const weatherResult = applyWeatherPatchToEnvironmentWithDiagnostics(
+      environment,
+      response.writeback.weatherPatch,
+      nextTime
+    );
+    environment = weatherResult.environment;
+    if (weatherResult.diagnostic) {
+      applicationDiagnostics.push({
+        path: ['environment', 'weather'],
+        code: weatherResult.diagnostic.code,
+        message: weatherResult.diagnostic.message
+      });
+    }
   }
 
   for (const [index, rawPatch] of response.writeback.actorPatches.entries()) {
-    const seedIdentityResolution = normalizeSeedActorPatch(actors, rawPatch);
-    const cityPowerIdentityResolution = normalizeCityPowerActorPatch(actors, seedIdentityResolution.patch);
+    const screenCharacterIdentityResolution = normalizeScreenCharacterActorPatch(actors, rawPatch);
+    const seedIdentityResolution = screenCharacterIdentityResolution.match
+      ? { patch: screenCharacterIdentityResolution.patch }
+      : normalizeSeedActorPatch(actors, screenCharacterIdentityResolution.patch);
+    const cityPowerIdentityResolution = screenCharacterIdentityResolution.match
+      ? { patch: seedIdentityResolution.patch }
+      : normalizeCityPowerActorPatch(actors, seedIdentityResolution.patch);
     const patch = cityPowerIdentityResolution.patch;
+    if (screenCharacterIdentityResolution.match && rawPatch.actorId !== patch.actorId) {
+      actorIdAliases.set(rawPatch.actorId, patch.actorId);
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index, 'actorId'],
+        code: 'screen_character_identity_actor_remapped',
+        message: `Actor patch "${rawPatch.actorId}" was remapped to screen character identity "${patch.actorId}" (${screenCharacterIdentityResolution.match.displayName}).`
+      });
+    }
     if (seedIdentityResolution.match && rawPatch.actorId !== seedIdentityResolution.patch.actorId) {
       actorIdAliases.set(rawPatch.actorId, seedIdentityResolution.patch.actorId);
       applicationDiagnostics.push({
@@ -1856,12 +2282,12 @@ export function applyNarratorResponse(
       continue;
     }
     if (!actor) {
-      const missingFields = missingRequiredNewActorFields(patch);
+      const missingFields = missingMinimumNewActorFields(patch, nextTime);
       if (missingFields.length > 0) {
         applicationDiagnostics.push({
           path: ['writeback', 'actorPatches', index],
           code: 'incomplete_new_actor_patch',
-          message: `New actor patch "${patch.actorId}" was ignored because it is missing required NPC profile fields: ${missingFields.join(', ')}. Existing actors may be patched sparsely, but new actors must be complete.`
+          message: `New actor patch "${patch.actorId}" was ignored because it is missing the minimum creation fields: ${missingFields.join(', ')}. Optional profile details may be enriched after the actor is created.`
         });
         continue;
       }
@@ -1874,13 +2300,31 @@ export function applyNarratorResponse(
         message: `Actor patch "${patch.actorId}" was applied to existing actor "${resolution.actorId}" through a validated identity alias.`
       });
     }
+    const manualProfileFilter = actor
+      ? filterManuallyLockedActorPatch(actor, patch)
+      : { patch, blockedFields: [] };
+    const effectivePatch = manualProfileFilter.patch;
+    if (manualProfileFilter.blockedFields.length > 0) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index],
+        code: 'actor_manual_profile_override_preserved',
+        message: `Actor patch fields protected by a player correction were ignored: ${manualProfileFilter.blockedFields.join(', ')}.`
+      });
+    }
+    const demographicSafePatch = sanitizeActorDemographicPatch({
+      patch: effectivePatch,
+      actorExists: Boolean(actor),
+      currentTime: nextTime,
+      path: ['writeback', 'actorPatches', index],
+      diagnostics: applicationDiagnostics
+    });
     const isPlayerActorPatch = resolution.actorId === state.player.actorId;
     const hasDirectPlayerIdentityFields =
       isPlayerActorPatch &&
-      (patch.currentIdentity !== undefined ||
-        patch.publicIdentity !== undefined ||
-        patch.actualIdentitySummary !== undefined ||
-        Object.keys(patch.roleProfiles ?? {}).length > 0);
+      (effectivePatch.currentIdentity !== undefined ||
+        effectivePatch.publicIdentity !== undefined ||
+        effectivePatch.actualIdentitySummary !== undefined ||
+        Object.keys(effectivePatch.roleProfiles ?? {}).length > 0);
     if (hasDirectPlayerIdentityFields) {
       applicationDiagnostics.push({
         path: ['writeback', 'actorPatches', index],
@@ -1903,7 +2347,7 @@ export function applyNarratorResponse(
       longTermMemorySummary,
       recentInteractionMemory,
       ...actorPatch
-    } = patch;
+    } = demographicSafePatch;
     const {
       currentIdentity: _directCurrentIdentity,
       publicIdentity: _directPublicIdentity,
@@ -1913,12 +2357,12 @@ export function applyNarratorResponse(
     const effectiveActorPatch = isPlayerActorPatch ? nonIdentityActorPatch : actorPatch;
     const effectiveRoleProfiles = isPlayerActorPatch ? undefined : roleProfiles;
     const locationAwareActorPatch =
-      patch.presence === 'present'
+      effectivePatch.presence === 'present'
         ? {
             ...effectiveActorPatch,
-            currentPlaceId: patch.currentPlaceId ?? location.currentPlaceId,
-            ...(patch.currentSceneId ?? location.currentSceneId
-              ? { currentSceneId: patch.currentSceneId ?? location.currentSceneId }
+            currentPlaceId: effectivePatch.currentPlaceId ?? location.currentPlaceId,
+            ...(effectivePatch.currentSceneId ?? location.currentSceneId
+              ? { currentSceneId: effectivePatch.currentSceneId ?? location.currentSceneId }
               : {})
           }
         : effectiveActorPatch;
@@ -1928,8 +2372,8 @@ export function applyNarratorResponse(
       createActorDefaults({
         ...locationAwareActorPatch,
         actorId: resolution.actorId,
-        name: patch.name ?? patch.publicIdentity ?? patch.actorId,
-        currentIdentity: patch.currentIdentity ?? 'civilian',
+        name: effectivePatch.name ?? effectivePatch.publicIdentity ?? effectivePatch.actorId,
+        currentIdentity: effectivePatch.currentIdentity ?? 'civilian',
         roleProfiles: hasRoleProfiles ? (effectiveRoleProfiles as Actor['roleProfiles']) : {},
         worldpackActorData,
         longTermMemorySummary,
@@ -1941,13 +2385,23 @@ export function applyNarratorResponse(
       mergeUnique(baseActor.organizationIds, organizationIds),
       visibleOrganizationIdsFromRelations(mergedOrganizationRelations)
     );
-    const nextVitals = vitalsPatch && baseActor.vitals ? applyVitalsPatch(baseActor.vitals, vitalsPatch) : undefined;
+    const nextVitals =
+      vitalsPatch && baseActor.vitals
+        ? applyVitalsPatch(baseActor.vitals, vitalsPatch, nextTime)
+        : undefined;
+    if (isPlayerActorPatch && vitalsPatch && nextVitals) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index, 'vitalsPatch'],
+        code: 'player_vitals_lifecycle_updated',
+        message: `玩家身体状态已于 ${nextTime.year}-${String(nextTime.month).padStart(2, '0')}-${String(nextTime.day).padStart(2, '0')} ${String(nextTime.hour).padStart(2, '0')}:${String(nextTime.minute).padStart(2, '0')} 完成复核：${baseActor.vitals?.conditionSummary ?? state.player.vitals.conditionSummary} -> ${nextVitals.conditionSummary}；持续性=${nextVitals.conditionLifecycle?.persistence ?? 'unknown'}。`
+      });
+    }
     const patchedActorBase = normalizeActor({
       ...baseActor,
       ...locationAwareActorPatch,
       actorId: baseActor.actorId,
-      name: patch.name ?? baseActor.name,
-      currentIdentity: isPlayerActorPatch ? baseActor.currentIdentity : patch.currentIdentity ?? baseActor.currentIdentity,
+      name: effectivePatch.name ?? baseActor.name,
+      currentIdentity: isPlayerActorPatch ? baseActor.currentIdentity : effectivePatch.currentIdentity ?? baseActor.currentIdentity,
       organizationIds: mergedOrganizationIds,
       organizationRelations: mergedOrganizationRelations,
       attributes: attributes ? { ...baseActor.attributes, ...attributes } : baseActor.attributes,
@@ -1957,6 +2411,8 @@ export function applyNarratorResponse(
         ...(baseActor.worldpackActorData ?? {}),
         ...(worldpackActorData ?? {})
       },
+      ...(longTermMemorySummary !== undefined ? { longTermMemorySummary } : {}),
+      ...(recentInteractionMemory !== undefined ? { recentInteractionMemory } : {}),
       keyMemories: baseActor.keyMemories,
       ...(nextVitals ? { vitals: nextVitals } : baseActor.vitals ? { vitals: baseActor.vitals } : {})
     });
@@ -1978,7 +2434,13 @@ export function applyNarratorResponse(
         presentActorIds: mergeUnique(scenes[patchedActor.currentSceneId].presentActorIds, [patchedActor.actorId])
       };
     }
-    ({ player, location } = mirrorPlayerActorPatch(player, location, state.player.actorId, { ...patch, actorId: patchedActor.actorId }, patchedActor));
+    ({ player, location } = mirrorPlayerActorPatch(
+      player,
+      location,
+      state.player.actorId,
+      { ...demographicSafePatch, actorId: patchedActor.actorId },
+      patchedActor
+    ));
   }
 
   secretFacts = applySecretFactPatches(
@@ -1987,6 +2449,10 @@ export function applyNarratorResponse(
     nextTime
   );
   if (response.writeback.identityContextPatch) {
+    const identityContextPatch = remapPlayerIdentityContextPatchActorIds(
+      response.writeback.identityContextPatch as PlayerIdentityContextPatch,
+      actorIdAliases
+    );
     const identityResult = applyPlayerIdentityContextPatch(
       {
         ...state,
@@ -1998,7 +2464,7 @@ export function applyNarratorResponse(
         policePanel,
         finance
       },
-      response.writeback.identityContextPatch as PlayerIdentityContextPatch
+      identityContextPatch
     );
     if (identityResult.applied) {
       player = identityResult.state.player;
@@ -2016,7 +2482,41 @@ export function applyNarratorResponse(
     }
   }
 
-  const playerEquipmentPatched = Boolean(response.writeback.playerPatch?.equipment);
+  if (response.writeback.policeRoleProfilePatch) {
+    const rawPatch = response.writeback.policeRoleProfilePatch as PoliceRoleProfilePatch;
+    const policeRoleProfilePatch: PlayerPoliceRoleProfilePatch = {
+      ...rawPatch,
+      ...(rawPatch.supervisorActorIds
+        ? { supervisorActorIds: remapActorIds(rawPatch.supervisorActorIds, actorIdAliases) }
+        : {}),
+      ...(rawPatch.peerActorIds
+        ? { peerActorIds: remapActorIds(rawPatch.peerActorIds, actorIdAliases) }
+        : {})
+    };
+    const roleProfileResult = applyPlayerPoliceRoleProfilePatch(
+      {
+        ...state,
+        time: nextTime,
+        player,
+        actors,
+        lawIdentity,
+        policePanel
+      },
+      policeRoleProfilePatch
+    );
+    if (roleProfileResult.applied) {
+      actors = roleProfileResult.state.actors;
+      lawIdentity = roleProfileResult.state.lawIdentity;
+      policePanel = roleProfileResult.state.policePanel;
+    } else if (roleProfileResult.diagnostic) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'policeRoleProfilePatch'],
+        code: 'police_role_profile_patch_rejected',
+        message: roleProfileResult.diagnostic
+      });
+    }
+  }
+
   if (response.writeback.playerPatch) {
     const result = applyPlayerPatch(player, actors[state.player.actorId], response.writeback.playerPatch, nextTime, turnId);
     player = result.player;
@@ -2028,10 +2528,17 @@ export function applyNarratorResponse(
     policePanel = applyPolicePanelPatch(policePanel, response.writeback.playerPatch.policePanel as PolicePanelPatch, nextTime);
     const currentRank = response.writeback.playerPatch.policePanel.careerPath?.currentRank?.trim();
     if (currentRank) {
-      lawIdentity = {
-        ...lawIdentity,
+      const synchronizedRank = synchronizePlayerPoliceRank({
+        lawIdentity,
+        policePanel,
+        playerActor: actors[player.actorId],
         rank: currentRank
-      };
+      });
+      lawIdentity = synchronizedRank.lawIdentity;
+      policePanel = synchronizedRank.policePanel;
+      if (synchronizedRank.playerActor) {
+        actors[player.actorId] = synchronizedRank.playerActor;
+      }
     }
   }
   const legacyPlayerEconomyPatch = response.writeback.playerPatch?.economy;
@@ -2063,7 +2570,8 @@ export function applyNarratorResponse(
     finance,
     time: nextTime,
     currentIdentity: player.currentIdentity,
-    lawIdentity
+    lawIdentity,
+    identityHistory: player.identityHistory
   });
   grayLedger = applyGrayLedgerPatch(grayLedger, response.writeback.grayLedgerPatch as GrayLedgerPatch | undefined, nextTime);
   player = syncPlayerEconomyWithFinance(player, finance);
@@ -2087,22 +2595,26 @@ export function applyNarratorResponse(
   location = applyLocationPatch(location, response.writeback.locationPatch, scenes);
 
   for (const patch of response.writeback.casePatches) {
-    cases[patch.caseId] = applyCasePatch(
-      cases[patch.caseId],
-      {
-        ...patch,
-        relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases),
-        involvedActorIds: remapActorIds(patch.involvedActorIds, actorIdAliases),
-        leadActorId: patch.leadActorId ? actorIdAliases.get(patch.leadActorId) ?? patch.leadActorId : undefined,
-        activityLog: patch.activityLog?.map((activity) => ({
-          ...activity,
-          actorId: activity.actorId ? actorIdAliases.get(activity.actorId) ?? activity.actorId : undefined,
-          relatedActorIds: remapActorIds(activity.relatedActorIds, actorIdAliases) ?? []
-        }))
-      },
-      turnId,
-      nextTime
-    );
+    cases[patch.caseId] = enforcePlayerCaseLead({
+      caseFile: applyCasePatch(
+        cases[patch.caseId],
+        {
+          ...patch,
+          relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases),
+          involvedActorIds: remapActorIds(patch.involvedActorIds, actorIdAliases),
+          leadActorId: patch.leadActorId ? actorIdAliases.get(patch.leadActorId) ?? patch.leadActorId : undefined,
+          activityLog: patch.activityLog?.map((activity) => ({
+            ...activity,
+            actorId: activity.actorId ? actorIdAliases.get(activity.actorId) ?? activity.actorId : undefined,
+            relatedActorIds: remapActorIds(activity.relatedActorIds, actorIdAliases) ?? []
+          }))
+        },
+        turnId,
+        nextTime
+      ),
+      playerActorId: player.actorId,
+      playerActorName: actors[player.actorId]?.name
+    });
   }
 
   for (const patch of response.writeback.caseEvidencePatches) {
@@ -2143,7 +2655,15 @@ export function applyNarratorResponse(
   }
 
   for (const [index, patch] of response.writeback.currentMatterPatches.entries()) {
-    const existing = dynamicEvents.currentMatters[patch.id];
+    const remappedPatch = {
+      ...patch,
+      relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases)
+    };
+    const matterIdentity = resolveCurrentMatterIdentity(
+      dynamicEvents.currentMatters,
+      remappedPatch
+    );
+    const existing = dynamicEvents.currentMatters[matterIdentity.canonicalId];
     if (!existing && !canCreateCurrentMatter(patch)) {
       applicationDiagnostics.push({
         path: ['writeback', 'currentMatterPatches', index],
@@ -2152,15 +2672,22 @@ export function applyNarratorResponse(
       });
       continue;
     }
-    dynamicEvents.currentMatters[patch.id] = applyCurrentMatterPatch(
+    if (matterIdentity.canonicalId !== patch.id) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'currentMatterPatches', index, 'id'],
+        code: 'current_matter_identity_remapped',
+        message: `Current matter "${patch.id}" was merged into stable matter "${matterIdentity.canonicalId}" by ${matterIdentity.matchedBy}.`
+      });
+    }
+    dynamicEvents.currentMatters[matterIdentity.canonicalId] = applyCurrentMatterPatch(
       existing,
       {
-        ...patch,
-        relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases)
+        ...remappedPatch,
+        id: matterIdentity.canonicalId
       },
       nextTime
     );
-    updatedCurrentMatterIds.push(patch.id);
+    updatedCurrentMatterIds.push(matterIdentity.canonicalId);
   }
 
   for (const [index, patch] of response.writeback.signalPatches.entries()) {
@@ -2177,51 +2704,112 @@ export function applyNarratorResponse(
   }
 
   for (const [index, patch] of response.writeback.newsIssuePatches.entries()) {
-    const existing = dynamicEvents.newsIssues[patch.id];
-    if (!existing && !canCreateNewsIssue(patch)) {
+    const newsworthiness = enforcePlayerNewsworthiness(
+      { ...state, cases },
+      patch,
+      ['writeback', 'newsIssuePatches', index]
+    );
+    applicationDiagnostics.push(...newsworthiness.diagnostics);
+    if (!newsworthiness.issue) {
+      continue;
+    }
+    const acceptedPatch = newsworthiness.issue;
+    const existing = dynamicEvents.newsIssues[acceptedPatch.id];
+    if (!existing && !canCreateNewsIssue(acceptedPatch)) {
       applicationDiagnostics.push({
         path: ['writeback', 'newsIssuePatches', index],
         code: 'incomplete_news_issue_patch',
-        message: `News issue "${patch.id}" was ignored because a new item requires outletName, headline and summary.`
+        message: `News issue "${acceptedPatch.id}" was ignored because a new item requires outletName, headline and summary.`
       });
       continue;
     }
-    dynamicEvents.newsIssues[patch.id] = applyNewsIssuePatch(existing, patch, nextTime);
+    dynamicEvents.newsIssues[acceptedPatch.id] = applyNewsIssuePatch(existing, acceptedPatch, nextTime);
   }
 
   for (const patch of response.writeback.organizationPatches) {
     organizations[patch.organizationId] = applyOrganizationPatch(organizations[patch.organizationId], {
       ...patch,
       relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases),
-      structureTree: remapOrganizationStructureActorIds(patch.structureTree, actorIdAliases)
+      structureTree: remapOrganizationStructureActorIds(patch.structureTree, actorIdAliases),
+      triadState: remapTriadOrganizationStateActorIds(patch.triadState, actorIdAliases)
     });
+  }
+
+  if (response.writeback.civilianRoleProfilePatch) {
+    const rawPatch = response.writeback.civilianRoleProfilePatch as CivilianRoleProfilePatch;
+    const civilianRoleProfilePatch: PlayerCivilianRoleProfilePatch = {
+      ...rawPatch,
+      livelihoodActorIds: remapActorIds(rawPatch.livelihoodActorIds, actorIdAliases)
+    };
+    const roleProfileResult = applyPlayerCivilianRoleProfilePatch(
+      {
+        ...state,
+        time: nextTime,
+        player,
+        actors,
+        places,
+        organizations
+      },
+      civilianRoleProfilePatch
+    );
+    if (roleProfileResult.applied) {
+      actors = roleProfileResult.state.actors;
+    } else if (roleProfileResult.diagnostic) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'civilianRoleProfilePatch'],
+        code: 'civilian_role_profile_patch_rejected',
+        message: roleProfileResult.diagnostic
+      });
+    }
   }
 
   for (const [index, patch] of response.writeback.relationshipThreadPatches.entries()) {
     const remappedRelatedActorIds = remapActorIds(patch.relatedActorIds, actorIdAliases);
     const remappedPrimaryActorId = patch.primaryActorId ? actorIdAliases.get(patch.primaryActorId) ?? patch.primaryActorId : undefined;
-    if (!relationshipThreads[patch.threadId]) {
-      const creationDiagnostics = relationshipCreationEvidenceDiagnostics(patch, {
-        memories,
-        cases,
-        deferredEvents
-      });
-      if (creationDiagnostics.length > 0) {
+    const identityResolution = resolveRelationshipThreadIdentity(
+      relationshipThreads,
+      {
+        ...patch,
+        relatedActorIds: remappedRelatedActorIds,
+        primaryActorId: remappedPrimaryActorId
+      },
+      state.player.actorId,
+      ['writeback', 'relationshipThreadPatches', index]
+    );
+    applicationDiagnostics.push(...identityResolution.diagnostics);
+    const resolvedPatch = identityResolution.patch;
+    const evidenceEvaluation = evaluateRelationshipCreationEvidence(resolvedPatch, {
+      memories,
+      cases,
+      deferredEvents
+    }, ['writeback', 'relationshipThreadPatches', index]);
+    applicationDiagnostics.push(
+      ...evidenceEvaluation.diagnostics.filter((issue) => issue.code === 'relationship_evidence_ref_removed')
+    );
+    if (!relationshipThreads[resolvedPatch.threadId]) {
+      if (!evidenceEvaluation.sufficient) {
         applicationDiagnostics.push({
           path: ['writeback', 'relationshipThreadPatches', index],
-          code: 'relationship_creation_evidence_missing',
-          message: `New relationship thread "${patch.threadId}" was ignored because structured creation evidence is incomplete: ${creationDiagnostics.join(', ')}.`
+          code: 'relationship_creation_rejected',
+          message: `关系线 "${resolvedPatch.threadId}" 未建立：${evidenceEvaluation.issues.join('；')}。`
         });
         continue;
       }
     }
 
+    let patchWithVerifiedEvidence = resolvedPatch;
+    if (resolvedPatch.evidenceRefs) {
+      if (evidenceEvaluation.validRefs.length > 0 || !relationshipThreads[resolvedPatch.threadId]) {
+        patchWithVerifiedEvidence = { ...resolvedPatch, evidenceRefs: evidenceEvaluation.validRefs };
+      } else {
+        const { evidenceRefs: _invalidEvidenceRefs, ...patchWithoutEvidence } = resolvedPatch;
+        patchWithVerifiedEvidence = patchWithoutEvidence;
+      }
+    }
     const result = applyRelationshipThreadPatch(
       relationshipThreads,
       {
-        ...patch,
-        relatedActorIds: remappedRelatedActorIds,
-        primaryActorId: remappedPrimaryActorId,
+        ...patchWithVerifiedEvidence,
         milestoneUpdates: patch.milestoneUpdates?.map((milestone) => ({
           ...milestone,
           relatedActorIds: remapActorIds(milestone.relatedActorIds, actorIdAliases)
@@ -2232,6 +2820,7 @@ export function applyNarratorResponse(
     );
     if (result.thread) {
       relationshipThreads[result.thread.threadId] = result.thread;
+      appliedRelationshipThreadIds.add(result.thread.threadId);
     }
     for (const warning of result.diagnostics) {
       applicationDiagnostics.push({
@@ -2241,6 +2830,16 @@ export function applyNarratorResponse(
       });
     }
   }
+
+  actors = reconcileActorRelationshipProfiles(actors, relationshipThreads, state.player.actorId, {
+    threadIds: appliedRelationshipThreadIds
+  });
+
+  ({ actors, player } = normalizeRuntimeActorAges({
+    actors,
+    player,
+    currentTime: nextTime
+  }));
 
   const pregnancyResult = applyPregnancyLifecycle({
     actors,
@@ -2377,8 +2976,13 @@ export function applyNarratorResponse(
       });
     }
 
-    const actorSeedMatch = seedMatchFromStoredActor(actor) ?? findSeedIdentityMatch(actor.name);
-    const actorCityPowerMatch = actorSeedMatch
+    const actorScreenCharacterMatch =
+      screenCharacterMatchFromStoredActor(actor) ??
+      (actor.actorId.startsWith('npc_screen_') ? findScreenCharacterIdentityMatch(actor.actorId) : undefined);
+    const actorSeedMatch = actorScreenCharacterMatch
+      ? undefined
+      : seedMatchFromStoredActor(actor) ?? findSeedIdentityMatch(actor.name);
+    const actorCityPowerMatch = actorScreenCharacterMatch || actorSeedMatch
       ? undefined
       : cityPowerMatchFromStoredActor(actor) ?? findCityPowerIdentityMatch(actor.name);
     const sanitizedSuggestion = actorSeedMatch
@@ -2396,7 +3000,7 @@ export function applyNarratorResponse(
             text: redactCityPowerProtectedNames(suggestion.text, actorCityPowerMatch)
           }
       : suggestion;
-    appendActorMemoryItem(memories, actor.actorId, turnId, nextTime, sanitizedSuggestion);
+    appendActorMemoryItem(memories, actor.actorId, turnId, nextTime, state.time, sanitizedSuggestion);
     actorMemoryWrittenThisTurn.add(actor.actorId);
   }
 
@@ -2409,7 +3013,7 @@ export function applyNarratorResponse(
       });
       continue;
     }
-    appendActorMemoryItem(memories, candidate.actorId, turnId, nextTime, candidate.memory);
+    appendActorMemoryItem(memories, candidate.actorId, turnId, nextTime, state.time, candidate.memory);
     actorMemoryWrittenThisTurn.add(candidate.actorId);
   }
 
@@ -2505,6 +3109,19 @@ export function applyNarratorResponse(
     nextTime,
     elapsedMinutes
   );
+  const pendingActorProfileEnrichments = reconcileActorProfileEnrichmentQueue({
+    state,
+    actors,
+    response,
+    actorIdAliases,
+    turnId
+  });
+  const dialogueSpeakerActorIds = createStoryDialogueSpeakerActorIds(response.narrativeText, actors);
+  const storyBlocks = buildStoryBlocks(response.narrativeText, {
+    dialogueSpeakerActorIds,
+    playerActorId: player.actorId,
+    presentationHints: response.presentationHints
+  });
 
   let nextState: RuntimeState = {
     ...state,
@@ -2515,6 +3132,31 @@ export function applyNarratorResponse(
     lawIdentity,
     location,
     actors,
+    actorIdAliases: (() => {
+      const aliases = new Map(Object.entries(state.actorIdAliases ?? {}));
+      for (const [sourceActorId, targetActorId] of actorIdAliases) {
+        if (sourceActorId !== targetActorId) aliases.set(sourceActorId, targetActorId);
+      }
+      const resolveAlias = (actorId: string): string => {
+        const visited = new Set<string>();
+        let current = actorId;
+        while (aliases.has(current) && !visited.has(current)) {
+          visited.add(current);
+          current = aliases.get(current) ?? current;
+        }
+        return current;
+      };
+      const normalized = Object.fromEntries(
+        [...aliases].flatMap(([sourceActorId]) => {
+          const targetActorId = resolveAlias(sourceActorId);
+          return sourceActorId !== targetActorId && actors[targetActorId]
+            ? [[sourceActorId, targetActorId] as const]
+            : [];
+        })
+      );
+      return Object.keys(normalized).length > 0 ? normalized : undefined;
+    })(),
+    pendingActorProfileEnrichments,
     secretFacts,
     organizations,
     cases,
@@ -2549,9 +3191,12 @@ export function applyNarratorResponse(
         turnId,
         speaker: 'narrator',
         text: response.narrativeText,
+        dialogueSpeakerActorIds,
+        blocks: storyBlocks,
         ...(turnSummaryText ? { summaryText: turnSummaryText } : {}),
         suggestedActions: response.suggestedActions,
         gameTime: cloneGameTime(nextTime),
+        visualContext: createStoryVisualContext({ time: nextTime, environment, location, places, scenes }),
         ...(meta.rawNarratorResponse ? { rawNarratorResponse: meta.rawNarratorResponse } : {}),
         ...(writebackDiagnostics.length ? { writebackDiagnostics } : {}),
         ...(meta.turnMetrics ? { turnMetrics: meta.turnMetrics } : {})
@@ -2585,14 +3230,24 @@ export function applyNarratorResponse(
     } as CombatEventPatch);
   }
   linkConflictRecordsToStoryEntry(nextState, turnId);
+  nextState = settleTurnExperience({
+    beforeState: state,
+    afterState: nextState,
+    response,
+    turnId
+  }).state;
 
   nextState = applyDueMonthlySettlements(nextState, nextTime, turnId);
 
-  nextState = playerEquipmentPatched
-    ? syncPlayerEquipmentAssetsFromNames(nextState, nextState.player.equipment)
-    : applyEquippedAssetsToRuntimeState(nextState);
+  if (
+    response.writeback.assetPatch?.equippedItemIds !== undefined ||
+    nextState.assets.equippedItemIds.length > 0
+  ) {
+    nextState = applyEquippedAssetsToRuntimeState(nextState);
+  }
 
   nextState = synchronizeNpcMemoryCaches(nextState);
+  nextState = advanceSignalLifecycle(nextState).state;
 
   return nextState;
 }

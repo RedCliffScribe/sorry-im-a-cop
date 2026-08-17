@@ -49,19 +49,40 @@ describe('AI settings', () => {
     expect(settings.featureRoutes.npcSimulation.mode).toBe('follow-main');
     expect((settings.featureRoutes as Record<string, FeatureModelRoute>).auxiliaryGeneration?.mode).toBe('follow-main');
     expect(settings.game.storyRenderLimit).toBe(30);
+    expect(settings.game.language).toBe('zh-CN');
     expect(settings.game.narrativeLengthLevel).toBe('standard');
     expect(settings.game.narrativePerspective).toBe('second_person');
+    expect(settings.game.playerPortrayalMode).toBe('natural');
     expect(settings.game.autoSaveLimit).toBe(20);
     expect(settings.game.autoSaveIntervalTurns).toBe(1);
     expect(settings.game.rollbackSnapshotLimit).toBe(20);
     expect(settings.game.pregnancyMode).toBe('standard');
+    expect(settings.game.dramaticContent).toMatchObject({
+      pacing: 'original',
+      materialLevel: 'standard',
+      planningRoute: 'auto',
+      channels: {
+        work_livelihood: 'medium',
+        relationships: 'medium',
+        cases_law: 'medium',
+        organizations: 'medium',
+        city_news: 'medium',
+        era_storypack: 'medium',
+        screen_characters: 'medium',
+        custom_characters: 'medium',
+        custom_events: 'medium'
+      }
+    });
     expect(settings.display.uiTheme).toBe('dark');
+    expect(settings.display.storyPresentationMode).toBe('auto');
+    expect(settings.display.avgPlayerPortraitMode).toBe('hidden');
     expect(settings.display.interfaceFontFamily).toBe('readable');
     expect(settings.display.narrationFontFamily).toBe('system');
     expect(settings.display.dialogueFontFamily).toBe('system');
     expect(settings.display.narrationFontSize).toBe(16);
     expect(settings.display.dialogueFontSize).toBe(16);
     expect(settings.prompts.overrides).toEqual({});
+    expect(settings.prompts.persistentPrompts).toEqual([]);
     expect(settings.memory.autoCompressionEnabled).toBe(true);
     expect(settings.memory.recentRawTurnLimit).toBe(12);
     expect(settings.memory.shortTermBatchSize).toBe(20);
@@ -86,12 +107,22 @@ describe('AI settings', () => {
     const loaded = await repository.load();
 
     expect(loaded.game.storyRenderLimit).toBe(30);
+    expect(loaded.game.language).toBe('zh-CN');
     expect(loaded.game.narrativeLengthLevel).toBe('standard');
     expect(loaded.game.narrativePerspective).toBe('second_person');
+    expect(loaded.game.playerPortrayalMode).toBe('natural');
     expect(loaded.game.autoSaveLimit).toBe(20);
     expect(loaded.game.autoSaveIntervalTurns).toBe(1);
     expect(loaded.game.rollbackSnapshotLimit).toBe(20);
     expect(loaded.game.pregnancyMode).toBe('standard');
+    expect(loaded.game.dramaticContent).toMatchObject({
+      pacing: 'original',
+      materialLevel: 'standard',
+      planningRoute: 'auto'
+    });
+    expect(loaded.game.dramaticContent?.channels.screen_characters).toBe('medium');
+    expect(loaded.game.dramaticContent?.channels.custom_characters).toBe('medium');
+    expect(loaded.game.dramaticContent?.channels.custom_events).toBe('medium');
     expect(loaded.memory.recentRawTurnLimit).toBe(12);
     expect(loaded.memory.shortTermBatchSize).toBe(20);
     expect(loaded.memory.midTermBatchSize).toBe(15);
@@ -101,6 +132,8 @@ describe('AI settings', () => {
     expect(loaded.featureRoutes.npcSimulation.mode).toBe('follow-main');
     expect((loaded.featureRoutes as Record<string, FeatureModelRoute>).auxiliaryGeneration?.mode).toBe('follow-main');
     expect(loaded.display.uiTheme).toBe('dark');
+    expect(loaded.display.storyPresentationMode).toBe('auto');
+    expect(loaded.display.avgPlayerPortraitMode).toBe('hidden');
     expect(loaded.display.interfaceFontFamily).toBe('readable');
     expect(loaded.display.narrationFontSize).toBe(16);
     expect(loaded.display.dialogueFontSize).toBe(16);
@@ -212,6 +245,62 @@ describe('AI settings', () => {
     expect((await repository.load()).game.narrativePerspective).toBe('first_person');
   });
 
+  it('defaults legacy and invalid portrayal modes to natural and preserves all three modes', async () => {
+    const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
+    const settings = createDefaultAiSettings();
+
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({
+        ...settings,
+        game: { ...settings.game, playerPortrayalMode: 'autopilot' }
+      })
+    );
+    expect((await repository.load()).game.playerPortrayalMode).toBe('natural');
+
+    const { playerPortrayalMode: _ignored, ...legacyGame } = settings.game;
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({ ...settings, game: legacyGame })
+    );
+    expect((await repository.load()).game.playerPortrayalMode).toBe('natural');
+
+    await repository.save({
+      ...settings,
+      game: { ...settings.game, playerPortrayalMode: 'natural' }
+    });
+    expect((await repository.load()).game.playerPortrayalMode).toBe('natural');
+
+    await repository.save({
+      ...settings,
+      game: { ...settings.game, playerPortrayalMode: 'original' }
+    });
+    expect((await repository.load()).game.playerPortrayalMode).toBe('original');
+
+    await repository.save({
+      ...settings,
+      game: { ...settings.game, playerPortrayalMode: 'player_led' }
+    });
+    expect((await repository.load()).game.playerPortrayalMode).toBe('player_led');
+  });
+
+  it('normalizes unknown locales and preserves Hong Kong Traditional Chinese', async () => {
+    const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
+    const settings = createDefaultAiSettings();
+
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({ ...settings, game: { ...settings.game, language: 'zh-TW' } })
+    );
+    expect((await repository.load()).game.language).toBe('zh-CN');
+
+    await repository.save({
+      ...settings,
+      game: { ...settings.game, language: 'zh-Hant-HK' }
+    });
+    expect((await repository.load()).game.language).toBe('zh-Hant-HK');
+  });
+
   it('normalizes unknown themes and preserves the bright theme', async () => {
     const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
     const settings = createDefaultAiSettings();
@@ -224,6 +313,32 @@ describe('AI settings', () => {
 
     await repository.save({ ...settings, display: { ...settings.display, uiTheme: 'light' } });
     expect((await repository.load()).display.uiTheme).toBe('light');
+  });
+
+  it('defaults legacy player portrait preferences to hidden and preserves show mode', async () => {
+    const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
+    const settings = createDefaultAiSettings();
+
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({
+        ...settings,
+        display: {
+          ...settings.display,
+          avgPlayerPortraitMode: 'unexpected'
+        }
+      })
+    );
+    expect((await repository.load()).display.avgPlayerPortraitMode).toBe('hidden');
+
+    await repository.save({
+      ...settings,
+      display: {
+        ...settings.display,
+        avgPlayerPortraitMode: 'show'
+      }
+    });
+    expect((await repository.load()).display.avgPlayerPortraitMode).toBe('show');
   });
 
   it('allows Ollama profiles without an API key', () => {
@@ -327,14 +442,37 @@ describe('AI settings', () => {
   it('persists settings through localStorage', async () => {
     const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
     let settings = createDefaultAiSettings();
-    settings = upsertApiProfile(settings, profileA);
+    settings = upsertApiProfile(settings, {
+      ...profileA,
+      capabilities: {
+        jsonObjectResponseFormat: 'unsupported',
+        maxOutputTokens: 12288,
+        streamingJson: 'supported'
+      }
+    });
     settings = setMainNarratorRoute(settings, { apiProfileId: 'api_a', model: 'pro' });
+    settings = {
+      ...settings,
+      prompts: {
+        ...settings.prompts,
+        persistentPrompts: [
+          { id: 'persistent-one', content: '不要替玩家作决定。', enabled: true },
+          { id: 'persistent-two', content: '关闭但保留。', enabled: false }
+        ]
+      }
+    };
 
     await repository.save(settings);
     const loaded = await repository.load();
 
     expect(loaded.apiProfiles[0].name).toBe('A API');
+    expect(loaded.apiProfiles[0].capabilities).toEqual({
+      jsonObjectResponseFormat: 'unsupported',
+      maxOutputTokens: 12288,
+      streamingJson: 'supported'
+    });
     expect(loaded.mainNarrator?.model).toBe('pro');
+    expect(loaded.prompts.persistentPrompts).toEqual(settings.prompts.persistentPrompts);
   });
 
   it('exports only API settings with secrets for local test transfer', () => {
@@ -385,6 +523,7 @@ describe('AI settings', () => {
         storyRenderLimit: 8,
         narrativeLengthLevel: 'immersive' as const,
         narrativePerspective: 'third_person' as const,
+        playerPortrayalMode: 'natural' as const,
         autoSaveLimit: 5,
         autoSaveIntervalTurns: 2,
         rollbackSnapshotLimit: 12,
@@ -436,7 +575,13 @@ describe('AI settings', () => {
     const imported = importApiSettings(current, payload);
 
     expect(imported.apiProfiles).toEqual([profileA]);
-    expect(imported.mainNarrator).toEqual({ apiProfileId: 'api_a', model: 'pro' });
+    expect(imported.mainNarrator).toEqual({
+      apiProfileId: 'api_a',
+      model: 'pro',
+      maxTokensMode: 'inherit',
+      maxTokens: undefined,
+      temperature: undefined
+    });
     expect(imported.featureRoutes.memorySummary).toEqual({
       mode: 'custom',
       apiProfileId: 'api_a',

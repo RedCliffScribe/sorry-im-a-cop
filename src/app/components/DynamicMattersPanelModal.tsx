@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { isNpcEvolutionTrackProjectable } from '../../domain/backgroundEvolution/trackVisibility';
 import { displayCurrentMatterStatus, isArchivedCurrentMatter } from '../../domain/dynamic/currentMatterStatus';
+import { resolveSignalLifecycleStatus } from '../../domain/dynamic/signalLifecycle';
 import type {
   CurrentMatter,
   DeferredEvent,
@@ -20,6 +21,7 @@ interface DynamicMattersPanelModalProps {
   onAbortEvolution?: () => void;
   isEvolutionRunning?: boolean;
   evolutionStatus?: string | null;
+  onArchiveEntry?: (kind: 'matter' | 'signal', id: string) => void | Promise<void>;
 }
 
 type DynamicFilter = 'all' | 'matters' | 'signals' | 'npcs' | 'city' | 'history' | 'archived';
@@ -43,6 +45,7 @@ const matterStatusLabels: Record<CurrentMatter['status'], string> = {
 
 const matterKindLabels: Record<NonNullable<CurrentMatter['matterKind']>, string> = {
   personal: '个人',
+  livelihood: '营生',
   police_work: '警务',
   relationship: '关系',
   family: '家庭',
@@ -77,9 +80,12 @@ const reliabilityLabels: Record<Signal['reliability'], string> = {
   high: '高'
 };
 
-function isArchivedSignalStatus(status: Signal['status']): boolean {
-  return status === 'resolved' || status === 'archived';
-}
+const signalStatusLabels: Record<Signal['status'], string> = {
+  active: '流传中',
+  stale: '已过时',
+  resolved: '已查明',
+  archived: '已归档'
+};
 
 function formatGameTime(time: RuntimeState['time']): string {
   return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')} ${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
@@ -243,7 +249,8 @@ export function DynamicMattersPanelModal({
   onRunEvolution,
   onAbortEvolution,
   isEvolutionRunning = false,
-  evolutionStatus
+  evolutionStatus,
+  onArchiveEntry
 }: DynamicMattersPanelModalProps) {
   const [activeFilter, setActiveFilter] = useState<DynamicFilter>('all');
   const matterBuckets = useMemo(() => {
@@ -256,10 +263,10 @@ export function DynamicMattersPanelModal({
   const signalBuckets = useMemo(() => {
     const visibleSignals = sortSignals(Object.values(state.dynamicEvents.signals).filter((signal) => signal.visibility !== 'hidden'));
     return {
-      current: visibleSignals.filter((signal) => !isArchivedSignalStatus(signal.status)),
-      archived: visibleSignals.filter((signal) => isArchivedSignalStatus(signal.status))
+      current: visibleSignals.filter((signal) => resolveSignalLifecycleStatus(signal, state.time) === 'active'),
+      archived: visibleSignals.filter((signal) => resolveSignalLifecycleStatus(signal, state.time) !== 'active')
     };
-  }, [state.dynamicEvents.signals]);
+  }, [state.dynamicEvents.signals, state.time]);
   const matters = matterBuckets.current;
   const signals = signalBuckets.current;
   const archivedMatters = matterBuckets.archived;
@@ -526,7 +533,19 @@ export function DynamicMattersPanelModal({
             <small>{matterKindLabels[matter.matterKind ?? 'world']} · {formatGameTime(matter.updatedAt)}</small>
             <strong>{matter.title}</strong>
           </div>
-          <span className="dynamic-status-badge">{matterStatusLabels[displayCurrentMatterStatus(matter)]}</span>
+          <div className="dynamic-card-actions">
+            <span className="dynamic-status-badge">{matterStatusLabels[displayCurrentMatterStatus(matter)]}</span>
+            {!archived && onArchiveEntry ? (
+              <button
+                type="button"
+                className="dynamic-card-archive-action"
+                aria-label={`归档事项 ${matter.title}`}
+                onClick={() => void onArchiveEntry('matter', matter.id)}
+              >
+                归档
+              </button>
+            ) : null}
+          </div>
         </header>
         <p className="dynamic-card-summary">{matter.summary}</p>
         <div className="dynamic-card-facts" aria-label="事项状态">
@@ -561,6 +580,8 @@ export function DynamicMattersPanelModal({
     const actors = actorNames(state, signal.relatedActorIds);
     const organizations = organizationNames(state, signal.relatedOrganizationIds);
 
+    const effectiveStatus = resolveSignalLifecycleStatus(signal, state.time);
+
     return (
       <article key={signal.id} className={`dynamic-card dynamic-card--signal${archived ? ' dynamic-card--archived' : ''}`}>
         <header className="dynamic-card-header">
@@ -568,7 +589,21 @@ export function DynamicMattersPanelModal({
             <small>{signalTypeLabels[signal.signalType]} · {formatGameTime(signal.updatedAt)}</small>
             <strong>{signal.title}</strong>
           </div>
-          <span className="dynamic-status-badge">可信度 {reliabilityLabels[signal.reliability]}</span>
+          <div className="dynamic-card-actions">
+            <span className="dynamic-status-badge">
+              {signalStatusLabels[effectiveStatus]} · 可信度 {reliabilityLabels[signal.reliability]}
+            </span>
+            {!archived && onArchiveEntry ? (
+              <button
+                type="button"
+                className="dynamic-card-archive-action"
+                aria-label={`归档风声 ${signal.title}`}
+                onClick={() => void onArchiveEntry('signal', signal.id)}
+              >
+                归档
+              </button>
+            ) : null}
+          </div>
         </header>
         <p className="dynamic-card-summary">{signal.summary}</p>
         <dl className="dynamic-card-relations">

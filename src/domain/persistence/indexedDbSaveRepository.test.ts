@@ -63,6 +63,37 @@ describe('IndexedDbSaveRepository', () => {
     expect(loaded?.runtimeState.world.worldpackId).toBe('hk_1988');
   });
 
+  it('preserves a structured vehicle across save and load', async () => {
+    const repository = new IndexedDbSaveRepository('cop-v2-test-saves');
+    const record = createRecord('save_vehicle', 'Vehicle', '2026-07-28T00:00:00.000Z');
+    record.runtimeState.assets.items.asset_volvo_240 = {
+      itemId: 'asset_volvo_240',
+      category: 'vehicle',
+      name: '沃尔沃240旅行车',
+      summary: '玩家全款购入的灰色旅行车。',
+      relatedActorIds: ['player'],
+      relatedCaseIds: [],
+      relatedPlaceIds: ['place_wan_chai_home'],
+      importance: 70,
+      visibility: 'player_known',
+      worldpackAssetData: {},
+      vehicleType: 'privateCar',
+      holdingRelation: 'owned',
+      condition: 'good',
+      locationSummary: '停放在湾仔住宅附近的月租车位。',
+      accessSummary: '玩家持有过户文件和唯一车钥匙，可随时全权使用。',
+      incomeSettlementItemIds: [],
+      expenseSettlementItemIds: []
+    };
+
+    await repository.save(record);
+    const loaded = await repository.load('save_vehicle');
+
+    expect(loaded?.runtimeState.assets.items.asset_volvo_240).toEqual(
+      record.runtimeState.assets.items.asset_volvo_240
+    );
+  });
+
   it('deletes a save', async () => {
     const repository = new IndexedDbSaveRepository('cop-v2-test-saves');
     await repository.save(createRecord('save_a', 'A', '2026-06-23T00:00:00.000Z'));
@@ -71,6 +102,20 @@ describe('IndexedDbSaveRepository', () => {
 
     expect(await repository.load('save_a')).toBeNull();
     expect(await repository.list()).toEqual([]);
+  });
+
+  it('clears every summary and payload in one operation', async () => {
+    const repository = new IndexedDbSaveRepository('cop-v2-test-saves');
+    await repository.saveMany([
+      createRecord('save_a', 'A', '2026-06-23T00:00:00.000Z'),
+      createRecord('save_b', 'B', '2026-06-23T00:01:00.000Z')
+    ]);
+
+    await repository.clearAll();
+
+    expect(await repository.list()).toEqual([]);
+    expect(await repository.load('save_a')).toBeNull();
+    expect(await repository.load('save_b')).toBeNull();
   });
 
   it('saves multiple records in one batch', async () => {

@@ -1,7 +1,15 @@
 import { applyCitySituationTrackPatches } from '../cityPower/citySituationTrackPatch';
+import { reconcileActorRelationshipProfiles } from '../relationship/relationshipActorProfile';
 import { applyRelationshipThreadPatch } from '../relationship/relationshipThread';
+import { applyTriadOrganizationStatePatch } from '../grayNetwork/triadOrganizationState';
+import { resolveCurrentMatterIdentity } from '../dynamicEvents/currentMatterIdentity';
+import { advanceSignalLifecycle } from '../dynamic/signalLifecycle';
+import { enforcePlayerNewsworthiness } from '../news/newsworthiness';
+import { synchronizeNpcMemoryCaches } from '../memory/npcMemoryLayers';
+import { normalizeMemoryTemporalText } from '../time/memoryTemporal';
 import type {
   CaseFile,
+  CitySituationTrack,
   EvolutionChronicleEntry,
   EvolutionOutcomeRecord,
   EvolutionSourceRefs,
@@ -10,6 +18,7 @@ import type {
   NpcEvolutionOutcomeKind,
   NpcEvolutionTrack,
   OrganizationEvolutionTrack,
+  RelationshipThread,
   RuntimeState,
   StoryDiagnosticIssue
 } from '../runtime/types';
@@ -22,6 +31,7 @@ import {
 } from '../writeback/applyWriteback';
 import {
   stableBackgroundActivityId,
+  stableBackgroundIdFragment,
   stableBackgroundMemoryId,
   stableBackgroundOutcomeId
 } from './ids';
@@ -55,6 +65,8 @@ const materialOutcomeKinds = new Set<NpcEvolutionOutcomeKind>([
 type NpcTrackPatch = BackgroundEvolutionWriteback['npcTrackPatches'][number];
 type OrganizationTrackPatch = BackgroundEvolutionWriteback['organizationEvolutionPatches'][number];
 type CasePatch = BackgroundEvolutionWriteback['casePatches'][number];
+type CityTrackPatch = BackgroundEvolutionWriteback['citySituationTrackPatches'][number];
+type BackgroundRelationshipPatch = BackgroundEvolutionWriteback['backgroundRelationshipPatches'][number];
 
 export interface ApplyBackgroundEvolutionInput {
   state: RuntimeState;
@@ -158,6 +170,26 @@ function organizationReviewCandidate(
   return selection.organizationCandidates.find(
     (candidate) => candidate.reviewKey === reviewKey && (!organizationId || candidate.organizationId === organizationId)
   );
+}
+
+function validTriadStatePatch(
+  state: RuntimeState,
+  candidate: BackgroundOrganizationCandidate | undefined,
+  patch: OrganizationTrackPatch
+): boolean {
+  if (!patch.triadState) return true;
+  const organization = state.organizations[patch.organizationId];
+  if (!candidate || organization?.type !== 'triad' || !organization.triadState) return false;
+
+  const knownAreaIds = new Set(organization.triadState.activityAreas.map((area) => area.placeId));
+  if ((patch.triadState.activityAreas ?? []).some((area) => !knownAreaIds.has(area.placeId))) return false;
+
+  const allowedActorIds = new Set(candidate.relatedActorIds);
+  const leadershipActorIds = [
+    patch.triadState.leadership?.currentLeaderActorId,
+    ...(patch.triadState.leadership?.knownCandidateActorIds ?? [])
+  ].filter((actorId): actorId is string => Boolean(actorId));
+  return leadershipActorIds.every((actorId) => allowedActorIds.has(actorId) && Boolean(state.actors[actorId]));
 }
 
 function buildOrganizationTrack(
@@ -367,8 +399,15 @@ function buildTrack(
     visibility:
       patch.visibility ??
       existing?.visibility ??
-      (relatedCaseIds.some((caseId) => state.cases[caseId]?.visibility !== 'hidden') ? 'player_known' : 'hidden')
+      candidate.visibilityHint
   };
+}
+
+interface AcceptedCityTransition {
+  patch: CityTrackPatch;
+  previous: CitySituationTrack;
+  track: CitySituationTrack;
+  material: boolean;
 }
 
 function caseStatusTransitionAllowed(
@@ -403,6 +442,22 @@ function formatMemoryTime(time: RuntimeState['time']): string {
   return `${time.year}年${time.month}月${time.day}日${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
 }
 
+function shouldAutoPersistNonCaseOutcome(transition: AcceptedNpcTransition): boolean {
+  const { patch, track } = transition;
+  if (!transition.terminal || track.actionKind === 'case' || !patch.outcomeKind || !patch.outcomeSummary) return false;
+  if (patch.persistToMemory === true) return false;
+
+  const hasDeclaredConsequence = Boolean(patch.consequence?.trim());
+  if (patch.outcomeKind === 'no_result' && !hasDeclaredConsequence) return false;
+
+  return (
+    (track.actionKind === 'relationship' && track.relatedRelationshipThreadIds.length > 0) ||
+    (track.actionKind === 'organization' && track.relatedOrganizationIds.length > 0) ||
+    track.actionKind === 'risk' ||
+    hasDeclaredConsequence
+  );
+}
+
 function lifecycleMemory(
   state: RuntimeState,
   transition: AcceptedNpcTransition,
@@ -411,7 +466,9 @@ function lifecycleMemory(
   const track = transition.track;
   const isCaseLifecycle = track.actionKind === 'case' && track.relatedCaseIds.length > 0;
   const isPersistedNonCaseOutcome =
-    phase === 'settled' && track.actionKind !== 'case' && transition.patch.persistToMemory === true;
+    phase === 'settled' &&
+    track.actionKind !== 'case' &&
+    (transition.patch.persistToMemory === true || shouldAutoPersistNonCaseOutcome(transition));
   if (!isCaseLifecycle && !isPersistedNonCaseOutcome) return undefined;
   const actor = state.actors[track.actorId];
   if (!actor) return undefined;
@@ -441,6 +498,99 @@ function lifecycleMemory(
     importance: isPersistedNonCaseOutcome ? 64 : phase === 'created' ? 58 : 68,
     visibility: track.visibility === 'rumor' ? 'player_known' : track.visibility,
     certainty: phase === 'created' ? 'claim' : 'fact'
+  };
+}
+
+const relationshipStatusLabels: Record<RelationshipThread['status'], string> = {
+  active: '关系继续维持',
+  dormant: '关系暂时转为沉寂',
+  strained: '关系进入紧张状态',
+  ended: '关系已经结束'
+};
+
+function relationshipMemoryDetails(
+  patch: BackgroundRelationshipPatch,
+  previous: RelationshipThread,
+  thread: RelationshipThread
+): string[] {
+  const details: string[] = [];
+  for (const milestonePatch of patch.milestoneUpdates) {
+    const before = previous.milestones.find((milestone) => milestone.milestoneId === milestonePatch.milestoneId);
+    const after = thread.milestones.find((milestone) => milestone.milestoneId === milestonePatch.milestoneId);
+    if (after && (!before || before.summary !== after.summary)) details.push(after.summary);
+  }
+  if (patch.intimacySummary && patch.intimacySummary !== previous.intimacySummary) details.push(`亲密：${patch.intimacySummary}`);
+  if (patch.trustSummary && patch.trustSummary !== previous.trustSummary) details.push(`信任：${patch.trustSummary}`);
+  if (patch.promiseSummary && patch.promiseSummary !== previous.promiseSummary) details.push(`承诺：${patch.promiseSummary}`);
+  if (patch.conflictSummary && patch.conflictSummary !== previous.conflictSummary) details.push(`冲突：${patch.conflictSummary}`);
+  if (patch.riskSummary && patch.riskSummary !== previous.riskSummary) details.push(`风险：${patch.riskSummary}`);
+  if (patch.status && patch.status !== previous.status) details.push(relationshipStatusLabels[thread.status]);
+  if (details.length === 0 && patch.summary && patch.summary !== previous.summary) details.push(patch.summary);
+  return [...new Set(details)];
+}
+
+const memoryVisibilityRank: Record<MemoryItem['visibility'], number> = {
+  hidden: 0,
+  private: 1,
+  player_known: 2,
+  public: 3
+};
+
+function relationshipMemoryVisibility(
+  patch: BackgroundRelationshipPatch,
+  previous: RelationshipThread,
+  thread: RelationshipThread
+): MemoryItem['visibility'] {
+  const visibilities: MemoryItem['visibility'][] = [thread.visibility];
+  for (const milestonePatch of patch.milestoneUpdates) {
+    const before = previous.milestones.find((milestone) => milestone.milestoneId === milestonePatch.milestoneId);
+    const after = thread.milestones.find((milestone) => milestone.milestoneId === milestonePatch.milestoneId);
+    if (after && (!before || before.summary !== after.summary)) visibilities.push(after.visibility);
+  }
+  return visibilities.reduce((mostRestricted, visibility) =>
+    memoryVisibilityRank[visibility] < memoryVisibilityRank[mostRestricted] ? visibility : mostRestricted
+  );
+}
+
+function relationshipMemory(
+  state: RuntimeState,
+  patch: BackgroundRelationshipPatch,
+  previous: RelationshipThread,
+  thread: RelationshipThread
+): MemoryItem | undefined {
+  const actor = state.actors[patch.actorId];
+  const details = relationshipMemoryDetails(patch, previous, thread);
+  if (!actor || details.length === 0) return undefined;
+
+  const memoryTime = cloneGameTime(state.time);
+  const normalized = normalizeMemoryTemporalText(
+    `${formatMemoryTime(memoryTime)}，${actor.name}相关的“${thread.title}”关系形成可持续变化：${details.join('；')}。`,
+    memoryTime
+  );
+  const milestoneImportance = patch.milestoneUpdates.reduce(
+    (maximum, milestone) => Math.max(maximum, milestone.importance ?? 0),
+    0
+  );
+
+  return {
+    memoryId: stableBackgroundMemoryId(thread.threadId, `relationship_${patch.actorId}`, patch.reviewKey),
+    text: normalized.text,
+    kind: 'actor',
+    tier: 'short_term',
+    relatedActorIds: [patch.actorId],
+    relatedCaseIds: uniqueExisting(patch.sourceRefs.caseIds, (caseId) => Boolean(state.cases[caseId])),
+    relatedPlaceIds: uniqueExisting(patch.sourceRefs.placeIds, (placeId) => Boolean(state.places[placeId])),
+    relatedOrganizationIds: uniqueExisting(
+      patch.sourceRefs.organizationIds,
+      (organizationId) => Boolean(state.organizations[organizationId])
+    ),
+    relatedTurnId: undefined,
+    gameTime: memoryTime,
+    importance: Math.max(64, Math.min(100, milestoneImportance || thread.importance)),
+    visibility: relationshipMemoryVisibility(patch, previous, thread),
+    certainty: 'fact',
+    embeddingText: normalized.text,
+    temporalReferences: normalized.temporalReferences.length > 0 ? normalized.temporalReferences : undefined
   };
 }
 
@@ -536,6 +686,80 @@ function automaticOrganizationOutcome(
   };
 }
 
+function sameIds(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSorted = [...left].sort();
+  const rightSorted = [...right].sort();
+  return leftSorted.every((value, index) => value === rightSorted[index]);
+}
+
+function cityTrackMateriallyChanged(
+  previous: CitySituationTrack,
+  track: CitySituationTrack
+): boolean {
+  return (
+    previous.title !== track.title ||
+    previous.trackType !== track.trackType ||
+    previous.status !== track.status ||
+    previous.pressureLevel !== track.pressureLevel ||
+    previous.visibility !== track.visibility ||
+    previous.summary !== track.summary ||
+    previous.currentBeat !== track.currentBeat ||
+    !sameIds(previous.possibleDevelopments, track.possibleDevelopments) ||
+    !sameIds(previous.relatedActorIds, track.relatedActorIds) ||
+    !sameIds(previous.relatedOrganizationIds, track.relatedOrganizationIds) ||
+    !sameIds(previous.relatedPlaceIds, track.relatedPlaceIds) ||
+    !sameIds(previous.relatedPowerFigureIds, track.relatedPowerFigureIds)
+  );
+}
+
+function automaticCityOutcome(
+  state: RuntimeState,
+  transition: AcceptedCityTransition
+): EvolutionOutcomeRecord {
+  const track = transition.track;
+  return {
+    outcomeId: stableBackgroundOutcomeId(track.trackId, transition.patch.reviewKey),
+    sourceReviewKey: transition.patch.reviewKey,
+    occurredAt: cloneGameTime(state.time),
+    sourceKind: 'city',
+    sourceId: track.trackId,
+    title: `${track.title}出现新动向`,
+    summary: track.currentBeat,
+    relatedActorIds: [...track.relatedActorIds],
+    relatedOrganizationIds: [...track.relatedOrganizationIds],
+    relatedPlaceIds: [...track.relatedPlaceIds],
+    relatedCaseIds: [],
+    relatedRelationshipThreadIds: [],
+    sourceRefs: cloneSourceRefs(transition.patch.sourceRefs),
+    visibility: track.visibility,
+    significance: track.pressureLevel >= 4 ? 'notable' : 'routine'
+  };
+}
+
+function citySignalType(track: CitySituationTrack) {
+  if (track.trackType === 'triad_expansion') return 'street' as const;
+  if (
+    track.trackType === 'police_operation' ||
+    track.trackType === 'icac_investigation'
+  ) {
+    return 'police' as const;
+  }
+  if (
+    track.trackType === 'media_campaign' ||
+    track.trackType === 'film_production'
+  ) {
+    return 'media' as const;
+  }
+  if (
+    track.relatedOrganizationIds.length > 0 ||
+    track.trackType === 'leadership_transition'
+  ) {
+    return 'organization' as const;
+  }
+  return 'rumor' as const;
+}
+
 function addOutcome(state: RuntimeState, outcome: EvolutionOutcomeRecord): boolean {
   if (state.backgroundEvolution.recentOutcomes.some((item) => item.outcomeId === outcome.outcomeId)) return false;
   state.backgroundEvolution.recentOutcomes = [...state.backgroundEvolution.recentOutcomes, outcome].slice(-MAX_RECENT_OUTCOMES);
@@ -608,10 +832,12 @@ export function applyBackgroundEvolution({
   const touchedOrganizations = new Set(selection.foregroundTouchedOrganizationIds);
   const acceptedTransitions: AcceptedNpcTransition[] = [];
   const acceptedOrganizationTransitions: AcceptedOrganizationTransition[] = [];
+  const acceptedCityTransitions: AcceptedCityTransition[] = [];
   const acceptedActors = new Set<string>();
   const acceptedOrganizations = new Set<string>();
   const lifecycleMemoryActors = new Set<string>();
   const organizationMemoryIds = new Set<string>();
+  const appliedRelationshipThreadIds = new Set<string>();
   let outcomesAddedThisRun = 0;
   let newTrackCount = 0;
   let newOrganizationTrackCount = 0;
@@ -735,8 +961,15 @@ export function applyBackgroundEvolution({
       (terminal && (!candidate.allowMaterialProgress || !patch.outcomeKind || !patch.outcomeSummary)) ||
       (patch.outcomeKind && !materialOutcomeKinds.has(patch.outcomeKind)) ||
       Boolean(patch.stanceTowardPlayer && !candidate.allowPlayerStanceChange) ||
-      Boolean(touchedOrganizations.has(patch.organizationId) && (patch.currentState || patch.pressureSummary || patch.stanceTowardPlayer)) ||
-      Boolean((patch.currentState || patch.pressureSummary || patch.stanceTowardPlayer) && patch.visibility === 'hidden');
+      !validTriadStatePatch(next, candidate, patch) ||
+      Boolean(
+        touchedOrganizations.has(patch.organizationId) &&
+          (patch.currentState || patch.pressureSummary || patch.stanceTowardPlayer || patch.triadState)
+      ) ||
+      Boolean(
+        (patch.currentState || patch.pressureSummary || patch.stanceTowardPlayer || patch.triadState) &&
+          patch.visibility === 'hidden'
+      );
     if (invalid) {
       droppedPatchCount += 1;
       diagnostic(
@@ -773,7 +1006,8 @@ export function applyBackgroundEvolution({
         pressureSummary: patch.pressureSummary ?? organization.pressureSummary,
         stanceTowardPlayer: candidate.allowPlayerStanceChange
           ? patch.stanceTowardPlayer ?? organization.stanceTowardPlayer
-          : organization.stanceTowardPlayer
+          : organization.stanceTowardPlayer,
+        triadState: applyTriadOrganizationStatePatch(organization.triadState, patch.triadState)
       };
     }
     appliedPatchCount += 1;
@@ -839,10 +1073,29 @@ export function applyBackgroundEvolution({
     }
     const result = applyCitySituationTrackPatches(next, [patch]);
     next.citySituationTracks = result.tracks;
-    next.citySituationTracks[patch.trackId] = {
-      ...next.citySituationTracks[patch.trackId],
+    const appliedTrack = next.citySituationTracks[patch.trackId];
+    if (!appliedTrack) {
+      droppedPatchCount += 1;
+      diagnostic(diagnostics, path, 'missing_city_track_after_apply', `城市轨道 patch ${patch.trackId} 未能形成有效轨道。`);
+      return;
+    }
+    const nextReviewAt =
+      appliedTrack.nextReviewAt &&
+      compareGameTimes(appliedTrack.nextReviewAt, next.time) > 0
+        ? appliedTrack.nextReviewAt
+        : addGameHours(next.time, (appliedTrack.cadenceDays ?? 14) * 24);
+    const finalizedTrack: CitySituationTrack = {
+      ...appliedTrack,
+      ...(nextReviewAt ? { nextReviewAt: cloneGameTime(nextReviewAt) } : {}),
       lastOutputTurnId: foregroundTurnId
     };
+    next.citySituationTracks[patch.trackId] = finalizedTrack;
+    acceptedCityTransitions.push({
+      patch,
+      previous: existing!,
+      track: finalizedTrack,
+      material: cityTrackMateriallyChanged(existing!, finalizedTrack)
+    });
     diagnostics.push(...result.diagnostics.map((issue) => ({ ...issue, path })));
     appliedPatchCount += 1;
   });
@@ -852,7 +1105,7 @@ export function applyBackgroundEvolution({
     const candidate = reviewCandidate(selection, patch.reviewKey, patch.actorId);
     const existing = next.relationshipThreads[patch.threadId];
     const material = Boolean(
-      patch.summary || patch.status || patch.conflictSummary || patch.promiseSummary || patch.riskSummary || patch.currentPull || patch.nextNaturalBeatHint || patch.milestoneUpdates.length
+      patch.summary || patch.status || patch.intimacySummary || patch.trustSummary || patch.conflictSummary || patch.promiseSummary || patch.riskSummary || patch.currentPull || patch.nextNaturalBeatHint || patch.milestoneUpdates.length
     );
     const valid =
       Boolean(candidate && existing && material) &&
@@ -871,6 +1124,8 @@ export function applyBackgroundEvolution({
         threadId: patch.threadId,
         summary: patch.summary,
         status: patch.status,
+        intimacySummary: patch.intimacySummary,
+        trustSummary: patch.trustSummary,
         conflictSummary: patch.conflictSummary,
         promiseSummary: patch.promiseSummary,
         riskSummary: patch.riskSummary,
@@ -889,7 +1144,15 @@ export function applyBackgroundEvolution({
       return;
     }
     next.relationshipThreads[patch.threadId] = { ...result.thread, lastHeartbeatAt: cloneGameTime(next.time) };
+    appliedRelationshipThreadIds.add(patch.threadId);
     appliedPatchCount += 1;
+    if (!lifecycleMemoryActors.has(patch.actorId)) {
+      const memory = relationshipMemory(next, patch, existing!, next.relationshipThreads[patch.threadId]);
+      if (memory && writeMemory(next, memory)) {
+        lifecycleMemoryActors.add(patch.actorId);
+        appliedPatchCount += 1;
+      }
+    }
   });
 
   writeback.deferredEventPatches.forEach((patch, index) => {
@@ -955,9 +1218,11 @@ export function applyBackgroundEvolution({
       diagnostic(diagnostics, path, 'rejected_actor_memory', `NPC 记忆 ${patch.actorId} 已丢弃或被正式行动记忆优先覆盖。`);
       return;
     }
+    const memoryTime = cloneGameTime(patch.gameTime ?? next.time);
+    const normalizedMemory = normalizeMemoryTemporalText(patch.text, memoryTime);
     const memory: MemoryItem = {
       memoryId,
-      text: patch.text,
+      text: normalizedMemory.text,
       kind: 'actor',
       tier: 'short_term',
       relatedActorIds: [patch.actorId],
@@ -967,12 +1232,15 @@ export function applyBackgroundEvolution({
         [...patch.relatedOrganizationIds, ...(organizationMemoryKey ? [organizationMemoryKey] : [])],
         (id) => Boolean(next.organizations[id])
       ),
-      gameTime: cloneGameTime(patch.gameTime ?? next.time),
+      gameTime: memoryTime,
       periodStart: patch.periodStart ? cloneGameTime(patch.periodStart) : undefined,
       periodEnd: patch.periodEnd ? cloneGameTime(patch.periodEnd) : undefined,
       importance: patch.importance,
       visibility: patch.visibility,
-      certainty: patch.certainty
+      certainty: patch.certainty,
+      embeddingText: normalizedMemory.text,
+      temporalReferences:
+        normalizedMemory.temporalReferences.length > 0 ? normalizedMemory.temporalReferences : undefined
     };
     writeMemory(next, memory);
     if (organizationMemoryKey) organizationMemoryIds.add(organizationMemoryKey);
@@ -1021,6 +1289,33 @@ export function applyBackgroundEvolution({
     }
   });
 
+  for (const transition of acceptedCityTransitions) {
+    if (
+      !transition.material ||
+      next.backgroundEvolution.recentOutcomes.some(
+        (outcome) =>
+          outcome.sourceReviewKey === transition.patch.reviewKey &&
+          outcome.sourceKind === 'city' &&
+          outcome.sourceId === transition.track.trackId
+      )
+    ) {
+      continue;
+    }
+    const outcome = automaticCityOutcome(next, transition);
+    if (outcomesAddedThisRun < MAX_OUTCOMES_PER_RUN && addOutcome(next, outcome)) {
+      outcomesAddedThisRun += 1;
+      appliedPatchCount += 1;
+    } else {
+      droppedPatchCount += 1;
+      diagnostic(
+        diagnostics,
+        ['backgroundEvolution', 'citySituationTrackPatches', transition.track.trackId],
+        'outcome_run_cap',
+        `本次演化结果已达到 ${MAX_OUTCOMES_PER_RUN} 条上限。`
+      );
+    }
+  }
+
   writeback.chronicleEntries.slice(0, MAX_CHRONICLE_PER_RUN).forEach((patch, index) => {
     const path = ['backgroundEvolution', 'chronicleEntries', index];
     const knownOutcomeIds = new Set(next.backgroundEvolution.recentOutcomes.map((item) => item.outcomeId));
@@ -1055,16 +1350,30 @@ export function applyBackgroundEvolution({
 
   writeback.currentMatterPatches.forEach((patch, index) => {
     const path = ['backgroundEvolution', 'currentMatterPatches', index];
-    const existing = next.dynamicEvents.currentMatters[patch.id];
+    const identity = resolveCurrentMatterIdentity(next.dynamicEvents.currentMatters, patch);
+    const existing = next.dynamicEvents.currentMatters[identity.canonicalId];
     const valid = canProjectPublicOutcome(next, patch.reviewKey, patch.sourceRefs.outcomeIds) && Boolean(existing || patch.title && patch.summary && patch.source);
     if (!valid) {
       droppedPatchCount += 1;
       diagnostic(diagnostics, path, 'rejected_current_matter_projection', `动态事项 ${patch.id} 缺少可公开来源或完整字段。`);
       return;
     }
-    next.dynamicEvents.currentMatters[patch.id] = applyCurrentMatterPatch(existing, patch, next.time);
+    next.dynamicEvents.currentMatters[identity.canonicalId] = applyCurrentMatterPatch(
+      existing,
+      { ...patch, id: identity.canonicalId },
+      next.time
+    );
+    if (identity.canonicalId !== patch.id) {
+      diagnostic(
+        diagnostics,
+        [...path, 'id'],
+        'current_matter_identity_remapped',
+        `动态事项 ${patch.id} 已合并到稳定事项 ${identity.canonicalId}。`
+      );
+    }
     appliedPatchCount += 1;
   });
+  const projectedSignalReviewKeys = new Set<string>();
   writeback.signalPatches.forEach((patch, index) => {
     const path = ['backgroundEvolution', 'signalPatches', index];
     const existing = next.dynamicEvents.signals[patch.id];
@@ -1075,20 +1384,77 @@ export function applyBackgroundEvolution({
       return;
     }
     next.dynamicEvents.signals[patch.id] = applySignalPatch(existing, patch, next.time);
+    projectedSignalReviewKeys.add(patch.reviewKey);
     appliedPatchCount += 1;
   });
   writeback.newsIssuePatches.forEach((patch, index) => {
     const path = ['backgroundEvolution', 'newsIssuePatches', index];
-    const existing = next.dynamicEvents.newsIssues[patch.id];
-    const valid = canProjectPublicOutcome(next, patch.reviewKey, patch.sourceRefs.outcomeIds) && Boolean(existing || patch.outletName && patch.headline && patch.summary);
-    if (!valid) {
+    const newsworthiness = enforcePlayerNewsworthiness(next, patch, path);
+    diagnostics.push(...newsworthiness.diagnostics);
+    if (!newsworthiness.issue) {
       droppedPatchCount += 1;
-      diagnostic(diagnostics, path, 'rejected_news_projection', `新闻 ${patch.id} 缺少可公开来源或完整字段。`);
       return;
     }
-    next.dynamicEvents.newsIssues[patch.id] = applyNewsIssuePatch(existing, patch, next.time);
+    const acceptedPatch = newsworthiness.issue;
+    const existing = next.dynamicEvents.newsIssues[acceptedPatch.id];
+    const valid =
+      canProjectPublicOutcome(next, acceptedPatch.reviewKey, acceptedPatch.sourceRefs.outcomeIds) &&
+      Boolean(existing || acceptedPatch.outletName && acceptedPatch.headline && acceptedPatch.summary);
+    if (!valid) {
+      droppedPatchCount += 1;
+      diagnostic(diagnostics, path, 'rejected_news_projection', `新闻 ${acceptedPatch.id} 缺少可公开来源或完整字段。`);
+      return;
+    }
+    next.dynamicEvents.newsIssues[acceptedPatch.id] = applyNewsIssuePatch(existing, acceptedPatch, next.time);
     appliedPatchCount += 1;
   });
 
-  return { state: next, diagnostics, appliedPatchCount, droppedPatchCount };
+  for (const transition of acceptedCityTransitions) {
+    const track = transition.track;
+    if (
+      !transition.material ||
+      track.visibility === 'hidden' ||
+      projectedSignalReviewKeys.has(transition.patch.reviewKey)
+    ) {
+      continue;
+    }
+    const signalId = `signal_bg_city_${stableBackgroundIdFragment(track.trackId)}`;
+    const existing = next.dynamicEvents.signals[signalId];
+    next.dynamicEvents.signals[signalId] = applySignalPatch(
+      existing,
+      {
+        id: signalId,
+        title: `${track.title}传出新动向`,
+        summary:
+          track.visibility === 'rumor'
+            ? `${track.currentBeat} 目前仍是未经完全确认的城市风声。`
+            : track.currentBeat,
+        signalType: citySignalType(track),
+        reliability: track.visibility === 'rumor' ? 'low' : 'medium',
+        status: 'active',
+        visibility: 'known',
+        relatedActorIds: [...track.relatedActorIds],
+        relatedPlaceIds: [...track.relatedPlaceIds],
+        relatedCaseIds: [],
+        relatedOrganizationIds: [...track.relatedOrganizationIds]
+      },
+      next.time
+    );
+    appliedPatchCount += 1;
+  }
+
+  const signalAdvancedState = advanceSignalLifecycle(next).state;
+  signalAdvancedState.actors = reconcileActorRelationshipProfiles(
+    signalAdvancedState.actors,
+    signalAdvancedState.relationshipThreads,
+    signalAdvancedState.player.actorId,
+    { threadIds: appliedRelationshipThreadIds }
+  );
+
+  return {
+    state: synchronizeNpcMemoryCaches(signalAdvancedState),
+    diagnostics,
+    appliedPatchCount,
+    droppedPatchCount
+  };
 }

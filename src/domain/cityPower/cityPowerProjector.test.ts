@@ -12,6 +12,7 @@ import {
   cityPowerRuntimeActorId as cityPowerRuntimeActorIdFromIds
 } from './cityPowerIdentityIds';
 import { hkLateColonialOrganizations } from './hkLateColonialOrganizations';
+import { hkLateColonialCivilianOrganizations } from './hkLateColonialCivilianOrganizations';
 import { hkLateColonialPowerFigures } from './hkLateColonialPowerFigures';
 import type { CityOrganizationAnchor, CityPowerFigureAnchor } from './cityPowerTypes';
 import { validateCityPowerAnchors } from './cityPowerValidator';
@@ -83,7 +84,7 @@ describe('city power anchor validation', () => {
   it('validates the shipped late-colonial anchor batch', () => {
     const result = validateCityPowerAnchors(hkLateColonialOrganizations, hkLateColonialPowerFigures);
 
-    expect(result.organizationCount).toBeGreaterThanOrEqual(18);
+    expect(result.organizationCount).toBeGreaterThanOrEqual(41);
     expect(result.figureCount).toBeGreaterThanOrEqual(18);
     expect(result.errors).toEqual([]);
     expect(
@@ -110,6 +111,21 @@ describe('city power anchor validation', () => {
       recognitionAliases: ['霍德爵士', '布政司霍德'],
       protectedRealNames: []
     });
+  });
+
+  it('keeps the approved civilian-facing expansion complete and internally linked', () => {
+    const organizationIds = new Set(hkLateColonialOrganizations.map((organization) => organization.organizationId));
+    const relatedOrganizationIds = hkLateColonialOrganizations.flatMap(
+      (organization) => organization.relatedOrganizationIds
+    );
+
+    expect(hkLateColonialCivilianOrganizations).toHaveLength(37);
+    expect(
+      hkLateColonialCivilianOrganizations
+        .filter((organization) => organization.sectorTags.includes('court'))
+        .map((organization) => organization.organizationId)
+    ).toEqual(['org_hk_supreme_court', 'org_hk_district_court']);
+    expect(relatedOrganizationIds.filter((organizationId) => !organizationIds.has(organizationId))).toEqual([]);
   });
 
   it('detects protected-name leakage in prompt-safe fields', () => {
@@ -150,6 +166,8 @@ describe('city power anchor validation', () => {
     const figurePlaceIds = hkLateColonialPowerFigures.flatMap((figure) => figure.usualPlaceIds);
 
     expect([...organizationPlaceIds, ...figurePlaceIds]).not.toContain('place_central_hsbc_building');
+    const knownPlaceIds = new Set(Object.keys(createInitialRuntimeState().places));
+    expect([...organizationPlaceIds, ...figurePlaceIds].filter((placeId) => !knownPlaceIds.has(placeId))).toEqual([]);
   });
 });
 
@@ -205,6 +223,28 @@ describe('city power projection', () => {
       'org_missing_projection_related_org'
     ]);
     expect(projection.diagnostics.missingOrganizationRefs).not.toContain('org_hk_police');
+  });
+
+  it('projects the four-exchange market in 1984 but not the later unified exchange', () => {
+    const state = createInitialRuntimeState({
+      startTime: { year: 1984, month: 12, day: 19, hour: 20, minute: 0 }
+    });
+    const projection = projectCityPowerContext(state, '我想了解四会股票市场今天的消息。');
+    const organizationIds = projection.organizations.map((item) => item.organizationId);
+
+    expect(organizationIds).toContain('org_hk_four_stock_exchanges');
+    expect(organizationIds).not.toContain('org_hk_stock_exchange');
+  });
+
+  it('projects the unified stock exchange from 1986 without leaking the prior four-exchange anchor', () => {
+    const state = createInitialRuntimeState({
+      startTime: { year: 1986, month: 4, day: 2, hour: 9, minute: 0 }
+    });
+    const projection = projectCityPowerContext(state, '我去香港联合交易所打听上市消息。');
+    const organizationIds = projection.organizations.map((item) => item.organizationId);
+
+    expect(organizationIds).toContain('org_hk_stock_exchange');
+    expect(organizationIds).not.toContain('org_hk_four_stock_exchanges');
   });
 
   it('filters projected figure organization references to currently projected organizations', () => {

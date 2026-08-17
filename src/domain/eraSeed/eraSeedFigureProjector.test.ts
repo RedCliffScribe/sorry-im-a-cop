@@ -17,20 +17,20 @@ describe('era seed figure projection', () => {
     const state = createInitialRuntimeState();
 
     expect(validation).toMatchObject({
-      total: 360,
+      total: 379,
       counts: {
-        entertainment: 342,
+        entertainment: 361,
         literature_media: 12,
         business_backstage: 6
       },
       errors: []
     });
-    expect(hkLateColonialEraSeedFigures.filter((figure) => figure.englishName)).toHaveLength(351);
+    expect(hkLateColonialEraSeedFigures.filter((figure) => figure.englishName)).toHaveLength(370);
     expect(
       hkLateColonialEraSeedFigures.filter(
         (figure) => figure.category === 'entertainment' && figure.englishName
       )
-    ).toHaveLength(338);
+    ).toHaveLength(357);
     expect(hkLateColonialEraSeedFigures.every((figure) => (figure.protectedRealNames ?? []).length === 0)).toBe(true);
     expect(hkLateColonialEraSeedFigures.flatMap((figure) => figure.recognitionAliases)).not.toContainEqual(
       expect.stringContaining('影子')
@@ -39,8 +39,8 @@ describe('era seed figure projection', () => {
   });
 
   it('keeps the expanded public-figure roster compact, stable, unique, and inside the era window', () => {
-    expect(hkLateColonialEntertainmentFigureExpansionSource).toHaveLength(280);
-    expect(hkLateColonialEntertainmentFigureExpansion).toHaveLength(280);
+    expect(hkLateColonialEntertainmentFigureExpansionSource).toHaveLength(299);
+    expect(hkLateColonialEntertainmentFigureExpansion).toHaveLength(299);
 
     const ids = hkLateColonialEntertainmentFigureExpansion.map((figure) => figure.id);
     const sourceIds = hkLateColonialEntertainmentFigureExpansionSource.map((figure) => figure.sourceId);
@@ -67,6 +67,38 @@ describe('era seed figure projection', () => {
       hkLateColonialEntertainmentFigureExpansion.every(
         (figure) => figure.promptSafeProfile.length < 220 && figure.usualPlaceIds.length === 0
       )
+    ).toBe(true);
+  });
+
+  it('keeps dedicated AVG portrait candidates at A-tier importance', () => {
+    const aTierNames = [
+      '钟楚红',
+      '关之琳',
+      '王祖贤',
+      '李嘉欣',
+      '邱淑贞',
+      '叶子楣',
+      '叶玉卿',
+      '陈宝莲',
+      '李华月',
+      '彭丹',
+      '麦家琪',
+      '村上丽奈'
+    ];
+
+    expect(
+      aTierNames.map((displayName) => {
+        const figure = hkLateColonialEraSeedFigures.find((item) => item.displayName === displayName);
+        return {
+          displayName,
+          importance: figure?.importance
+        };
+      })
+    ).toEqual(aTierNames.map((displayName) => ({ displayName, importance: expect.any(Number) })));
+    expect(
+      hkLateColonialEraSeedFigures
+        .filter((figure) => aTierNames.includes(figure.displayName))
+        .every((figure) => figure.importance >= 90)
     ).toBe(true);
   });
 
@@ -145,7 +177,7 @@ describe('era seed figure projection', () => {
     expect(projection.figures.length).toBeLessThanOrEqual(12);
     expect(projection.figures.map((figure) => figure.id)).not.toContain('fig_hk_ent_q283983');
     expect(projection.figures.map((figure) => figure.id)).not.toContain('fig_hk_ent_q531617');
-    expect(projection.diagnostics.totalFigures).toBe(360);
+    expect(projection.diagnostics.totalFigures).toBe(379);
   });
 
   it('rotates broad tied candidates deterministically as the saved turn context changes', () => {

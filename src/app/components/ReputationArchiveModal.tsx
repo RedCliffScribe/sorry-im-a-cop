@@ -121,6 +121,7 @@ export function ReputationArchiveModal({ state, onClose }: ReputationArchiveModa
             <section className="reputation-overview-panel" aria-label="整体口碑">
               <h3>整体</h3>
               <p>{reputation.summary}</p>
+              <small>整体口碑由各圈层的知名度与评价在本地综合；传播范围较小的圈层变化影响也会较小。</small>
             </section>
 
             <section className="reputation-circle-panel" aria-label="圈层口碑">

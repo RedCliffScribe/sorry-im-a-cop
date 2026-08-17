@@ -1,6 +1,7 @@
 import { requiresApiKey, supportsMainNarration } from '../settings/apiCapabilities';
 import type { AiSettings } from '../settings/types';
 import { OpenAiCompatibleNarratorClient } from './OpenAiCompatibleNarratorClient';
+import { DEFAULT_API_MAX_TOKENS } from './narratorLimits';
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -31,8 +32,12 @@ export function createNarratorClientFromSettings(settings: AiSettings, fetchImpl
     baseUrl: profile.baseUrl,
     apiKey: profile.apiKey,
     model: route.model,
-    maxTokens: route.maxTokens ?? profile.defaultMaxTokens,
+    maxTokens:
+      route.maxTokensMode === 'inherit'
+        ? (profile.defaultMaxTokens ?? DEFAULT_API_MAX_TOKENS)
+        : (route.maxTokens ?? profile.defaultMaxTokens ?? DEFAULT_API_MAX_TOKENS),
     temperature: route.temperature ?? profile.defaultTemperature,
+    capabilities: profile.capabilities,
     fetchImpl
   });
 }

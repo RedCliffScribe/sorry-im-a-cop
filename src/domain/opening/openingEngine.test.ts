@@ -1,602 +1,1351 @@
+import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import type { NarratorClient } from '../narrator/NarratorClient';
-import { PLAYER_POLICE_SALARY_CASHFLOW_ID } from '../finance/playerSalaryCashflow';
+import type {
+  NarratorAttemptRecord,
+  NarratorClient,
+  NarratorDetailedCompletion,
+  NarratorStreamOptions
+} from '../narrator/NarratorClient';
+import { NarratorTruncatedError } from '../narrator/NarratorErrors';
+import { estimateNarrativeTokens } from '../narrator/estimateNarrativeTokens';
+import { IndexedDbSaveRepository } from '../persistence/IndexedDbSaveRepository';
 import type { OpeningSetup } from '../runtime/initialState';
+import { createInitialRuntimeState } from '../runtime/initialState';
+import {
+  getOpeningNonCoreFallbacks,
+  validateOpeningBlueprint
+} from './openingBlueprintSchema';
+import { composeOpeningInitializationPrompt } from './composeOpeningInitializationPrompt';
+import { getOpeningBlueprintQualityIssues } from './openingBlueprintQualityGate';
+import {
+  collectOpeningDramaWritebackRefs,
+  validateOpeningDramaExecutionTrace,
+  validateOpeningDramaPlan
+} from './openingDrama';
+import { validateOpeningInitialization } from './openingInitializationSchema';
 import { runOpening } from './runOpening';
 
-class FakeOpeningNarrator implements NarratorClient {
-  public prompt = '';
-
-  async complete(prompt: string, options?: { onTextDelta?: (delta: string) => void; onRawText?: (rawText: string) => void }): Promise<unknown> {
-    this.prompt = prompt;
-    options?.onTextDelta?.('真正开局：');
-    options?.onTextDelta?.('旺角警署');
-    const response = {
-      narrativeText: '真正开局：旺角警署的早班刚交接完，电话声和打字声混在一起。',
-      suggestedActions: ['先问值日警长今天有什么麻烦'],
-      playerPatch: {
-        englishName: 'Michael Chan',
-        policeNumber: '9527',
-        clothing: '夏季军装制服，皮鞋擦得很亮。',
-        equipment: ['警察委任证', '警棍', '点三八左轮'],
-        economy: {
-          money: 1800,
-          monthlyPressure: 65,
-          financeSummary: '工资刚够自己周转，家里偶尔还会开口要钱。'
-        },
-        reputation: {
-          notoriety: 18,
-          overallReputation: 4,
-          summary: '开局时只有警署内少数同僚和驻区小商户知道他。',
-          circles: {
-          police: {
-            visibility: 18,
-            standing: 5,
-            summary: '新人，少数同僚听过他，还在观察。'
-          },
-          neighborhoodMedia: {
-            visibility: 6,
-            standing: 0,
-            summary: '附近街坊只知道来了个新警员。'
-          },
-          triad: {
-            visibility: 0,
-            standing: 0,
-            summary: '社团圈暂未注意到他。'
-          },
-          entertainment: {
-            visibility: 0,
-            standing: 0,
-            summary: '娱乐圈暂未注意到他。'
-          },
-          business: {
-            visibility: 2,
-            standing: 0,
-            summary: '只有驻区小商户可能见过他。'
-          },
-          politics: {
-            visibility: 0,
-            standing: 0,
-            summary: '政府和政界无人认识他。'
-          }
-          },
-          logs: []
-        },
-        homeBase: {
-          placeId: 'place_sham_shui_po_tenement_room',
-          placeName: '深水埗唐楼住处',
-          regionId: 'region_sham_shui_po',
-          housingType: '唐楼分租房',
-          summary: '深水埗一间狭窄唐楼房间，楼下是杂货铺和茶餐厅。',
-          householdSummary: '与母亲同住，弟弟偶尔回来借钱。'
-        },
-        recentInteractionMemory: '刚到旺角警署报到。'
-      },
-      initialActors: [
-        {
-          name: '梁志强',
-          englishName: 'Tony Leung',
-          gender: 'male',
-          computedAge: 42,
-          currentIdentity: 'police',
-          publicIdentity: '值日警长',
-          positionSummary: '旺角警署值日警长',
-          profileSummary: '老资格军装警长，熟悉街面和报案室人情。',
-          clothing: '旧式短袖军装，肩章磨得发暗。',
-          equipment: ['值日簿', '警棍', '口哨'],
-          attributes: {
-            body: 46,
-            action: 52,
-            perception: 64,
-            thinking: 58,
-            negotiation: 61,
-            will: 55
-          },
-          relationshipSummary: '刚认识主角，暂时只按新人看待。',
-          attitudeTowardPlayer: '审视但不刻薄',
-          interactionScore: 15,
-          presence: 'present',
-          visibility: 'player_known',
-          importance: 70
-        },
-        {
-          name: '周嘉敏',
-          englishName: 'May Chow',
-          gender: 'female',
-          birthDate: '1965-02-14',
-          computedAge: 23,
-          currentIdentity: 'civilian',
-          publicIdentity: '广华医院护士',
-          actualIdentitySummary: '主角女友，刚从旺角警署报案室离开。',
-          positionSummary: '主角女友，广华医院护士。',
-          profileSummary: '温柔但有主见的成年女友，关心主角夜班安全。',
-          clothing: '浅色风衣和护士制服。',
-          equipment: ['保温壶', '单肩包'],
-          attributes: {
-            body: 45,
-            action: 48,
-            perception: 60,
-            thinking: 55,
-            negotiation: 65,
-            will: 70
-          },
-          relationshipSummary: '与主角是稳定情侣关系。',
-          attitudeTowardPlayer: '亲近且担心主角安全。',
-          interactionScore: 90,
-          recentInteractionMemory: '刚送汤到警署后离开。',
-          presence: 'just_left',
-          visibility: 'player_known',
-          importance: 90,
-          femaleProfile: {
-            birthday: '5月20日',
-            addressToPlayer: '阿May',
-            appearanceDescription: '笑起来眉眼弯弯，站近时会自然替主角整理衣领。',
-            bodyDescription: '身形纤瘦，做事利落。',
-            clothingStyle: '常穿制衣厂下班后的浅色衬衫和长裤。',
-            personalityCore: '温柔但有主见，重视安稳生活。',
-            affectionProgressionCondition: '主角能尊重她的工作与家庭压力。',
-            relationshipProgressionCondition: '主角在家庭和警队压力之间表现出可靠担当。',
-            relationshipNetworkEdges: [
-              {
-                targetName: '周家父母',
-                relation: '家人',
-                note: '父母健在，有个在工厂工作的哥哥。'
-              }
-            ],
-            adultPrivateProfile: {
-              enabled: true,
-              ageConfirmedAdult: true,
-              profileStatus: 'ready',
-              womb: {
-                status: '未受孕',
-                cervixStatus: '紧闭',
-                records: []
-              },
-              partProfiles: {
-                胸部: { description: '乳房饱满柔软，乳晕色泽自然，乳头敏感。' },
-                小穴: { description: '阴唇紧致细嫩，穴口收敛，阴蒂敏感。' },
-                屁穴: { description: '臀缝紧窄，屁穴小而紧闭，周围皱褶细密。' }
-              }
-            }
-          }
-        }
-      ],
-      memories: [
-        {
-          text: '主角在旺角警署完成早班交接，开始第一天值班。',
-          kind: 'turn',
-          relatedActorIds: ['player'],
-          relatedPlaceIds: ['place_mong_kok_police_station'],
-          relatedOrganizationIds: ['org_hk_police'],
-          importance: 80,
-          visibility: 'player_known',
-          certainty: 'fact'
-        },
-        {
-          text: '这条重复开局摘要不应生成第二条主角短期记忆。',
-          kind: 'turn',
-          relatedActorIds: ['player'],
-          relatedPlaceIds: ['place_mong_kok_police_station'],
-          importance: 60,
-          visibility: 'player_known',
-          certainty: 'fact'
-        },
-        {
-          text: '主角第一天以警员编号9527在旺角警署值班。',
-          kind: 'player',
-          relatedActorIds: ['player'],
-          relatedPlaceIds: ['place_mong_kok_police_station'],
-          importance: 90,
-          visibility: 'player_known',
-          certainty: 'fact'
-        }
-      ],
-      pressureSeeds: [
-        {
-          kind: 'old_classmate_trouble',
-          summary: '旧同学可能把主角拖入一个人情麻烦。',
-          severity: 35,
-          exposureLikelihood: 20,
-          sourceSummary: '开局额外要求',
-          allowedUses: ['在合适的生活场景中轻微触发'],
-          forbiddenUses: ['不要下一回合直接变成内部调查'],
-          escalationConditions: ['主角主动追问旧同学近况'],
-          visibility: 'hidden'
-        }
-      ]
-      ,
-      grayLedger: [
-        {
-          kind: 'cash',
-          amount: 500,
-          fromSummary: '旧同学塞来的红包',
-          relatedActorIds: ['player'],
-          relatedPlaceIds: ['place_mong_kok_police_station'],
-          summary: '旧同学说只是见面利是，但时机暧昧。',
-          playerExplanation: '暂未向任何人解释。',
-          exposureRisk: 20,
-          status: 'hidden',
-          visibility: 'hidden'
-        }
-      ]
-    };
-    options?.onRawText?.(JSON.stringify(response));
-    return response;
-  }
-}
-
-class FakeHistoricalMemoryOpeningNarrator implements NarratorClient {
-  async complete(_prompt: string, options?: { onTextDelta?: (delta: string) => void; onRawText?: (rawText: string) => void }): Promise<unknown> {
-    options?.onTextDelta?.('A usable opening scene.');
-    const response = {
-      narrativeText: 'A usable opening scene with valid player state.',
-      suggestedActions: ['Step into the report room.'],
-      memories: [
-        {
-          text: 'The 1984 Sino-British Joint Declaration shapes the public mood.',
-          kind: 'historical',
-          importance: 90,
-          visibility: 'player_known',
-          certainty: 'fact'
-        }
-      ]
-    };
-    options?.onRawText?.(JSON.stringify(response));
-    return response;
-  }
-}
-
-class FakeAdultFemaleWithoutPrivateProfileOpeningNarrator implements NarratorClient {
-  async complete(_prompt: string, options?: { onRawText?: (rawText: string) => void }): Promise<unknown> {
-    const response = {
-      narrativeText: '开局时，周嘉敏刚从旺角警署门口离开，留下一个保温壶。',
-      suggestedActions: ['给周嘉敏打个电话'],
-      initialActors: [
-        {
-          name: '周嘉敏',
-          englishName: 'May Chow',
-          gender: 'female',
-          birthDate: '1965-02-14',
-          computedAge: 23,
-          currentIdentity: 'civilian',
-          publicIdentity: '玩家女友',
-          positionSummary: '玩家女友，广华医院护士。',
-          profileSummary: '温柔但有主见的成年女友，关心主角夜班安全。',
-          relationshipSummary: '与主角是稳定情侣关系。',
-          attitudeTowardPlayer: '亲近且担心主角安全。',
-          interactionScore: 90,
-          presence: 'mentioned',
-          visibility: 'player_known',
-          importance: 90,
-          femaleProfile: {
-            birthday: '2月14日',
-            addressToPlayer: '阿星',
-            appearanceDescription: '笑起来眉眼弯弯，见面时会自然替主角整理衣领。',
-            bodyDescription: '身形纤瘦，做事利落。',
-            clothingStyle: '下班后常穿浅色衬衫和长裤。',
-            personalityCore: '温柔但有主见，重视安稳生活。'
-          }
-        }
-      ]
-    };
-    options?.onRawText?.(JSON.stringify(response));
-    return response;
-  }
-}
-
-class FakeCaseOpeningNarrator implements NarratorClient {
-  async complete(_prompt: string, options?: { onRawText?: (rawText: string) => void }): Promise<unknown> {
-    const response = {
-      narrativeText: 'Opening scene: the player is assigned to assist a Mong Kok nightclub assault case.',
-      suggestedActions: ['Submit the witness statement.'],
-      casePatches: [
-        {
-          caseId: 'case_mk_nightclub_assault',
-          title: 'Mong Kok Nightclub Assault',
-          caseType: 'assault',
-          status: 'investigating',
-          playerRole: 'assist',
-          leadActorName: 'Sergeant Lam',
-          summary: 'A nightclub injury report assigned to the player as assisting officer.',
-          currentFocus: 'Confirm the witness statement and scene record.',
-          playerVisibleProgress: 'The player has one statement in hand.',
-          internalProgressSummary: 'The case is still early and should not be treated as solved.',
-          relatedPlaceIds: ['place_mong_kok_police_station'],
-          evidenceIds: [],
-          activityLog: [
-            {
-              kind: 'created',
-              summary: 'The case file was opened during the first duty scene.',
-              visibleToPlayer: true
-            }
-          ],
-          visibility: 'player_known'
-        }
-      ],
-      assetPatch: {
-        upsertItems: [
-          {
-            itemId: 'asset_mk_statement_001',
-            category: 'document',
-            name: 'Nightclub witness statement',
-            summary: 'A signed witness statement related to the assault case.',
-            detail: 'The document can be submitted to the case file.',
-            relatedCaseIds: ['case_mk_nightclub_assault'],
-            evidence: {
-              caseId: 'case_mk_nightclub_assault',
-              caseTitle: 'Mong Kok Nightclub Assault',
-              summary: 'Witness statement that may support the assault report.'
-            },
-            visibility: 'player_known',
-            importance: 70
-          }
-        ]
-      },
-      caseEvidencePatches: [
-        {
-          evidenceId: 'evidence_scene_record_001',
-          caseId: 'case_mk_nightclub_assault',
-          title: 'Initial scene record',
-          evidenceType: 'scene_record',
-          summary: 'The report room already has a short initial scene record.',
-          sourceSummary: 'Report room intake',
-          visibility: 'player_known'
-        }
-      ],
-      deferredEventPatches: [
-        {
-          eventId: 'deferred_case_followup_001',
-          sourceModule: 'case',
-          relatedIds: {
-            caseId: 'case_mk_nightclub_assault'
-          },
-          title: 'Case follow-up',
-          summary: 'The lead officer may respond after receiving the statement.',
-          triggerAt: { year: 1988, month: 9, day: 1, hour: 10, minute: 30 },
-          promptInstruction: 'Resolve the lead officer response without rushing prosecution.',
-          status: 'pending'
-        }
-      ]
-    };
-    options?.onRawText?.(JSON.stringify(response));
-    return response;
-  }
-}
+const SESSION_ID = 'opening_session_test';
+const ACTOR_ID = 'actor_opening_supervisor';
+const SCENE_ID = 'scene_report_room';
+const PLACE_ID = 'place_mong_kok_police_station';
 
 function createSetup(): OpeningSetup {
   return {
-    playerName: '陈启明',
-    englishName: '',
+    playerName: '陈志明',
+    englishName: 'Michael Chan',
+    gender: 'male',
     age: 25,
-    policeNumber: '',
+    policeNumber: '9527',
     currentIdentity: 'police',
-    startTime: { year: 1988, month: 9, day: 1, hour: 8, minute: 30 },
-    lawIdentity: {
-      rank: 'Constable（警员 PC）',
-      department: 'Uniform Branch（军装巡逻）',
-      stationOrPost: 'Mong Kok Police Station（旺角警署）',
-      assignmentSummary: 'Patrol Constable（巡逻警员）'
-    },
-    openingNote: '旧同学的麻烦要慢慢浮出水面。'
+    startTime: { year: 1984, month: 12, day: 27, hour: 8, minute: 30 },
+    openingNote: '旧同学的麻烦'
   };
 }
 
-describe('opening engine', () => {
-  it('generates the initial runtime state from narrator JSON writeback', async () => {
-    const narrator = new FakeOpeningNarrator();
+function createBlueprint() {
+  return {
+    openingSessionId: SESSION_ID,
+    openingFacts: {
+      placeId: PLACE_ID,
+      sceneId: SCENE_ID,
+      situationSummary: '旺角警署完成早班交接，值日警长准备交代辖区近况。',
+      centralMatter: '确认今天需要优先处理的街面事务。',
+      playerDecisionBoundary: '玩家自行决定先查阅交更记录还是直接向上级询问。'
+    },
+    playerPresentationPatch: {
+      name: '陈志明',
+      englishName: 'Michael Chan',
+      policeNumber: '9527',
+      clothing: '夏季军装制服，皮鞋擦得很亮。',
+      equipment: ['警察委任证', '警棍', '点三八左轮'],
+      statusSummary: '完成早班交接，精神清醒。'
+    },
+    initialActors: [
+      {
+        actorId: ACTOR_ID,
+        name: '梁志强',
+        englishName: 'Tony Leung',
+        aliases: [],
+        gender: 'male' as const,
+        birthDate: '1942-06-15',
+        computedAge: 42,
+        visualAgeAnchor: '四十岁出头，眼角有长期夜班留下的细纹。',
+        currentIdentity: 'police' as const,
+        publicIdentity: '旺角警署值日警长',
+        actualIdentitySummary: '皇家香港警察旺角警署当值警长。',
+        roleProfiles: {
+          police: {
+            status: 'active' as const,
+            agencyId: 'org_hk_police',
+            stationOrPost: '旺角警署',
+            department: '军装部',
+            rank: '警长',
+            assignmentSummary: '值日警长',
+            postRole: 'station_duty_sergeant',
+            supervisorActorIds: [] as string[],
+            peerActorIds: [] as string[],
+            authoritySummary: '负责当值警署日常协调。',
+            accessSummary: '可接触交更记录与当值调派。',
+            dutySummary: '交更、报案室和街面事务协调。',
+            institutionalReputation: '经验老到。',
+            disciplinePressureSummary: '重视程序和书面记录。'
+          }
+        },
+        playerRoleRelation: 'police_supervisor' as const,
+        organizationIds: ['org_hk_police'],
+        positionSummary: '旺角警署值日警长',
+        profileSummary: '熟悉辖区街面和报案室人情的老资格军装警长。',
+        appearance: '身材结实，眼神沉稳，留着整齐短发。',
+        clothing: '旧式短袖军装，肩章边缘略有磨损。',
+        equipment: ['值日簿', '警棍', '口哨'],
+        personality: '谨慎务实，重视程序，但不刻意刁难新人。',
+        speechStyle: '粤语短句为主，交代事情直接，偶尔用警署行话。',
+        motivation: '让当值警力平稳交接，避免小事演变成投诉。',
+        longTermGoal: '守住辖区秩序并带出一批可靠的年轻警员。',
+        values: '规矩、可靠、现场判断与同僚互相照应。',
+        attributes: {
+          body: 55,
+          action: 51,
+          perception: 68,
+          thinking: 62,
+          negotiation: 64,
+          will: 70
+        },
+        relationshipSummary: '作为当值上级，刚开始观察玩家是否可靠。',
+        attitudeTowardPlayer: '公事公办，但愿意给新人说明机会。',
+        interactionScore: 18,
+        trustTendency: '看重按程序汇报和实际办事结果。',
+        entanglementSummary: '玩家当值表现会直接影响他之后分派的事务。',
+        longTermMemorySummary: '记得玩家是刚调来旺角警署的年轻警员。',
+        recentInteractionMemory: '刚在交更桌前核对玩家的警员编号。',
+        statusSummary: '正在值日室整理早班交接事项。',
+        bodyConditionSummary: '精神清醒，肩颈略有夜班后的疲惫。',
+        presence: 'present' as const,
+        currentPlaceId: PLACE_ID,
+        currentSceneId: SCENE_ID,
+        visibility: 'player_known' as const,
+        importance: 72,
+        keyMemories: [],
+        worldpackActorData: {}
+      }
+    ],
+    actionIntents: [
+      {
+        actionId: 'action_ask_sergeant',
+        intent: '向值日警长询问今天最急的事务。',
+        relatedActorIds: [ACTOR_ID],
+        requiredFacts: ['值日警长正在交代当值事项']
+      },
+      {
+        actionId: 'action_read_handover',
+        intent: '先查看交更记录，确认昨夜遗留问题。',
+        relatedActorIds: [ACTOR_ID],
+        requiredFacts: ['交更记录放在值日室']
+      }
+    ]
+  };
+}
 
-    const state = await runOpening({ setup: createSetup(), narrator });
+function createRemoteActorBlueprintFixture(options: {
+  sessionId: string;
+  presence: 'absent' | 'mentioned';
+  omitEquipment: boolean;
+}) {
+  const fixture = structuredClone(createBlueprint()) as unknown as Omit<
+    ReturnType<typeof createBlueprint>,
+    'openingSessionId' | 'initialActors'
+  > & {
+    openingSessionId: string;
+    initialActors: Array<Record<string, unknown>>;
+  };
+  fixture.openingSessionId = options.sessionId;
+  const actor = fixture.initialActors[0];
+  actor.presence = options.presence;
+  delete actor.currentPlaceId;
+  delete actor.currentSceneId;
+  if (options.omitEquipment) {
+    delete actor.equipment;
+  }
+  return fixture;
+}
 
-    expect(narrator.prompt).toContain('旧同学的麻烦');
-    expect(state.turnCounter).toBe(0);
-    expect(state.storyLog).toHaveLength(1);
-    expect(state.storyLog[0].text).toContain('真正开局');
-    expect(state.storyLog[0].rawNarratorResponse).toContain('"narrativeText"');
-    expect(state.storyLog[0].suggestedActions).toEqual(['先问值日警长今天有什么麻烦']);
-    const girlfriend = Object.values(state.actors).find((actor) => actor.name === '周嘉敏');
-    expect(girlfriend?.femaleProfile?.birthday).toBe('5月20日');
-    expect(girlfriend?.femaleProfile?.addressToPlayer).toBe('阿May');
-    expect(girlfriend?.femaleProfile?.appearanceDescription).toContain('整理衣领');
-    expect(girlfriend?.femaleProfile?.bodyDescription).toContain('纤瘦');
-    expect(girlfriend?.femaleProfile?.clothingStyle).toContain('衬衫');
-    expect(girlfriend?.femaleProfile?.personalityCore).toContain('温柔但有主见');
-    expect(girlfriend?.femaleProfile?.affectionProgressionCondition).toContain('家庭压力');
-    expect(girlfriend?.femaleProfile?.relationshipProgressionCondition).toContain('可靠担当');
-    expect(girlfriend?.femaleProfile?.relationshipNetworkEdges).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          targetName: '周家父母',
-          relation: '家人',
-          note: expect.stringContaining('父母健在')
-        })
-      ])
+function createInitialization(options?: {
+  narrativeText?: string;
+  money?: number;
+  actionIds?: string[];
+}) {
+  const narrativeText =
+    options?.narrativeText ??
+    '旺角警署的早班刚交接完，值日室里电话声、打字声与走廊脚步声交叠。梁志强把值日簿翻到昨夜那一页，先核对陈志明的警员编号，再把几宗尚未收尾的街面纠纷逐项圈出。他没有替陈志明选择先做哪一件，只说明哪几处最容易拖成投诉，以及哪些记录必须先看清楚。窗外天色仍带着冬晨的灰白，报案室已有市民排队，电台里不时传来分区巡逻车的回报。陈志明站在交更桌前，可以直接追问最急的一宗，也可以先翻阅昨夜记录，先把人名、地点和交接责任理顺。'.repeat(
+      4
     );
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.profileStatus).toBe('ready');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.womb?.status).toBe('未受孕');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).toBe('乳房饱满柔软，乳晕色泽自然，乳头敏感。');
-    expect(state.player.englishName).toBe('Michael Chan');
-    expect(state.player.policeNumber).toBe('9527');
-    expect(state.player.clothing).toBe('夏季军装制服，皮鞋擦得很亮。');
-    expect(state.player.equipment).toEqual(['警察委任证', '警棍', '点三八左轮']);
-    expect(state.actors.player.englishName).toBe('Michael Chan');
-    expect(state.actors.player.policeNumber).toBe('9527');
-    expect(state.actors.player.clothing).toBe('夏季军装制服，皮鞋擦得很亮。');
-    expect(state.actors.player.equipment).toEqual(['警察委任证', '警棍', '点三八左轮']);
-    expect(state.player.economy.bankBalance).toBe(1800);
-    expect(state.finance.bankBalance).toBe(1800);
-    expect(state.player.economy.monthlyPressure).toBe(65);
-    expect(state.player.economy.financeSummary).toContain('家里');
-    expect(state.player.reputation.notoriety).toBe(18);
-    expect(state.player.reputation.overallReputation).toBe(4);
-    expect(state.player.reputation.summary).toContain('少数同僚');
-    expect(state.player.reputation.circles.police.visibility).toBe(18);
-    expect(state.player.reputation.circles.police.standing).toBe(5);
-    expect(state.player.reputation.circles.neighborhoodMedia.summary).toContain('街坊');
-    expect(state.player.homeBase.placeId).toBe('place_sham_shui_po_tenement_room');
-    expect(state.player.homeBase.householdSummary).toContain('母亲');
-    expect(state.places.place_sham_shui_po_tenement_room.name).toBe('深水埗唐楼住处');
-    expect(state.assets.items.asset_player_home).toMatchObject({
-      category: 'fixedAsset',
-      fixedAssetType: 'residence',
-      holdingRelation: 'rented',
-      primaryUse: 'home',
-      placeId: 'place_sham_shui_po_tenement_room',
-      relatedActorIds: ['player'],
-      relatedPlaceIds: ['place_sham_shui_po_tenement_room'],
-      expenseSettlementItemIds: ['cashflow_player_home_rent']
-    });
-    expect(state.finance.cashflows.cashflow_player_home_rent).toMatchObject({
-      direction: 'expense',
-      kind: 'rent',
-      relatedAssetItemIds: ['asset_player_home'],
-      relatedPlaceIds: ['place_sham_shui_po_tenement_room'],
-      source: 'opening',
-      status: 'active'
-    });
-    expect(state.finance.cashflows.cashflow_player_home_rent.amount).toBeGreaterThan(0);
-    expect(state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]).toMatchObject({
-      direction: 'income',
-      kind: 'salary',
-      title: '警队月薪',
-      amount: 4200,
-      source: 'opening',
-      status: 'active'
-    });
-    expect(state.grayLedger).toHaveLength(1);
-    expect(state.grayLedger[0].amount).toBe(500);
-    expect(state.grayLedger[0].visibility).toBe('hidden');
+  const actionIds = options?.actionIds ?? ['action_ask_sergeant', 'action_read_handover'];
+  return {
+    openingSessionId: SESSION_ID,
+    narrativeText,
+    suggestedActions: [
+      { actionId: actionIds[0], text: '向梁志强询问今天最急的事务。' },
+      { actionId: actionIds[1], text: '先查看昨夜交更记录。' }
+    ],
+    playerStatePatch: {
+      economy: {
+        cashOnHand: 600,
+        bankBalance: options?.money ?? 1_200,
+        monthlyPressure: 35,
+        financeSummary: '有一笔个人存款，日常开支仍需留意。'
+      },
+      homeBase: {
+        placeId: 'place_player_home_mong_kok',
+        placeName: '旺角唐楼住所',
+        regionId: 'region_mong_kok',
+        housingType: '唐楼分租单位',
+        summary: '位于旺角旧区的分租单位，步行可到警署。',
+        householdSummary: '与一名普通租客分住，彼此作息独立。'
+      }
+    },
+    memories: [
+      {
+        text: '陈志明在旺角警署完成早班交接，梁志强交代了昨夜遗留事务。',
+        kind: 'turn' as const,
+        relatedActorIds: ['player', ACTOR_ID],
+        relatedPlaceIds: [PLACE_ID],
+        relatedOrganizationIds: ['org_hk_police'],
+        importance: 75,
+        visibility: 'player_known' as const,
+        certainty: 'fact' as const
+      }
+    ]
+  };
+}
 
-    const openingActor = Object.values(state.actors).find((actor) => actor.name === '梁志强');
-    expect(openingActor?.englishName).toBe('Tony Leung');
-    expect(openingActor?.clothing).toBe('旧式短袖军装，肩章磨得发暗。');
-    expect(openingActor?.equipment).toEqual(['值日簿', '警棍', '口哨']);
-    expect(openingActor?.presence).toBe('present');
-    expect(openingActor?.interactionScore).toBe(15);
-    expect(openingActor?.attributes).toEqual({
-      body: 46,
-      action: 52,
-      perception: 64,
-      thinking: 58,
-      negotiation: 61,
-      will: 55
-    });
-    expect(openingActor?.vitals).toBeUndefined();
-    expect(openingActor?.bodyConditionSummary).toBe(openingActor?.statusSummary);
-    expect(openingActor?.roleProfiles).toEqual({});
-    expect(state.scenes.scene_report_room.presentActorIds).toContain(openingActor?.actorId);
+function attempt(
+  purpose: NarratorAttemptRecord['purpose'],
+  rawText: string,
+  finishReason: NarratorAttemptRecord['finishReason'] = 'stop',
+  requestedMaxTokens = 32_768
+): NarratorAttemptRecord {
+  return {
+    attemptId: `${purpose}_${Math.random().toString(36).slice(2)}`,
+    purpose,
+    stream: true,
+    requestedMaxTokens,
+    finishReason,
+    rawText,
+    parseStatus: finishReason === 'length' ? 'truncated' : 'success',
+    startedAt: '2026-07-23T00:00:00.000Z',
+    finishedAt: '2026-07-23T00:00:01.000Z',
+    usage: { promptTokens: 1200, completionTokens: 900 }
+  };
+}
 
-    const girlfriendActor = Object.values(state.actors).find((actor) => actor.name === '周嘉敏');
-    expect(girlfriendActor?.englishName).toBe('May Chow');
-    expect(girlfriendActor?.presence).toBe('mentioned');
-    expect(girlfriendActor?.relationshipSummary).toContain('稳定情侣');
-    expect(state.scenes.scene_report_room.presentActorIds).not.toContain(girlfriendActor?.actorId);
+class TwoPhaseNarrator implements NarratorClient {
+  readonly configuredMaxTokens = 8192;
+  readonly prompts: string[] = [];
+  readonly options: NarratorStreamOptions[] = [];
+  readonly responses: unknown[];
 
-    expect(Object.values(state.memories).some((memory) => memory.text.includes('编号9527'))).toBe(true);
-    const openingTurnMemories = Object.values(state.memories).filter((memory) => memory.kind === 'turn');
-    expect(openingTurnMemories).toHaveLength(1);
-    expect(openingTurnMemories[0]).toMatchObject({
-      text: '主角在旺角警署完成早班交接，开始第一天值班。',
-      tier: 'short_term',
-      relatedTurnId: 'turn_0'
-    });
-    expect(state.storyLog[0]?.summaryText).toBe('主角在旺角警署完成早班交接，开始第一天值班。');
-    expect(Object.values(state.pressures).some((pressure) => pressure.kind === 'old_classmate_trouble')).toBe(true);
+  constructor(responses: unknown[] = [createBlueprint(), createInitialization()]) {
+    this.responses = [...responses];
+  }
+
+  async complete(): Promise<unknown> {
+    throw new Error('runOpening should prefer completeDetailed');
+  }
+
+  async completeDetailed(
+    prompt: string,
+    options: NarratorStreamOptions = {}
+  ): Promise<NarratorDetailedCompletion> {
+    this.prompts.push(prompt);
+    this.options.push(options);
+    const value = this.responses.shift();
+    if (!value) throw new Error('No prepared response');
+    const rawText = JSON.stringify(value);
+    options.onRawDelta?.(rawText);
+    options.onRawText?.(rawText);
+    if (
+      options.requestPurpose === 'opening_initialization' ||
+      options.requestPurpose === 'opening_compact_retry'
+    ) {
+      options.onTextDelta?.(
+        typeof value === 'object' && value && 'narrativeText' in value
+          ? String((value as { narrativeText: string }).narrativeText)
+          : ''
+      );
+    }
+    return {
+      value,
+      attempt: attempt(
+        options.requestPurpose ?? 'auxiliary',
+        rawText,
+        'stop',
+        options.maxTokensOverride
+      )
+    };
+  }
+}
+
+class TruncatedInitializationNarrator extends TwoPhaseNarrator {
+  private initializationCalls = 0;
+
+  override async completeDetailed(
+    prompt: string,
+    options: NarratorStreamOptions = {}
+  ): Promise<NarratorDetailedCompletion> {
+    if (options.requestPurpose === 'opening_initialization') {
+      this.prompts.push(prompt);
+      this.options.push(options);
+      this.initializationCalls += 1;
+      const rawText = '{"openingSessionId":"opening_session_test","narrativeText":"被截断';
+      const record = attempt(
+        'opening_initialization',
+        rawText,
+        'length',
+        options.maxTokensOverride
+      );
+      throw new NarratorTruncatedError(record);
+    }
+    return super.completeDetailed(prompt, options);
+  }
+}
+
+describe('two-phase opening engine', () => {
+  it.each([
+    'personality',
+    'speechStyle',
+    'motivation',
+    'longTermGoal',
+    'values',
+    'relationshipSummary',
+    'attitudeTowardPlayer',
+    'trustTendency',
+    'entanglementSummary',
+    'longTermMemorySummary',
+    'recentInteractionMemory',
+    'statusSummary',
+    'presence',
+    'visibility',
+    'importance',
+    'attributes'
+  ])('rejects a blueprint whose core actor is missing %s', (field) => {
+    const raw = structuredClone(createBlueprint()) as {
+      initialActors: Array<Record<string, unknown>>;
+    };
+    delete raw.initialActors[0][field];
+
+    expect(() => validateOpeningBlueprint(raw)).toThrow();
   });
 
-  it('passes opening narrative deltas without using them as writeback', async () => {
-    const narrator = new FakeOpeningNarrator();
-    const deltas: string[] = [];
+  it('allows only the documented non-core fallbacks and records every applied field', () => {
+      const raw = structuredClone(createBlueprint()) as {
+        initialActors: Array<Record<string, unknown>>;
+      };
+      delete raw.initialActors[0].englishName;
+      delete raw.initialActors[0].aliases;
+      delete raw.initialActors[0].keyMemories;
+      delete raw.initialActors[0].worldpackActorData;
+      delete raw.initialActors[0].bodyConditionSummary;
+      delete raw.initialActors[0].equipment;
+
+    const blueprint = validateOpeningBlueprint(raw);
+
+    expect(blueprint.initialActors[0]).toMatchObject({
+      aliases: [],
+      keyMemories: [],
+      worldpackActorData: {},
+      bodyConditionSummary: blueprint.initialActors[0].statusSummary
+      });
+      expect(getOpeningNonCoreFallbacks(raw, blueprint)).toEqual([
+        { actorId: ACTOR_ID, field: 'englishName' },
+        { actorId: ACTOR_ID, field: 'aliases' },
+        { actorId: ACTOR_ID, field: 'callName' },
+        { actorId: ACTOR_ID, field: 'keyMemories' },
+        { actorId: ACTOR_ID, field: 'worldpackActorData' },
+        { actorId: ACTOR_ID, field: 'bodyConditionSummary' },
+        { actorId: ACTOR_ID, field: 'equipment' }
+      ]);
+    });
+
+  it('enforces locations only for present or nearby actors', () => {
+    const presentWithoutPlace = structuredClone(createBlueprint()) as {
+      initialActors: Array<Record<string, unknown>>;
+    };
+    delete presentWithoutPlace.initialActors[0].currentPlaceId;
+    expect(() => validateOpeningBlueprint(presentWithoutPlace)).toThrow(
+      'present/nearby 人物必须填写 currentPlaceId'
+    );
+
+    const nearbyWithoutScene = structuredClone(createBlueprint()) as {
+      initialActors: Array<Record<string, unknown>>;
+    };
+    nearbyWithoutScene.initialActors[0].presence = 'nearby';
+    delete nearbyWithoutScene.initialActors[0].currentSceneId;
+    expect(() => validateOpeningBlueprint(nearbyWithoutScene)).toThrow(
+      'present/nearby 人物必须填写 currentSceneId'
+    );
+  });
+
+  it.each(['absent', 'mentioned'] as const)(
+    'accepts a %s actor without projected location and defaults missing equipment',
+    (presence) => {
+      const raw = createRemoteActorBlueprintFixture({
+        sessionId: `opening_session_${presence}`,
+        presence,
+        omitEquipment: true
+      });
+
+      const blueprint = validateOpeningBlueprint(raw);
+      const actor = blueprint.initialActors[0];
+
+      expect(actor.presence).toBe(presence);
+      expect(actor.currentPlaceId).toBeUndefined();
+      expect(actor.currentSceneId).toBeUndefined();
+      expect(actor.equipment).toEqual([]);
+      expect(getOpeningBlueprintQualityIssues(blueprint, createInitialRuntimeState(createSetup()))).not.toContain(
+        `${actor.name} 在场但缺少有效地点或场景`
+      );
+    }
+  );
+
+  it('preserves a known remote location and rejects unsafe equipment overflow', () => {
+    const remote = createRemoteActorBlueprintFixture({
+      sessionId: 'opening_session_known_remote',
+      presence: 'absent',
+      omitEquipment: false
+    });
+    remote.initialActors[0].currentPlaceId = 'place_guangzhou_family_home';
+    const parsed = validateOpeningBlueprint(remote);
+    expect(parsed.initialActors[0].currentPlaceId).toBe('place_guangzhou_family_home');
+
+    const overflow = structuredClone(remote);
+    overflow.initialActors[0].equipment = ['一', '二', '三', '四'];
+    expect(() => validateOpeningBlueprint(overflow)).toThrow();
+  });
+
+    it('normalizes only documented nullable non-core names and an inapplicable player police number', () => {
+      const raw = structuredClone(createBlueprint()) as {
+        playerPresentationPatch: Record<string, unknown>;
+        initialActors: Array<Record<string, unknown>>;
+      };
+      raw.playerPresentationPatch.policeNumber = null;
+      raw.initialActors[0].englishName = null;
+      raw.initialActors[0].callName = null;
+
+      const blueprint = validateOpeningBlueprint(raw);
+
+      expect(blueprint.playerPresentationPatch.policeNumber).toBeUndefined();
+      expect(blueprint.initialActors[0].englishName).toBeUndefined();
+      expect(blueprint.initialActors[0].callName).toBeUndefined();
+      expect(getOpeningNonCoreFallbacks(raw, blueprint)).toEqual(
+        expect.arrayContaining([
+          { actorId: ACTOR_ID, field: 'englishName' },
+          { actorId: ACTOR_ID, field: 'callName' }
+        ])
+      );
+    });
+
+  it('rejects placeholder actor prose even when the strict schema is structurally valid', () => {
+    const raw = createBlueprint();
+    raw.initialActors[0].motivation = '随剧情明确';
+    const blueprint = validateOpeningBlueprint(raw);
+    const state = createInitialRuntimeState(createSetup());
+
+    expect(getOpeningBlueprintQualityIssues(blueprint, state)).toContain(
+      '梁志强.motivation 使用了占位内容'
+    );
+  });
+
+  it('rejects dangling actor references inside role profiles', () => {
+    const raw = createBlueprint();
+    raw.initialActors[0].roleProfiles.police.supervisorActorIds = ['actor_missing'];
+    const blueprint = validateOpeningBlueprint(raw);
+    const state = createInitialRuntimeState(createSetup());
+
+    expect(getOpeningBlueprintQualityIssues(blueprint, state)).toContain(
+      '梁志强.roleProfiles.police.supervisorActorIds 引用了未知人物 actor_missing'
+    );
+  });
+
+  it('accepts role-profile references to the stable player actor id', () => {
+    const raw = createBlueprint();
+    raw.initialActors[0].roleProfiles.police.peerActorIds = ['player'];
+    const blueprint = validateOpeningBlueprint(raw);
+    const state = createInitialRuntimeState(createSetup());
+
+    expect(getOpeningBlueprintQualityIssues(blueprint, state)).not.toContain(
+      '梁志强.roleProfiles.police.peerActorIds 引用了未知人物 player'
+    );
+  });
+
+  it('strictly rejects actor data returned by the second phase', () => {
+    expect(() =>
+      validateOpeningInitialization({
+        ...createInitialization(),
+        initialActors: createBlueprint().initialActors
+      })
+    ).toThrow();
+  });
+
+  it('rejects an initialization that omits the required opening economy and home', () => {
+    const invalidInitialization = createInitialization() as Record<string, unknown>;
+    delete invalidInitialization.playerStatePatch;
+
+    expect(() => validateOpeningInitialization(invalidInitialization)).toThrow(
+      'Invalid input: expected object'
+    );
+  });
+
+  it('rejects an incomplete opening economy', () => {
+    const invalidInitialization = createInitialization();
+    delete (invalidInitialization.playerStatePatch.economy as { bankBalance?: number })
+      .bankBalance;
+
+    expect(() => validateOpeningInitialization(invalidInitialization)).toThrow(
+      '开局必须生成完整经济状态'
+    );
+  });
+
+  it('rejects a placeholder opening home', () => {
+    const invalidInitialization = createInitialization();
+    invalidInitialization.playerStatePatch.homeBase.placeName = '开局待生成';
+
+    expect(() => validateOpeningInitialization(invalidInitialization)).toThrow(
+      '开局必须生成具体住所'
+    );
+  });
+
+  it('locks the actor blueprint before generating initialization and applies once', async () => {
+    const narrator = new TwoPhaseNarrator();
+    const stages: string[] = [];
+    const attempts: NarratorAttemptRecord[] = [];
 
     const state = await runOpening({
       setup: createSetup(),
       narrator,
-      onNarrativeDelta: (delta) => deltas.push(delta)
-    } as Parameters<typeof runOpening>[0] & { onNarrativeDelta: (delta: string) => void });
-
-    expect(deltas.join('')).toBe('真正开局：旺角警署');
-    expect(state.storyLog[0].text).toContain('电话声和打字声');
-  });
-
-  it('keeps opening usable when a model returns historical memory kind', async () => {
-    const state = await runOpening({
-      setup: createSetup(),
-      narrator: new FakeHistoricalMemoryOpeningNarrator()
+      narrativeLengthLevel: 'compact',
+      onStageChange: (stage) => stages.push(stage),
+      onAttempt: (record) => attempts.push(record)
     });
 
-    expect(state.storyLog).toHaveLength(1);
-    expect(state.storyLog[0].text).toContain('usable opening scene');
-    const historicalMemory = Object.values(state.memories).find((memory) =>
-      memory.text.includes('Sino-British Joint Declaration')
+    expect(narrator.options).toHaveLength(2);
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization'
+    ]);
+    expect(narrator.options.every((option) => option.maxTokensOverride === 32_768)).toBe(true);
+    expect(narrator.prompts[1]).toContain(SESSION_ID);
+    expect(narrator.prompts[1]).toContain(ACTOR_ID);
+    expect(narrator.prompts[1]).toContain('旧同学的麻烦');
+    expect(narrator.prompts[1]).toContain('"cashOnHand":0');
+    expect(narrator.prompts[1]).toContain('"bankBalance":0');
+    expect(narrator.prompts[1]).toContain(
+      '{"cashOnHand":整数,"bankBalance":整数,"monthlyPressure":0到100整数'
     );
-    expect(historicalMemory?.kind).toBe('world');
+    expect(narrator.prompts[1]).toContain(
+      'playerStatePatch 每次都必须存在，并且必须同时包含完整 economy 与完整 homeBase'
+    );
+    expect(narrator.prompts[1]).toContain('"placeId": "place_player_home_稳定ID"');
+    expect(narrator.prompts[1]).toContain('"originBackgroundId"');
+    expect(narrator.prompts[1]).toContain('允许范围为 0 至 99999999999');
+    expect(narrator.prompts[1]).toContain('"id": "matter_opening_稳定ID"');
+    expect(narrator.prompts[1]).toContain('"matterKind": "police_work"');
+      expect(narrator.prompts[1]).toContain(
+        'priority 必须是 0 至 100 的整数，不能写“高/中/低”'
+      );
+      expect(narrator.prompts[1]).toContain(
+        '先在 narrativeText 中完整写出 750 个左右'
+      );
+      expect(narrator.prompts[1]).toContain('硬性下限是 600');
+      expect(narrator.prompts[1]).toContain(
+        'JSON、行动选项、记忆摘要和其他结构化字段不计入正文篇幅'
+      );
+      expect(state.storyLog).toHaveLength(1);
+    expect(state.storyLog[0].suggestedActions).toEqual([
+      '向梁志强询问今天最急的事务。',
+      '先查看昨夜交更记录。'
+    ]);
+    expect(state.actors[ACTOR_ID]).toMatchObject({
+      name: '梁志强',
+      personality: expect.stringContaining('谨慎务实'),
+      longTermMemorySummary: expect.stringContaining('刚调来旺角警署')
+    });
+    expect(stages).toContain('validating_opening_blueprint');
+    expect(stages).toContain('validating_opening_data');
+    expect(stages.at(-1)).toBe('applying_opening');
+    expect(attempts.map((record) => record.purpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization'
+    ]);
   });
 
-  it('creates an adult private profile anchor for adult female opening actors when the model omits it', async () => {
+  it('accepts a mildly short immersive opening without a second initialization request', async () => {
+    const initialization = createInitialization({
+      narrativeText: '开'.repeat(1_472),
+      money: 9_000
+    });
+    const narrator = new TwoPhaseNarrator([createBlueprint(), initialization]);
+
     const state = await runOpening({
       setup: createSetup(),
-      narrator: new FakeAdultFemaleWithoutPrivateProfileOpeningNarrator()
+      narrator,
+      narrativeLengthLevel: 'immersive'
     });
 
-    const girlfriend = Object.values(state.actors).find((actor) => actor.name === '周嘉敏');
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization'
+    ]);
+    expect(state.storyLog[0].text).toBe(initialization.narrativeText);
+    expect(state.storyLog[0].writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'narrative_length_below_minimum' })
+      ])
+    );
+    expect(state.player.economy).toMatchObject({
+      cashOnHand: 600,
+      bankBalance: 9_000
+    });
+    expect(state.player.homeBase).toMatchObject({
+      placeId: 'place_player_home_mong_kok',
+      placeName: '旺角唐楼住所'
+    });
+    expect(Object.values(state.memories).filter((memory) => memory.kind === 'turn')).toHaveLength(1);
+  });
 
-    expect(girlfriend?.femaleProfile?.addressToPlayer).toBe('阿星');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile).toMatchObject({
-      enabled: true,
-      ageConfirmedAdult: true,
+  it('accepts a mildly short structurally valid recovery after the first initialization fails schema validation', async () => {
+    const invalidInitialization = createInitialization() as Record<string, unknown>;
+    delete invalidInitialization.playerStatePatch;
+    const recoveredInitialization = createInitialization({
+      narrativeText: '复'.repeat(1_472),
+      money: 8_800
+    });
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      invalidInitialization,
+      recoveredInitialization
+    ]);
+    const attempts: NarratorAttemptRecord[] = [];
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'immersive',
+      onAttempt: (record) => attempts.push(record)
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization',
+      'opening_initialization'
+    ]);
+    expect(attempts.map((record) => record.parseStatus)).toEqual([
+      'success',
+      'schema_failed',
+      'success'
+    ]);
+    expect(state.storyLog[0].text).toBe(recoveredInitialization.narrativeText);
+    expect(state.storyLog[0].writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'narrative_length_below_minimum' })
+      ])
+    );
+    expect(state.player.economy.bankBalance).toBe(8_800);
+    expect(state.player.homeBase.placeId).toBe('place_player_home_mong_kok');
+  });
+
+  it('regenerates a severely short first opening once and clears stale action previews', async () => {
+    const shortInitialization = createInitialization({
+      narrativeText: '短'.repeat(1_200)
+    });
+    shortInitialization.suggestedActions[0].text = '首稿行动，不得残留。';
+    const completeInitialization = createInitialization({
+      narrativeText: '足'.repeat(1_800),
+      money: 7_700
+    });
+    completeInitialization.suggestedActions[0].text = '最终接受的行动。';
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      shortInitialization,
+      completeInitialization
+    ]);
+    const resets: number[] = [];
+    const previews: string[][] = [];
+    const stages: string[] = [];
+    const attempts: NarratorAttemptRecord[] = [];
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'immersive',
+      onNarrativeReset: () => resets.push(1),
+      onActionPreview: (actions) => previews.push(actions),
+      onStageChange: (stage) => stages.push(stage),
+      onAttempt: (record) => attempts.push(record)
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization',
+      'opening_initialization'
+    ]);
+    expect(narrator.prompts.at(-1)).toContain('正文篇幅合同失败后的完整重生成');
+    expect(stages).toContain('regenerating_opening_narrative');
+    expect(resets).toHaveLength(2);
+    expect(attempts.map((record) => record.parseStatus)).toEqual([
+      'success',
+      'success',
+      'success'
+    ]);
+    let retryClearIndex = -1;
+    previews.forEach((actions, index) => {
+      if (actions.length === 0) retryClearIndex = index;
+    });
+    expect(previews.slice(retryClearIndex + 1)).not.toContainEqual(
+      expect.arrayContaining(['首稿行动，不得残留。'])
+    );
+    expect(previews.slice(retryClearIndex + 1)).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining(['最终接受的行动。'])
+      ])
+    );
+    expect(state.storyLog[0].suggestedActions).toContain('最终接受的行动。');
+    expect(state.storyLog[0].suggestedActions).not.toContain('首稿行动，不得残留。');
+    expect(state.storyLog[0].rawNarratorResponse).toBe(
+      JSON.stringify(completeInitialization)
+    );
+    expect(state.storyLog[0].turnMetrics).toMatchObject({
+      inputTokens: expect.any(Number),
+      outputTokens:
+        estimateNarrativeTokens(JSON.stringify(createBlueprint())) +
+        estimateNarrativeTokens(JSON.stringify(shortInitialization)) +
+        estimateNarrativeTokens(JSON.stringify(completeInitialization)),
+      responseMs: expect.any(Number)
+    });
+    expect(state.storyLog[0].writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'narrative_length_regenerated' })
+      ])
+    );
+    expect(state.storyLog[0].writebackDiagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'narrative_length_below_minimum' })
+      ])
+    );
+  });
+
+  it('accepts one still-short regeneration and records both length diagnostics', async () => {
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      createInitialization({ narrativeText: '短'.repeat(1_200) }),
+      createInitialization({ narrativeText: '复'.repeat(1_472), money: 6_600 })
+    ]);
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'immersive'
+    });
+
+    expect(narrator.options).toHaveLength(3);
+    expect(state.storyLog[0].text).toBe('复'.repeat(1_472));
+    expect(state.storyLog[0].writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'narrative_length_regenerated' }),
+        expect.objectContaining({ code: 'narrative_length_below_minimum' })
+      ])
+    );
+    expect(state.player.economy.bankBalance).toBe(6_600);
+  });
+
+  it('does not start the second phase when a scoped blueprint field repair is still invalid', async () => {
+    const invalid = {
+      ...createBlueprint(),
+      initialActors: [
+        {
+          ...createBlueprint().initialActors[0],
+          personality: '待生成'
+        }
+      ]
+    };
+    const narrator = new TwoPhaseNarrator([
+      invalid,
+      {
+        repairs: [
+          {
+            path: 'initialActors.0.personality',
+            value: '待生成'
+          }
+        ]
+      }
+    ]);
+
+    await expect(
+      runOpening({
+        setup: createSetup(),
+        narrator,
+        narrativeLengthLevel: 'compact'
+      })
+    ).rejects.toThrow('开局人物蓝图在第 1/1 次恢复后仍失败');
+
+    expect(narrator.options).toHaveLength(2);
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_blueprint_field_repair'
+    ]);
+    expect(narrator.prompts[1]).toContain('不得重新生成整份蓝图');
+    expect(narrator.prompts[1]).toContain('initialActors.0.personality');
+    expect(narrator.prompts[1]).not.toContain('请重新返回完整 OpeningBlueprint');
+  });
+
+  it('repairs only a missing core blueprint field and preserves every other approved field', async () => {
+    const invalid = structuredClone(createBlueprint()) as {
+      initialActors: Array<Record<string, unknown>>;
+    };
+    delete invalid.initialActors[0].values;
+    const narrator = new TwoPhaseNarrator([
+      invalid,
+      {
+        repairs: [
+          {
+            path: 'initialActors.0.values',
+            value: '规矩、可靠、现场判断与同僚互相照应。'
+          }
+        ]
+      },
+      createInitialization()
+    ]);
+    const attempts: NarratorAttemptRecord[] = [];
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact',
+      onAttempt: (record) => attempts.push(record)
+    });
+
+    expect(narrator.prompts[1]).toContain('initialActors.0.values：必填字段缺失');
+    expect(narrator.prompts[1]).toContain('唯一允许修改的路径');
+    expect(narrator.prompts[1]).not.toContain('第一阶段完整重生成');
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_blueprint_field_repair',
+      'opening_initialization'
+    ]);
+    expect(attempts[0]).toMatchObject({
+      parseStatus: 'schema_failed',
+      errorMessage: expect.stringContaining('initialActors.0.values：必填字段缺失')
+    });
+    expect(state.actors[ACTOR_ID]).toMatchObject({
+      values: '规矩、可靠、现场判断与同僚互相照应。',
+      personality: createBlueprint().initialActors[0].personality,
+      currentPlaceId: PLACE_ID,
+      currentSceneId: SCENE_ID
+    });
+  });
+
+  it('normalizes deterministic local format defects without any blueprint repair request', async () => {
+    const formatOnly = structuredClone(createBlueprint()) as {
+      openingFacts: Record<string, unknown>;
+      playerPresentationPatch: Record<string, unknown>;
+      initialActors: Array<Record<string, unknown>>;
+      actionIntents: Array<Record<string, unknown>>;
+    };
+    const actor = formatOnly.initialActors[0];
+    actor.computedAge = '42';
+    actor.interactionScore = '18';
+    actor.importance = '72';
+    actor.organizationIds = 'org_hk_police';
+    actor.equipment = null;
+    actor.aliases = '强哥';
+    actor.currentIdentity = ' POLICE ';
+    actor.presence = ' PRESENT ';
+    actor.visibility = ' PLAYER_KNOWN ';
+    delete actor.currentPlaceId;
+    delete actor.currentSceneId;
+    (actor.attributes as Record<string, unknown>).thinking = '62';
+    actor.unrequestedExplanation = '模型多写的说明字段';
+    formatOnly.playerPresentationPatch.equipment = '警察委任证';
+    formatOnly.actionIntents[0].requiredFacts = '值日警长正在交代当值事项';
+
+    const narrator = new TwoPhaseNarrator([formatOnly, createInitialization()]);
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact'
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization'
+    ]);
+    expect(state.actors[ACTOR_ID]).toMatchObject({
+      computedAge: 42,
+      interactionScore: 18,
+      importance: 72,
+      organizationIds: ['org_hk_police'],
+      equipment: [],
+      currentPlaceId: PLACE_ID,
+      currentSceneId: SCENE_ID
+    });
+    expect(state.actors[ACTOR_ID].aliases).toEqual(
+      expect.arrayContaining(['强哥'])
+    );
+    expect(state.actors[ACTOR_ID].attributes.thinking).toBe(62);
+  });
+
+  it('repairs a remote actor core field without projecting that actor into the opening scene', async () => {
+    const remote = createRemoteActorBlueprintFixture({
+      sessionId: SESSION_ID,
+      presence: 'mentioned',
+      omitEquipment: true
+    });
+    delete remote.initialActors[0].motivation;
+    const narrator = new TwoPhaseNarrator([
+      remote,
+      {
+        repairs: [
+          {
+            path: 'initialActors.0.motivation',
+            value: '维持广东亲族的生计，同时避免把家事带到香港警队。'
+          }
+        ]
+      },
+      createInitialization()
+    ]);
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact'
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_blueprint_field_repair',
+      'opening_initialization'
+    ]);
+    expect(state.actors[ACTOR_ID]).toMatchObject({
+      presence: 'mentioned',
+      motivation: '维持广东亲族的生计，同时避免把家事带到香港警队。',
+      equipment: []
+    });
+    expect(state.actors[ACTOR_ID].currentPlaceId).toBeUndefined();
+    expect(state.actors[ACTOR_ID].currentSceneId).toBeUndefined();
+    expect(state.actors[ACTOR_ID].lastSeenAt).toBeUndefined();
+    expect(state.scenes[state.location.currentSceneId!]?.presentActorIds).not.toContain(
+      ACTOR_ID
+    );
+
+    const repository = new IndexedDbSaveRepository(
+      `cop-v2-opening-repair-${Date.now()}-${Math.random()}`
+    );
+    await repository.save({
+      saveId: 'save_opening_repair',
+      saveName: '开局字段修复读取验收',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-28T00:00:00.000Z',
+      playerName: state.player.name,
+      worldpackId: state.world.worldpackId,
+      gameDateLabel: '1984-12-27 08:30',
+      turnCounter: state.turnCounter,
+      runtimeState: state
+    });
+    const loaded = await repository.load('save_opening_repair');
+    expect(loaded?.runtimeState.actors[ACTOR_ID]).toMatchObject({
+      presence: 'mentioned',
+      motivation: '维持广东亲族的生计，同时避免把家事带到香港警队。',
+      equipment: []
+    });
+    expect(loaded?.runtimeState.actors[ACTOR_ID].currentPlaceId).toBeUndefined();
+    expect(
+      loaded?.runtimeState.scenes[loaded.runtimeState.location.currentSceneId!]
+        ?.presentActorIds
+    ).not.toContain(ACTOR_ID);
+  });
+
+  it('rejects an out-of-scope blueprint repair atomically instead of accepting collateral edits', async () => {
+    const invalid = structuredClone(createBlueprint()) as {
+      initialActors: Array<Record<string, unknown>>;
+    };
+    delete invalid.initialActors[0].values;
+    const initialState = createInitialRuntimeState(createSetup());
+    const initialSnapshot = structuredClone(initialState);
+    const narrator = new TwoPhaseNarrator([
+      invalid,
+      {
+        repairs: [
+          {
+            path: 'initialActors.0.name',
+            value: '被越权修改的人名'
+          }
+        ]
+      }
+    ]);
+
+    await expect(
+      runOpening({
+        initialState,
+        narrator,
+        narrativeLengthLevel: 'compact'
+      })
+    ).rejects.toThrow('蓝图字段修复试图修改未授权路径');
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_blueprint_field_repair'
+    ]);
+    expect(initialState).toEqual(initialSnapshot);
+  });
+
+  it.each([
+    {
+      name: 'missing equipment and remote locations',
+      blueprint: createRemoteActorBlueprintFixture({
+        sessionId: SESSION_ID,
+        presence: 'absent',
+        omitEquipment: true
+      })
+    },
+    {
+      name: 'explicit empty equipment and mentioned location omission',
+      blueprint: createRemoteActorBlueprintFixture({
+        sessionId: SESSION_ID,
+        presence: 'mentioned',
+        omitEquipment: false
+      })
+    }
+  ])('accepts the minimized player blueprint shape with $name without a blueprint retry', async ({ blueprint }) => {
+    const narrator = new TwoPhaseNarrator([blueprint, createInitialization()]);
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact'
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization'
+    ]);
+    expect(state.actors[ACTOR_ID].equipment).toEqual(blueprint.initialActors[0].equipment ?? []);
+    expect(state.actors[ACTOR_ID].currentPlaceId).toBeUndefined();
+    expect(state.actors[ACTOR_ID].currentSceneId).toBeUndefined();
+    expect(state.actors[ACTOR_ID].lastSeenAt).toBeUndefined();
+    expect(state.actors[ACTOR_ID].lastSeenPlaceId).toBeUndefined();
+    expect(state.scenes[state.location.currentSceneId!]?.presentActorIds).not.toContain(ACTOR_ID);
+  });
+
+  it('retries only initialization after length truncation and preserves the approved blueprint', async () => {
+    const narrator = new TruncatedInitializationNarrator([
+      createBlueprint(),
+      createInitialization()
+    ]);
+    const resets: number[] = [];
+    const previews: string[][] = [];
+    const attempts: NarratorAttemptRecord[] = [];
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact',
+      onNarrativeReset: () => resets.push(1),
+      onActionPreview: (actions) => previews.push(actions),
+      onAttempt: (record) => attempts.push(record)
+    });
+
+    expect(
+      narrator.options.filter((option) => option.requestPurpose === 'opening_blueprint')
+    ).toHaveLength(1);
+    expect(narrator.options.at(-1)?.requestPurpose).toBe('opening_compact_retry');
+    expect(narrator.prompts.at(-1)).toContain('finish_reason=length');
+    expect(state.actors[ACTOR_ID].personality).toContain('谨慎务实');
+    expect(resets).toHaveLength(2);
+    expect(previews).toContainEqual([]);
+    expect(attempts.map((record) => record.finishReason)).toEqual(['stop', 'length', 'stop']);
+  });
+
+  it('retries an initialization that omits core state and applies the complete retry', async () => {
+    const incompleteInitialization = createInitialization() as Record<string, unknown>;
+    delete incompleteInitialization.playerStatePatch;
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      incompleteInitialization,
+      createInitialization({ money: 9_000 })
+    ]);
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact'
+    });
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization',
+      'opening_initialization'
+    ]);
+    expect(narrator.prompts.at(-1)).toContain(
+      '禁止为了通过重试而降级成只有正文、行动和记忆的最小对象'
+    );
+    expect(state.player.economy).toMatchObject({
+      cashOnHand: 600,
+      bankBalance: 9_000,
+      monthlyPressure: 35
+    });
+    expect(state.player.homeBase).toMatchObject({
+      placeId: 'place_player_home_mong_kok',
+      placeName: '旺角唐楼住所'
+    });
+  });
+
+  it('rejects second-phase actor references that are not in state or the locked blueprint', async () => {
+    const invalidInitialization = createInitialization();
+    invalidInitialization.memories[0].relatedActorIds.push('actor_unknown');
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      invalidInitialization,
+      invalidInitialization
+    ]);
+    const initialState = createInitialRuntimeState(createSetup());
+    const stateBeforeOpening = structuredClone(initialState);
+
+    await expect(
+      runOpening({
+        initialState,
+        narrator,
+        narrativeLengthLevel: 'compact'
+      })
+    ).rejects.toThrow('开局正文与运行状态在第 1/1 次恢复后仍失败');
+
+    expect(narrator.options.map((option) => option.requestPurpose)).toEqual([
+      'opening_blueprint',
+      'opening_initialization',
+      'opening_initialization'
+    ]);
+    expect(initialState).toEqual(stateBeforeOpening);
+    expect(initialState.turnCounter).toBe(0);
+    expect(initialState.storyLog).toEqual(stateBeforeOpening.storyLog);
+    expect(initialState.player.economy).toEqual(stateBeforeOpening.player.economy);
+    expect(initialState.player.homeBase).toEqual(stateBeforeOpening.player.homeBase);
+  });
+
+  it('keeps a fifty-billion opening balance exact without affecting the local police salary source', async () => {
+    const narrator = new TwoPhaseNarrator([
+      createBlueprint(),
+      createInitialization({ money: 50_000_000_000 })
+    ]);
+
+    const state = await runOpening({
+      setup: createSetup(),
+      narrator,
+      narrativeLengthLevel: 'compact'
+    });
+
+    expect(state.player.economy.bankBalance).toBe(50_000_000_000);
+    expect(state.finance.bankBalance).toBe(50_000_000_000);
+    expect(
+      Object.values(state.finance.cashflows).find((cashflow) => cashflow.title === '警队月薪')
+    ).toMatchObject({
       source: 'opening',
-      profileStatus: 'ready',
-      womb: {
-        status: '未受孕',
-        cervixStatus: '紧闭',
-        records: []
-      }
+      status: 'active'
     });
-    const privateProfileText = JSON.stringify(girlfriend?.femaleProfile?.adultPrivateProfile);
-    expect(privateProfileText).not.toContain('待补全');
-    expect(privateProfileText).not.toContain('pending');
-    expect(privateProfileText).not.toContain('暂无记录');
-    expect(privateProfileText).not.toContain('视觉锚点');
-    expect(privateProfileText).not.toContain('锚点已建立');
-    expect(privateProfileText).not.toContain('依据成年女性档案');
-    expect(privateProfileText).not.toContain('保持一致');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).toMatch(/乳房|乳头|乳晕|乳尖/);
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).not.toContain('周嘉敏');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).not.toContain('眉眼弯弯');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.小穴?.description).toMatch(/阴唇|阴蒂|穴口|阴道/);
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.小穴?.description).not.toContain('周嘉敏');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.屁穴?.description).toMatch(/屁穴|肛|后庭|臀缝/);
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.partProfiles?.屁穴?.description).not.toContain('周嘉敏');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.fetishNotes).toMatch(/欲望|挑逗|支配|掌控|羞耻|性/);
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.fetishNotes).not.toContain('信任');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.sensitivePoints).not.toContain('关系');
-    expect(girlfriend?.femaleProfile?.adultPrivateProfile?.updatedAt).toEqual(state.time);
   });
 
-  it('applies opening case, evidence asset, submitted evidence, and deferred event writebacks', async () => {
-    const state = await runOpening({
+  it('puts the current identity relation contract before the blueprint JSON schema', async () => {
+    const narrator = new TwoPhaseNarrator();
+    await runOpening({
       setup: createSetup(),
-      narrator: new FakeCaseOpeningNarrator()
+      narrator,
+      narrativeLengthLevel: 'compact'
     });
 
-    expect(state.cases.case_mk_nightclub_assault).toMatchObject({
-      title: 'Mong Kok Nightclub Assault',
-      playerRole: 'assist',
-      status: 'investigating'
+    const prompt = narrator.prompts[0];
+    expect(prompt).toContain('当前玩家稳定 actorId：player');
+    expect(prompt).toContain('当前玩家公开身份：police');
+    expect(prompt).toContain(
+      '必须至少生成一名 playerRoleRelation="police_supervisor" 或 "police_peer"'
+    );
+    expect(prompt).toContain('"playerRoleRelation": "police_peer"');
+    expect(prompt).toContain(
+      '不承担这六类合同的其他人物必须省略整个 playerRoleRelation 字段'
+    );
+    expect(prompt).toContain('绝对不要输出 null');
+    expect(prompt).toContain(
+      '非警察玩家必须省略 playerPresentationPatch.policeNumber'
+    );
+    expect(prompt.indexOf('本次身份合同')).toBeLessThan(
+      prompt.indexOf('输出结构必须严格为')
+    );
+  });
+
+  it('requires a civilian livelihood matter to reference the locked work-relation actor', () => {
+    const blueprint = validateOpeningBlueprint(createBlueprint());
+    blueprint.initialActors[0].playerRoleRelation = 'civilian_work_relation';
+
+    const prompt = composeOpeningInitializationPrompt(blueprint, 'compact', {
+      playerActorId: 'player',
+      currentIdentity: 'civilian',
+      initialEconomy: {
+        cashOnHand: 8_000,
+        bankBalance: 50_000_000_000,
+        monthlyPressure: 12,
+        financeSummary: '个人存款充足。'
+      },
+      originBackground: {
+        originBackgroundId: 'old_school_ties',
+        name: '旧校人脉',
+        definition: '在本区读书成长。',
+        backgroundSummary: '熟悉本区街坊与旧同学。'
+      },
+      initialActorIds: ['player'],
+      initialOrganizationIds: ['org_opening_employer']
     });
-    expect(state.assets.items.asset_mk_statement_001).toMatchObject({
-      category: 'document',
-      evidence: {
-        caseId: 'case_mk_nightclub_assault'
+
+    expect(prompt).toContain('"source": "opening_livelihood"');
+    expect(prompt).toContain('"matterKind": "livelihood"');
+    expect(prompt).toContain(`"relatedActorIds": ["${ACTOR_ID}"]`);
+    expect(prompt).toContain(
+      `有正式职业关系时优先关联职业人物，否则可关联第一阶段稳定社会关系人物：["${ACTOR_ID}"]`
+    );
+  });
+
+  it('accepts a registered dramatic opening plan and a trace backed by a real opening writeback', () => {
+    const blueprint = validateOpeningBlueprint(createBlueprint());
+    const initialization = validateOpeningInitialization(createInitialization());
+    const sourceRef = {
+      providerId: 'opening-registry',
+      sourceType: 'dramatic_opening_definition',
+      sourceId: 'on_duty_scene'
+    };
+    const planResult = validateOpeningDramaPlan({
+      openingId: 'on_duty_scene',
+      rawPlan: {
+        planId: 'drama_plan_opening_on_duty_scene',
+        planningScope: 'opening',
+        mode: 'surface',
+        primarySource: sourceRef,
+        supportSources: [],
+        sceneFunction: 'choice',
+        intensity: 'medium',
+        playerMayIgnore: true,
+        maxNewActors: 1,
+        reasonSummary: '以当值现场建立第一幕，但不替玩家处理完毕。'
       }
     });
-    expect(state.caseEvidence.evidence_scene_record_001).toMatchObject({
-      caseId: 'case_mk_nightclub_assault',
-      evidenceType: 'scene_record'
+
+    expect(planResult.diagnostics).toEqual([]);
+    expect(collectOpeningDramaWritebackRefs(blueprint, initialization)).toContainEqual({
+      kind: 'actor',
+      id: ACTOR_ID
     });
-    expect(state.cases.case_mk_nightclub_assault.evidenceIds).toContain('evidence_scene_record_001');
-    expect(state.deferredEvents.deferred_case_followup_001).toMatchObject({
-      sourceModule: 'case',
-      status: 'pending'
+
+    const traceResult = validateOpeningDramaExecutionTrace({
+      rawTrace: {
+        planId: 'drama_plan_opening_on_duty_scene',
+        status: 'used_persistently',
+        usedSourceRefs: [sourceRef],
+        resultingWritebackRefs: [{ kind: 'actor', id: ACTOR_ID }]
+      },
+      plan: planResult.plan,
+      blueprint,
+      initialization
     });
+
+    expect(traceResult.diagnostics).toEqual([]);
+    expect(traceResult.trace?.status).toBe('used_persistently');
+  });
+
+  it('allows exactly the one player-authorized custom support source in an opening plan', () => {
+    const sourceRef = {
+      providerId: 'opening-registry',
+      sourceType: 'dramatic_opening_definition',
+      sourceId: 'on_duty_scene'
+    };
+    const customSupportRef = {
+      providerId: 'custom-event-group',
+      sourceType: 'custom_event_group_instance',
+      sourceId: 'event-instance:binding:event_group:event-seal:1:checksum'
+    };
+    const accepted = validateOpeningDramaPlan({
+      openingId: 'on_duty_scene',
+      allowedSupportSourceRef: customSupportRef,
+      rawPlan: {
+        planId: 'drama_plan_opening_on_duty_scene',
+        planningScope: 'opening',
+        mode: 'surface',
+        primarySource: sourceRef,
+        supportSources: [customSupportRef],
+        sceneFunction: 'choice',
+        intensity: 'medium',
+        playerMayIgnore: true,
+        maxNewActors: 4,
+        reasonSummary: '在当前开局结构下提供一个可拒绝的自定义事件入口。'
+      }
+    });
+    expect(accepted.diagnostics).toEqual([]);
+
+    const unauthorized = validateOpeningDramaPlan({
+      openingId: 'on_duty_scene',
+      allowedSupportSourceRef: customSupportRef,
+      rawPlan: {
+        ...accepted.plan,
+        supportSources: [
+          {
+            providerId: 'storypack',
+            sourceType: 'drama_motif_card',
+            sourceId: 'invented-support'
+          }
+        ]
+      }
+    });
+    expect(unauthorized.plan).toBeUndefined();
+    expect(unauthorized.diagnostics[0]?.message).toContain(
+      '不是玩家选择并通过适配'
+    );
+  });
+
+  it('ignores invalid opening drama metadata without invalidating the legal opening payload', () => {
+    const blueprint = validateOpeningBlueprint(createBlueprint());
+    const initialization = validateOpeningInitialization(createInitialization());
+    const planResult = validateOpeningDramaPlan({
+      openingId: 'on_duty_scene',
+      rawPlan: {
+        planId: 'wrong_plan',
+        planningScope: 'opening',
+        mode: 'surface',
+        primarySource: {
+          providerId: 'invented',
+          sourceType: 'dramatic_opening_definition',
+          sourceId: 'missing'
+        },
+        supportSources: [],
+        sceneFunction: 'choice',
+        intensity: 'medium',
+        playerMayIgnore: true,
+        maxNewActors: 1,
+        reasonSummary: '错误引用。'
+      }
+    });
+
+    expect(planResult.plan).toBeUndefined();
+    expect(planResult.diagnostics[0]?.code).toBe('plan_source_missing');
+
+    const traceResult = validateOpeningDramaExecutionTrace({
+      rawTrace: {
+        planId: 'wrong_plan',
+        status: 'used_persistently',
+        usedSourceRefs: [],
+        resultingWritebackRefs: [{ kind: 'actor', id: 'actor_missing' }]
+      },
+      plan: planResult.plan,
+      blueprint,
+      initialization
+    });
+
+    expect(traceResult.trace).toBeUndefined();
+    expect(traceResult.diagnostics[0]?.code).toBe('execution_trace_plan_mismatch');
+    expect(initialization.narrativeText.length).toBeGreaterThan(0);
+    expect(blueprint.initialActors).toHaveLength(1);
   });
 });

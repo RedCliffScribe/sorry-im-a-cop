@@ -7,6 +7,7 @@ function createOrganization(overrides: Partial<Organization> & Pick<Organization
   return {
     organizationId: overrides.organizationId,
     name: overrides.name,
+    aliases: overrides.aliases,
     type: overrides.type ?? 'business',
     summary: overrides.summary ?? `${overrides.name} summary.`,
     publicKnowledge: overrides.publicKnowledge ?? `${overrides.name} public knowledge.`,
@@ -46,6 +47,7 @@ describe('institution context projector', () => {
           org_media_house: createOrganization({
             organizationId: 'org_media_house',
             name: '明报报馆',
+            aliases: ['明报'],
             type: 'media'
           })
         }
@@ -58,7 +60,8 @@ describe('institution context projector', () => {
     const projected = projection.organizations.find((organization) => organization.organizationId === 'org_media_house');
     expect(projected).toMatchObject({
       organizationId: 'org_media_house',
-      name: '明报报馆'
+      name: '明报报馆',
+      aliases: ['明报']
     });
     expect(projected?.reasons).toContain('current_place');
   });

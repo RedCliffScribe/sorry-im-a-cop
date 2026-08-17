@@ -182,6 +182,38 @@ describe('CaseArchiveModal', () => {
     expect(within(dialog).getByRole('button', { name: '申请归档' })).toBeInTheDocument();
   });
 
+  it('shows the current player name as lead for legacy lead cases with missing owner fields', () => {
+    const state = createState();
+    state.actors[state.player.actorId].name = '陈厚生';
+    state.cases.case_bar_assault.playerRole = 'lead';
+    state.cases.case_bar_assault.leadActorId = undefined;
+    state.cases.case_bar_assault.leadActorName = undefined;
+
+    render(<CaseArchiveModal state={state} onClose={vi.fn()} onStateChange={vi.fn()} />);
+
+    const owner = screen.getByRole('heading', { name: '主办者' }).closest('section');
+    expect(owner).toHaveTextContent('陈厚生');
+    expect(owner).not.toHaveTextContent('未明确');
+  });
+
+  it('resolves a lead actor id through the actor archive instead of showing a stale snapshot name', () => {
+    const state = createState();
+    state.actors.actor_lau = createActorDefaults({
+      actorId: 'actor_lau',
+      name: '刘启（现用姓名）',
+      currentIdentity: 'police',
+      publicIdentity: '便衣探员'
+    });
+    state.cases.case_bar_assault.leadActorId = 'actor_lau';
+    state.cases.case_bar_assault.leadActorName = '刘启（旧记录）';
+
+    render(<CaseArchiveModal state={state} onClose={vi.fn()} onStateChange={vi.fn()} />);
+
+    const owner = screen.getByRole('heading', { name: '主办者' }).closest('section');
+    expect(owner).toHaveTextContent('刘启（现用姓名）');
+    expect(owner).not.toHaveTextContent('刘启（旧记录）');
+  });
+
   it('turns lead formal actions into player action drafts without mutating the case locally', () => {
     const state = createState();
     state.cases.case_bar_assault.playerRole = 'lead';

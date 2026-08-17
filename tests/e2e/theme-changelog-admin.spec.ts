@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createInitialRuntimeState } from '../../src/domain/runtime/initialState';
+import { releaseNotes } from '../../src/app/changelog/releaseNotes';
 import { dismissDailyChangelog, installRuntimeStateSave, loadRuntimeSave } from './fixtures';
 
 const changelogStorageKey = 'sorry-im-a-cop-v2-changelog-daily-view';
@@ -35,17 +36,43 @@ const analyticsPayload = {
 };
 
 test.describe('明快主题、更新日志与运营后台', () => {
-  test('上线日志每日首次自动出现、只显示一篇并可从首页再次打开', async ({ page }) => {
+  test('最新日志每日首次自动出现、可逐条查看并从首页再次打开', async ({ page }) => {
     await page.goto('/');
     await page.evaluate((key) => localStorage.removeItem(key), changelogStorageKey);
     await page.reload();
 
     let dialog = page.getByRole('dialog', { name: '更新日志' });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: '简体中文 v1.0.0 正式上线' })).toBeVisible();
-    await expect(dialog.getByText('v1.0.0', { exact: true })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /较新一条/ })).toHaveCount(0);
-    await expect(dialog.getByRole('button', { name: '较早一条 →' })).toHaveCount(0);
+    await expect(
+      dialog.getByRole('heading', { name: releaseNotes[0].updates[0].title })
+    ).toBeVisible();
+    await expect(
+      dialog.getByText(releaseNotes[0].updates[0].time, { exact: true })
+    ).toBeVisible();
+    await expect(
+      dialog
+        .getByLabel(releaseNotes[0].updates[0].title)
+        .getByText(releaseNotes[0].updates[0].version, { exact: true })
+    ).toBeVisible();
+    await expect(
+      dialog.getByText(`1 / ${releaseNotes.length}`, { exact: true })
+    ).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /较新一条/ })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: '较早一条 →' })).toBeVisible();
+    await dialog.getByRole('button', { name: '较早一条 →' }).click();
+    await expect(
+      dialog.getByRole('heading', { name: releaseNotes[1].updates[0].title })
+    ).toBeVisible();
+    await expect(
+      dialog.getByText(`2 / ${releaseNotes.length}`, { exact: true })
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: '较早一条 →' }).click();
+    await expect(
+      dialog.getByRole('heading', { name: releaseNotes[2].updates[0].title })
+    ).toBeVisible();
+    await expect(
+      dialog.getByText(`3 / ${releaseNotes.length}`, { exact: true })
+    ).toBeVisible();
     await dialog.getByRole('button', { name: '关闭更新日志' }).click();
 
     await page.reload();
@@ -224,7 +251,7 @@ test.describe('明快主题、更新日志与运营后台', () => {
     await login.getByRole('button', { name: '进入后台' }).click();
 
     await expect(page.getByRole('heading', { name: '公开版运行统计' })).toBeVisible();
-    await expect(page.getByText('同时在线')).toBeVisible();
+    await expect(page.getByText('最近活跃', { exact: true })).toBeVisible();
     await expect(page.getByText('累计独立访客')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'IP 归属地区' })).toBeVisible();
     await expect(page.getByText('812')).toBeVisible();

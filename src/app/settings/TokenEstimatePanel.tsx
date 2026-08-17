@@ -28,6 +28,8 @@ function createOpeningEstimate(settings: AiSettings): number {
     setup: {},
     initialState,
     narrativeLengthLevel: settings.game.narrativeLengthLevel,
+    narrativePerspective: settings.game.narrativePerspective,
+    playerPortrayalMode: settings.game.playerPortrayalMode,
     promptSettings: settings.prompts
   });
   return estimateNarrativeTokens(prompt);
@@ -38,6 +40,8 @@ function createTurnEstimate(settings: AiSettings, runtimeState: RuntimeState | n
   const context = selectContext(state, samplePlayerInput);
   const prompt = composePrompt(context, samplePlayerInput, {
     narrativeLengthLevel: settings.game.narrativeLengthLevel,
+    narrativePerspective: settings.game.narrativePerspective,
+    playerPortrayalMode: settings.game.playerPortrayalMode,
     promptSettings: settings.prompts
   });
   return estimateNarrativeTokens(prompt);

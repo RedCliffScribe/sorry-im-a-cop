@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   civilianOpeningProfileOptions,
+  getAllowedPoliceDepartments,
   getAllowedPolicePostings,
   getAllowedPoliceRoles,
   getAllowedTriadTerritories,
@@ -9,10 +10,13 @@ import {
   hk1980sOpeningScenarios,
   hk1980sOriginBackgroundOptions,
   hk1980sPoliceRankKnowledge,
+  policeDepartmentOptions,
+  policeRoleOptions,
   resolveTriadOpeningProfile,
   triadRankOptions,
   triadSocietyOptions
 } from './hk1980sOpening';
+import { hk1980sPoliceOperationalUnitKnowledge } from './hk1980sPoliceOperationalUnits';
 
 describe('Hong Kong 1980s police opening data', () => {
   it('keeps branch, posting, and role as separate layers', () => {
@@ -73,6 +77,94 @@ describe('Hong Kong 1980s police opening data', () => {
     expect(uniformRoles).not.toContain('case_intake');
   });
 
+  it('offers probationary inspectors historically plausible uniform, CID, EU, and PTU openings', () => {
+    expect(getAllowedPoliceDepartments('probationary_inspector').map((department) => department.id)).toEqual([
+      'uniform',
+      'cid',
+      'eu',
+      'ptu'
+    ]);
+    expect(getAllowedPoliceRoles('uniform', 'probationary_inspector').map((role) => role.id)).toEqual([
+      'patrol_sub_unit_commander'
+    ]);
+    expect(getAllowedPoliceRoles('cid', 'probationary_inspector').map((role) => role.id)).toEqual(
+      expect.arrayContaining(['team_investigator', 'serious_crime_member'])
+    );
+    expect(getAllowedPoliceRoles('ptu', 'probationary_inspector').map((role) => role.id)).toEqual([
+      'platoon_commander'
+    ]);
+  });
+
+  it('registers EU as an independent department for every currently playable rank', () => {
+    const eu = policeDepartmentOptions.find((department) => department.id === 'eu');
+
+    expect(eu).toMatchObject({
+      label: 'Emergency Unit（冲锋队 EU）',
+      summary: expect.stringContaining('总区级快速反应')
+    });
+    expect(eu?.allowedRanks).toEqual([
+      'pc',
+      'spc',
+      'sergeant',
+      'station_sergeant',
+      'probationary_inspector',
+      'inspector',
+      'senior_inspector',
+      'chief_inspector'
+    ]);
+  });
+
+  it('limits EU postings to the five land-region Emergency Units', () => {
+    const euPostingIds = getAllowedPolicePostings('eu').map((posting) => posting.id);
+
+    expect(euPostingIds).toEqual([
+      'eu_hong_kong_island',
+      'eu_kowloon_east',
+      'eu_kowloon_west',
+      'eu_new_territories_north',
+      'eu_new_territories_south'
+    ]);
+    expect(euPostingIds).not.toEqual(
+      expect.arrayContaining(['mong_kok_police_station', 'wan_chai_police_station', 'cid_headquarters', 'ptu_barracks'])
+    );
+  });
+
+  it('enforces the complete EU rank-to-role matrix without cross-rank leakage', () => {
+    const roleIds = (rankId: Parameters<typeof getAllowedPoliceRoles>[1]) =>
+      getAllowedPoliceRoles('eu', rankId).map((role) => role.id);
+
+    expect(roleIds('pc')).toEqual(['eu_vehicle_crew', 'eu_vehicle_driver']);
+    expect(roleIds('spc')).toEqual(['eu_vehicle_crew', 'eu_vehicle_driver']);
+    expect(roleIds('sergeant')).toEqual(['eu_vehicle_commander']);
+    expect(roleIds('station_sergeant')).toEqual(['eu_platoon_second_in_command']);
+    expect(roleIds('probationary_inspector')).toEqual(['eu_probationary_platoon_commander']);
+    expect(roleIds('inspector')).toEqual(['eu_platoon_commander']);
+    expect(roleIds('senior_inspector')).toEqual(['eu_platoon_commander']);
+    expect(roleIds('chief_inspector')).toEqual(['eu_headquarters_operations_officer']);
+  });
+
+  it('keeps legacy ambiguous role IDs while separating their visible operational meaning', () => {
+    expect(policeRoleOptions.find((role) => role.id === 'response_officer')).toMatchObject({
+      departmentId: 'uniform',
+      label: 'Divisional Response Patrol Officer（分区应变巡逻警员）',
+      summary: expect.stringContaining('不是总区冲锋队')
+    });
+    expect(policeRoleOptions.find((role) => role.id === 'emergency_response')).toMatchObject({
+      departmentId: 'ptu',
+      label: 'Public Order Support Officer（公共秩序支援警员）',
+      summary: expect.stringContaining('不是普通999召唤的默认冲锋队车组')
+    });
+  });
+
+  it('anchors divisional uniform, EU, PTU, and CID as separate prompt institutions', () => {
+    expect(hk1980sPoliceOperationalUnitKnowledge).toContain('Emergency Unit（冲锋队 EU）是总区级快速反应军装单位');
+    expect(hk1980sPoliceOperationalUnitKnowledge).toContain('Sergeant 通常承担一辆冲锋车的车辆指挥');
+    expect(hk1980sPoliceOperationalUnitKnowledge).toContain('PTU 可以在平日补充街面警力，但不能和 EU 混称');
+    expect(hk1980sPoliceOperationalUnitKnowledge).toContain('默认由分区军装处理');
+    expect(hk1980sPoliceOperationalUnitKnowledge).toContain('“冲锋车”特指 EU');
+    expect(hk1980sPoliceOperationalUnitKnowledge).not.toContain('EU = PTU');
+  });
+
   it('offers twelve Hong Kong origin and background anchors including mainland newcomers', () => {
     expect(hk1980sOriginBackgroundOptions).toHaveLength(12);
     expect(hk1980sOriginBackgroundOptions.map((origin) => origin.name)).toContain('大陆新移民家庭');
@@ -97,6 +189,21 @@ describe('Hong Kong 1980s police opening data', () => {
 });
 
 describe('HK 1980s civilian and triad opening options', () => {
+  it('keeps the civilian occupation pool broad but deliberately grouped', () => {
+    expect(civilianOpeningProfileOptions).toHaveLength(32);
+    expect(
+      civilianOpeningProfileOptions.reduce<Record<string, number>>((counts, profile) => {
+        counts[profile.occupationGroup] = (counts[profile.occupationGroup] ?? 0) + 1;
+        return counts;
+      }, {})
+      ).toEqual({
+        frontline: 11,
+        professional: 14,
+        management: 4,
+        free: 3
+      });
+  });
+
   it('provides unemployed and custom civilian routes', () => {
     expect(civilianOpeningProfileOptions.map((profile) => profile.id)).toEqual(
       expect.arrayContaining(['unemployed', 'custom_occupation'])

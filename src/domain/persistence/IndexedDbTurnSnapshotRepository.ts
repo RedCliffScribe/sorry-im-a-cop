@@ -146,6 +146,17 @@ export class IndexedDbTurnSnapshotRepository implements TurnSnapshotRepository {
     }
   }
 
+  async clearAll(): Promise<void> {
+    const db = await this.open();
+    try {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      transaction.objectStore(STORE_NAME).clear();
+      await transactionDone(transaction);
+    } finally {
+      db.close();
+    }
+  }
+
   private async pruneSnapshots(chainId: string, maxDepth: number): Promise<void> {
     const records = await this.getAllForChain(chainId);
     const expired = records

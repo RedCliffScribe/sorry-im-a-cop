@@ -16,7 +16,10 @@ interface RelationshipThreadPanelModalProps {
   subtitle: string;
   emptyText: string;
   onClose: () => void;
+  onDeleteThread?: (threadId: string) => void | Promise<void>;
 }
+
+type RelationshipThreadPanelFilter = 'all' | 'current' | 'history';
 
 const statusLabels: Record<RelationshipThread['status'], string> = {
   active: '活跃',
@@ -204,17 +207,53 @@ export function RelationshipThreadPanelModal({
   title,
   subtitle,
   emptyText,
-  onClose
+  onClose,
+  onDeleteThread
 }: RelationshipThreadPanelModalProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const threads = useMemo(
+  const [filter, setFilter] = useState<RelationshipThreadPanelFilter>('all');
+  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const allThreads = useMemo(
     () =>
       sortRelationshipThreadsForPanel(Object.values(state.relationshipThreads)).filter(
         (thread) => thread.kind === kind && thread.visibility !== 'hidden'
       ),
     [kind, state.relationshipThreads]
   );
+  const threads = useMemo(
+    () =>
+      allThreads.filter((thread) => {
+        if (filter === 'current') return thread.status === 'active' || thread.status === 'strained';
+        if (filter === 'history') return thread.status === 'dormant' || thread.status === 'ended';
+        return true;
+      }),
+    [allThreads, filter]
+  );
   const selectedThread = threads.find((thread) => thread.threadId === selectedThreadId) ?? threads[0];
+  const currentCount = allThreads.filter(
+    (thread) => thread.status === 'active' || thread.status === 'strained'
+  ).length;
+  const historyCount = allThreads.length - currentCount;
+  const pendingDeleteThread = allThreads.find(
+    (thread) => thread.threadId === pendingDeleteThreadId
+  );
+
+  async function confirmDelete() {
+    if (!pendingDeleteThread || !onDeleteThread || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteThread(pendingDeleteThread.threadId);
+      setPendingDeleteThreadId(null);
+      setSelectedThreadId(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '删除失败，请稍后重试。');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   return (
     <div className="character-archive-backdrop" role="presentation">
@@ -236,35 +275,76 @@ export function RelationshipThreadPanelModal({
 
         <div className="character-archive-stats" aria-label={`${title}统计`}>
           <span>
-            已知 <strong>{threads.length}</strong>
+            已知 <strong>{allThreads.length}</strong>
           </span>
           <span>
-            活跃 <strong>{threads.filter((thread) => thread.status === 'active').length}</strong>
+            当前 <strong>{currentCount}</strong>
           </span>
           <span>
-            紧张 <strong>{threads.filter((thread) => thread.status === 'strained').length}</strong>
+            过往 <strong>{historyCount}</strong>
           </span>
         </div>
 
-        {threads.length === 0 ? (
+        {allThreads.length > 0 ? (
+          <nav className="relationship-thread-filters" aria-label={`${title}筛选`}>
+            <button type="button" className={filter === 'all' ? 'active' : undefined} onClick={() => setFilter('all')}>
+              全部（{allThreads.length}）
+            </button>
+            <button
+              type="button"
+              className={filter === 'current' ? 'active' : undefined}
+              onClick={() => setFilter('current')}
+            >
+              当前（{currentCount}）
+            </button>
+            <button
+              type="button"
+              className={filter === 'history' ? 'active' : undefined}
+              onClick={() => setFilter('history')}
+            >
+              沉寂与结束（{historyCount}）
+            </button>
+          </nav>
+        ) : null}
+
+        {allThreads.length === 0 ? (
           <div className="relationship-thread-empty-state">{emptyText}</div>
+        ) : threads.length === 0 ? (
+          <div className="relationship-thread-empty-state">这个分类暂时没有记录；切换到“全部”可查看其余人脉。</div>
         ) : (
           <div className="relationship-thread-body">
             <aside className="relationship-thread-list" aria-label={`${title}列表`}>
               {threads.map((thread) => (
-                <button
+                <div
                   key={thread.threadId}
-                  type="button"
-                  className={thread.threadId === selectedThread.threadId ? 'active' : undefined}
-                  onClick={() => setSelectedThreadId(thread.threadId)}
-                  aria-current={thread.threadId === selectedThread.threadId ? 'true' : undefined}
+                  className={`relationship-thread-list-item${thread.threadId === selectedThread.threadId ? ' active' : ''}`}
                 >
-                  <strong>{thread.title}</strong>
-                  <span>
-                    {thread.relationshipRole} · {statusLabels[thread.status]}
-                  </span>
-                  <small>{thread.summary}</small>
-                </button>
+                  <button
+                    type="button"
+                    className="relationship-thread-select"
+                    onClick={() => setSelectedThreadId(thread.threadId)}
+                    aria-current={thread.threadId === selectedThread.threadId ? 'true' : undefined}
+                  >
+                    <strong>{thread.title}</strong>
+                    <span>
+                      {thread.relationshipRole} · {statusLabels[thread.status]}
+                    </span>
+                    <small>{thread.summary}</small>
+                  </button>
+                  {onDeleteThread ? (
+                    <button
+                      type="button"
+                      className="relationship-thread-delete"
+                      aria-label={`删除${title}：${thread.title}`}
+                      onClick={() => {
+                        setDeleteError(null);
+                        setPendingDeleteThreadId(thread.threadId);
+                      }}
+                    >
+                      删除
+                    </button>
+                  ) : null}
+                </div>
               ))}
             </aside>
             <section className="relationship-thread-content" aria-label={`${title}详情`}>
@@ -272,6 +352,39 @@ export function RelationshipThreadPanelModal({
             </section>
           </div>
         )}
+
+        {pendingDeleteThread ? (
+          <div className="relationship-thread-delete-confirm-backdrop" role="presentation">
+            <section
+              className="relationship-thread-delete-confirm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label={`确认删除${title}`}
+            >
+              <h3>确认永久删除？</h3>
+              <p>
+                即将从当前存档删除{title}“{pendingDeleteThread.title}”。删除后不会移除人物、过往正文或已写入记忆。
+              </p>
+              {deleteError ? <p className="relationship-thread-delete-error">{deleteError}</p> : null}
+              <div className="relationship-thread-delete-confirm-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingDeleteThreadId(null);
+                    setDeleteError(null);
+                  }}
+                  disabled={isDeleting}
+                  autoFocus
+                >
+                  取消
+                </button>
+                <button type="button" className="danger" onClick={() => void confirmDelete()} disabled={isDeleting}>
+                  {isDeleting ? '正在删除……' : '确认删除'}
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </section>
     </div>
   );

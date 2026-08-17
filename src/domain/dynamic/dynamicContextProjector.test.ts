@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { addGameHours } from '../backgroundEvolution/time';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import type { CurrentMatter, NewsIssue, RuntimeState, Signal } from '../runtime/types';
 import { projectDynamicContext } from './dynamicContextProjector';
@@ -142,6 +143,43 @@ describe('dynamic context projector', () => {
     expect(projection.diagnostics.omittedCurrentMatterCount).toBe(3);
   });
 
+  it('keeps the current public triad responsibility in a bounded prompt projection', () => {
+    const base = createInitialRuntimeState({ currentIdentity: 'gang_member' });
+    const organizationId = base.actors.player.roleProfiles.triad?.organizationId;
+    const projection = projectDynamicContext(
+      {
+        ...base,
+        dynamicEvents: {
+          ...base.dynamicEvents,
+          currentMatters: {
+            unrelated_high_priority: matter(
+              {
+                id: 'unrelated_high_priority',
+                title: '不相关高优先事项',
+                priority: 95
+              },
+              base
+            ),
+            current_triad_responsibility: matter(
+              {
+                id: 'current_triad_responsibility',
+                title: '直属上线的当前交代',
+                priority: 10,
+                source: 'triad_responsibility',
+                matterKind: 'social',
+                relatedOrganizationIds: organizationId ? [organizationId] : []
+              },
+              base
+            )
+          }
+        }
+      },
+      { maxCurrentMatters: 1 }
+    );
+
+    expect(projection.currentMatters.map((item) => item.id)).toEqual(['current_triad_responsibility']);
+  });
+
   it('prioritizes due, urgent, high-pressure and unread current matters without projecting hidden items', () => {
     const base = createInitialRuntimeState();
     const futureTime = { ...base.time, day: base.time.day + 2 };
@@ -274,6 +312,25 @@ describe('dynamic context projector', () => {
     expect(projection.diagnostics.sourceRecentResolvedMatterCount).toBe(1);
     expect(projection.diagnostics.recentResolvedMatterIds).toEqual(['matter_resolved']);
     expect(projection.diagnostics.sourceSignalCount).toBe(1);
+  });
+
+  it('does not feed locally expired wind signals back into the narrator context', () => {
+    const base = createInitialRuntimeState();
+    const expired = signal(
+      {
+        id: 'signal_expired',
+        title: '已经过去的街口风声',
+        reliability: 'unknown'
+      },
+      base
+    );
+    expired.updatedAt = addGameHours(base.time, -49);
+    base.dynamicEvents.signals[expired.id] = expired;
+
+    const projection = projectDynamicContext(base);
+
+    expect(projection.signals).toEqual([]);
+    expect(projection.diagnostics.sourceSignalCount).toBe(0);
   });
 
   it('bounds recent resolved completion facts and omits expired outcomes', () => {

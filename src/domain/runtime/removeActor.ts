@@ -115,6 +115,9 @@ export function removeActorFromRuntimeState(state: RuntimeState, actorId: ActorI
     pendingActorWritebackRecoveries: state.pendingActorWritebackRecoveries.filter(
       (recovery) => recovery.actorId !== actorId
     ),
+    pendingActorProfileEnrichments: (state.pendingActorProfileEnrichments ?? []).filter(
+      (pending) => pending.actorId !== actorId
+    ),
     scenes: Object.fromEntries(
       Object.entries(state.scenes).map(([sceneId, scene]) => [
         sceneId,

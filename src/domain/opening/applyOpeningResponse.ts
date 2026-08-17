@@ -1,13 +1,30 @@
 import { applyActorFemaleProfilePatch } from '../runtime/femaleProfile';
 import { normalizePlayerReputationState } from '../reputation/reputation';
-import { syncPlayerEquipmentAssetsFromNames } from '../assets/equipmentSlots';
+import { applyEquippedAssetsToRuntimeState, syncPlayerEquipmentAssetsFromNames } from '../assets/equipmentSlots';
 import { syncHomeBaseAssetAndFinance } from '../assets/homeBaseAsset';
 import { applyFinancePatch } from '../finance/applyFinancePatch';
+import { syncPlayerEconomyWithFinance } from '../finance/financeState';
 import { syncPlayerPoliceSalaryCashflow } from '../finance/playerSalaryCashflow';
 import { synchronizeNpcMemoryCaches, type NpcMemoryTier } from '../memory/npcMemoryLayers';
-import { applyAssetPatch, applyCaseEvidencePatch, applyCasePatch, applyDeferredEventPatch } from '../writeback/applyWriteback';
+import { normalizeMemoryTemporalText } from '../time/memoryTemporal';
+import {
+  applyAssetPatch,
+  applyCaseEvidencePatch,
+  applyCasePatch,
+  applyCurrentMatterPatch,
+  applyDeferredEventPatch
+} from '../writeback/applyWriteback';
+import { normalizeActorAgeAt } from '../runtime/actorAge';
 import type { Actor, GrayLedgerEntry, MemoryItem, Place, PressureHook, RuntimeState, StoryTurnMetrics } from '../runtime/types';
+import { createStoryVisualContext } from '../runtime/storyVisualContext';
+import { createStoryDialogueSpeakerActorIds } from '../runtime/storyDialogueActors';
+import { buildStoryBlocks } from '../runtime/storyBlocks';
+import {
+  createVitalsConditionLifecycle,
+  inferConditionPersistence
+} from '../vitals/playerVitalsLifecycle';
 import type { OpeningNarratorResponse } from './openingSchema';
+import { withProjectedStableIdentity } from '../avgResourcePack/stableIdentity';
 
 function cloneTime(time: RuntimeState['time']): RuntimeState['time'] {
   return { ...time };
@@ -48,18 +65,19 @@ function appendOpeningActorMemory(
   time: RuntimeState['time'],
   seed: { text: string; visibility: MemoryItem['visibility']; tier: NpcMemoryTier }
 ): void {
+  const normalized = normalizeMemoryTemporalText(seed.text, time);
   const duplicate = Object.values(memories).some(
     (memory) =>
       memory.kind === 'actor' &&
       memory.relatedTurnId === 'turn_0' &&
       memory.relatedActorIds.includes(actorId) &&
-      memory.text.trim().replace(/\s+/g, ' ') === seed.text.trim().replace(/\s+/g, ' ')
+      memory.text.trim().replace(/\s+/g, ' ') === normalized.text.trim().replace(/\s+/g, ' ')
   );
   if (duplicate) return;
   const memoryId = nextAvailableId('memory', memories);
   memories[memoryId] = {
     memoryId,
-    text: seed.text,
+    text: normalized.text,
     kind: 'actor',
     tier: seed.tier,
     relatedActorIds: [actorId],
@@ -71,7 +89,8 @@ function appendOpeningActorMemory(
     importance: 50,
     visibility: seed.visibility,
     certainty: 'claim',
-    embeddingText: seed.text
+    embeddingText: normalized.text,
+    temporalReferences: normalized.temporalReferences.length > 0 ? normalized.temporalReferences : undefined
   };
 }
 
@@ -105,8 +124,19 @@ function createOpeningActor(
   existingActors: Record<string, Actor>
 ): Actor {
   const actorId = seed.actorId && !(seed.actorId in existingActors) ? seed.actorId : nextAvailableId('actor_opening', existingActors);
-  const currentPlaceId = seed.currentPlaceId ?? state.location.currentPlaceId;
-  const currentSceneId = seed.currentSceneId ?? state.location.currentSceneId;
+  const isProjected = seed.presence === 'present' || seed.presence === 'nearby';
+  const currentPlaceId = isProjected
+    ? seed.currentPlaceId ?? state.location.currentPlaceId
+    : seed.currentPlaceId;
+  const currentSceneId = isProjected
+    ? seed.currentSceneId ?? state.location.currentSceneId
+    : seed.currentSceneId;
+  const lastSeen = currentPlaceId
+    ? {
+        lastSeenAt: cloneTime(state.time),
+        lastSeenPlaceId: currentPlaceId
+      }
+    : {};
 
   const actor: Actor = {
     actorId,
@@ -128,12 +158,11 @@ function createOpeningActor(
     currentPlaceId,
     currentSceneId,
     presence: seed.presence,
-    lastSeenAt: cloneTime(state.time),
-    lastSeenPlaceId: currentPlaceId,
+    ...lastSeen,
     profileSummary: seed.profileSummary,
     appearance: seed.appearance,
     clothing: seed.clothing,
-    equipment: [...seed.equipment],
+    equipment: [...(seed.equipment ?? [])],
     personality: seed.personality,
     speechStyle: seed.speechStyle,
     motivation: seed.motivation,
@@ -160,7 +189,22 @@ function createOpeningActor(
     worldpackActorData: { ...seed.worldpackActorData }
   };
 
-  return applyActorFemaleProfilePatch(actor, seed.femaleProfile, state.time, 'opening');
+  const openingFemaleProfile = seed.femaleProfile
+    ? {
+        ...seed.femaleProfile,
+        adultPrivateProfile: undefined
+      }
+    : undefined;
+
+  return applyActorFemaleProfilePatch(
+    normalizeActorAgeAt(
+      withProjectedStableIdentity(actor, state.world.worldpackId),
+      state.time
+    ),
+    openingFemaleProfile,
+    state.time,
+    'opening'
+  );
 }
 
 export function applyOpeningNarratorResponse(
@@ -201,11 +245,22 @@ export function applyOpeningNarratorResponse(
     playerActor.equipment = [...response.playerPatch.equipment];
   }
   if (response.playerPatch.vitals) {
-    player.vitals = { ...response.playerPatch.vitals };
-    playerActor.vitals = { ...response.playerPatch.vitals };
+    const { conditionPersistence, ...openingVitals } = response.playerPatch.vitals;
+    const vitals = {
+      ...openingVitals,
+      conditionLifecycle: createVitalsConditionLifecycle(
+        conditionPersistence ?? inferConditionPersistence(openingVitals),
+        state.time
+      )
+    };
+    player.vitals = vitals;
+    playerActor.vitals = { ...vitals, conditionLifecycle: { ...vitals.conditionLifecycle } };
   }
   if (response.playerPatch.economy) {
-    player.economy = { ...response.playerPatch.economy };
+    player.economy = {
+      ...player.economy,
+      ...response.playerPatch.economy
+    };
   }
   if (response.playerPatch.reputation || response.playerPatch.reputationByCircle) {
     player.reputation = normalizePlayerReputationState(
@@ -244,6 +299,14 @@ export function applyOpeningNarratorResponse(
     actorId: string;
     memory: { text: string; visibility: MemoryItem['visibility']; tier: NpcMemoryTier };
   }> = [];
+  const openingRoleLinks = {
+    policeSupervisors: [] as string[],
+    policePeers: [] as string[],
+    triadPatrons: [] as string[],
+    triadPeers: [] as string[],
+    civilianWorkRelations: [] as string[]
+  };
+  const openingActorIdAliases = new Map<string, string>();
 
   if (response.playerPatch.homeBase && !(response.playerPatch.homeBase.placeId in places)) {
     places[response.playerPatch.homeBase.placeId] = createHomePlace(response.playerPatch.homeBase);
@@ -252,6 +315,14 @@ export function applyOpeningNarratorResponse(
   for (const seed of response.initialActors) {
     const actor = createOpeningActor(state, seed, actors);
     actors[actor.actorId] = actor;
+    if (seed.actorId) openingActorIdAliases.set(seed.actorId, actor.actorId);
+    if (seed.playerRoleRelation === 'police_supervisor') openingRoleLinks.policeSupervisors.push(actor.actorId);
+    if (seed.playerRoleRelation === 'police_peer') openingRoleLinks.policePeers.push(actor.actorId);
+    if (seed.playerRoleRelation === 'triad_patron') openingRoleLinks.triadPatrons.push(actor.actorId);
+    if (seed.playerRoleRelation === 'triad_peer') openingRoleLinks.triadPeers.push(actor.actorId);
+    if (seed.playerRoleRelation === 'civilian_work_relation') {
+      openingRoleLinks.civilianWorkRelations.push(actor.actorId);
+    }
     for (const memory of seed.keyMemories) {
       openingActorMemories.push({
         actorId: actor.actorId,
@@ -274,6 +345,75 @@ export function applyOpeningNarratorResponse(
       scenes[actor.currentSceneId].presentActorIds = unique([...scenes[actor.currentSceneId].presentActorIds, actor.actorId]);
     }
   }
+
+  const playerPoliceProfile = playerActor.roleProfiles.police;
+  const policeSupervisorActorIds = unique([
+    ...(playerPoliceProfile?.supervisorActorIds ?? []),
+    ...openingRoleLinks.policeSupervisors
+  ]);
+  const policePeerActorIds = unique([
+    ...(playerPoliceProfile?.peerActorIds ?? []),
+    ...openingRoleLinks.policePeers
+  ]);
+  if (playerPoliceProfile && (openingRoleLinks.policeSupervisors.length || openingRoleLinks.policePeers.length)) {
+    playerActor = {
+      ...playerActor,
+      roleProfiles: {
+        ...playerActor.roleProfiles,
+        police: {
+          ...playerPoliceProfile,
+          supervisorActorIds: policeSupervisorActorIds,
+          peerActorIds: policePeerActorIds
+        }
+      }
+    };
+  }
+
+  const playerTriadProfile = playerActor.roleProfiles.triad;
+  if (playerTriadProfile && (openingRoleLinks.triadPatrons.length || openingRoleLinks.triadPeers.length)) {
+    playerActor = {
+      ...playerActor,
+      roleProfiles: {
+        ...playerActor.roleProfiles,
+        triad: {
+          ...playerTriadProfile,
+          patronActorIds: unique([...playerTriadProfile.patronActorIds, ...openingRoleLinks.triadPatrons]),
+          peerActorIds: unique([...playerTriadProfile.peerActorIds, ...openingRoleLinks.triadPeers])
+        }
+      }
+    };
+  }
+  const playerCivilianProfile = playerActor.roleProfiles.civilian;
+  if (playerCivilianProfile && openingRoleLinks.civilianWorkRelations.length) {
+    playerActor = {
+      ...playerActor,
+      roleProfiles: {
+        ...playerActor.roleProfiles,
+        civilian: {
+          ...playerCivilianProfile,
+          sectorIds: [...(playerCivilianProfile.sectorIds ?? [])],
+          roleTags: [...(playerCivilianProfile.roleTags ?? [])],
+          livelihoodActorIds: unique([
+            ...(playerCivilianProfile.livelihoodActorIds ?? []),
+            ...openingRoleLinks.civilianWorkRelations
+          ])
+        }
+      }
+    };
+  }
+  actors[player.actorId] = playerActor;
+
+  const lawIdentity =
+    playerPoliceProfile && (openingRoleLinks.policeSupervisors.length || openingRoleLinks.policePeers.length)
+      ? {
+          ...state.lawIdentity,
+          supervisorActorIds: unique([
+            ...state.lawIdentity.supervisorActorIds,
+            ...openingRoleLinks.policeSupervisors
+          ]),
+          peerActorIds: unique([...state.lawIdentity.peerActorIds, ...openingRoleLinks.policePeers])
+        }
+      : state.lawIdentity;
 
   const memories = { ...state.memories };
   for (const { actorId, memory } of openingActorMemories) {
@@ -368,18 +508,41 @@ export function applyOpeningNarratorResponse(
   const cases: RuntimeState['cases'] = { ...state.cases };
   const caseEvidence: RuntimeState['caseEvidence'] = { ...state.caseEvidence };
   const deferredEvents: RuntimeState['deferredEvents'] = { ...state.deferredEvents };
+  const currentMatters: RuntimeState['dynamicEvents']['currentMatters'] = {
+    ...state.dynamicEvents.currentMatters
+  };
   let assets = applyAssetPatch(state.assets, response.assetPatch);
   let finance = applyFinancePatch(
     state.finance,
     response.playerPatch.economy
       ? {
-          cashSet: response.playerPatch.economy.cashOnHand,
-          bankSet: response.playerPatch.economy.bankBalance,
-          summary: response.playerPatch.economy.financeSummary
+          ...(response.playerPatch.economy.cashOnHand !== undefined
+            ? { cashSet: response.playerPatch.economy.cashOnHand }
+            : {}),
+          ...(response.playerPatch.economy.bankBalance !== undefined
+            ? { bankSet: response.playerPatch.economy.bankBalance }
+            : {}),
+          ...(response.playerPatch.economy.financeSummary !== undefined
+            ? { summary: response.playerPatch.economy.financeSummary }
+            : {})
         }
       : undefined,
     state.time
   );
+  const openingCashflows = (response.financePatch?.upsertCashflows ?? [])
+    .filter((item) => !item.identityBinding || item.identityBinding === player.currentIdentity)
+    .filter((item) => !(
+      player.currentIdentity === 'police' &&
+      item.direction === 'income' &&
+      item.kind === 'salary' &&
+      (item.identityBinding ?? player.currentIdentity) === 'police'
+    ))
+    .map((item) => ({
+      ...item,
+      identityBinding: item.identityBinding ?? player.currentIdentity,
+      source: 'opening' as const
+    }));
+  finance = applyFinancePatch(finance, { upsertCashflows: openingCashflows }, state.time);
   ({ assets, finance } = syncHomeBaseAssetAndFinance({
     assets,
     finance,
@@ -391,8 +554,10 @@ export function applyOpeningNarratorResponse(
     finance,
     time: state.time,
     currentIdentity: player.currentIdentity,
-    lawIdentity: state.lawIdentity
+    lawIdentity: state.lawIdentity,
+    identityHistory: player.identityHistory
   });
+  player = syncPlayerEconomyWithFinance(player, finance);
 
   for (const patch of response.casePatches) {
     cases[patch.caseId] = applyCasePatch(cases[patch.caseId], patch, 'turn_0', state.time);
@@ -417,16 +582,42 @@ export function applyOpeningNarratorResponse(
     }
   }
 
+  for (const patch of response.currentMatterPatches) {
+    const remappedPatch = {
+      ...patch,
+      relatedActorIds: patch.relatedActorIds?.map(
+        (actorId) => openingActorIdAliases.get(actorId) ?? actorId
+      )
+    };
+    currentMatters[patch.id] = applyCurrentMatterPatch(
+      currentMatters[patch.id],
+      remappedPatch,
+      state.time
+    );
+  }
+
+  const dialogueSpeakerActorIds = createStoryDialogueSpeakerActorIds(response.narrativeText, actors);
+  const storyBlocks = buildStoryBlocks(response.narrativeText, {
+    dialogueSpeakerActorIds,
+    playerActorId: player.actorId,
+    presentationHints: response.presentationHints
+  });
+
   const nextState: RuntimeState = {
     ...state,
     player,
     actors,
+    lawIdentity,
     secretFacts,
     scenes,
     places,
     cases,
     caseEvidence,
     deferredEvents,
+    dynamicEvents: {
+      ...state.dynamicEvents,
+      currentMatters
+    },
     assets,
     finance,
     memories,
@@ -437,9 +628,18 @@ export function applyOpeningNarratorResponse(
         turnId: 'turn_0',
         speaker: 'narrator',
         text: response.narrativeText,
+        dialogueSpeakerActorIds,
+        blocks: storyBlocks,
         ...(openingTurnSummary ? { summaryText: openingTurnSummary } : {}),
         suggestedActions: response.suggestedActions,
         gameTime: cloneTime(state.time),
+        visualContext: createStoryVisualContext({
+          time: state.time,
+          environment: state.environment,
+          location: state.location,
+          places,
+          scenes
+        }),
         ...(response.validationWarnings?.length ? { writebackDiagnostics: response.validationWarnings } : {}),
         ...(meta.rawNarratorResponse ? { rawNarratorResponse: meta.rawNarratorResponse } : {}),
         ...(meta.turnMetrics ? { turnMetrics: meta.turnMetrics } : {})
@@ -447,5 +647,9 @@ export function applyOpeningNarratorResponse(
     ],
     turnCounter: 0
   };
-  return synchronizeNpcMemoryCaches(syncPlayerEquipmentAssetsFromNames(nextState, nextState.player.equipment));
+  const equipmentSynchronizedState =
+    response.assetPatch?.equippedItemIds !== undefined
+      ? applyEquippedAssetsToRuntimeState(nextState)
+      : syncPlayerEquipmentAssetsFromNames(nextState, nextState.player.equipment);
+  return synchronizeNpcMemoryCaches(equipmentSynchronizedState);
 }

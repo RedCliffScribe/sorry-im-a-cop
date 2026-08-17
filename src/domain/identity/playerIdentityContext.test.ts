@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PLAYER_CIVILIAN_PRIMARY_INCOME_ID } from '../finance/playerCivilianIncomeCashflow';
 import { PLAYER_POLICE_SALARY_CASHFLOW_ID } from '../finance/playerSalaryCashflow';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import type { PlayerIdentityContextPatch } from './playerIdentityContext';
@@ -46,23 +47,10 @@ function triadTarget(): PlayerIdentityContextPatch['targetRoleProfile'] {
 
 describe('player identity context', () => {
   it('atomically joins the police and synchronizes route, actor, profile, relation, panel, salary and history', () => {
-    const state = createInitialRuntimeState({ currentIdentity: 'civilian' });
-    state.finance.cashflows.cashflow_civilian_job = {
-      itemId: 'cashflow_civilian_job',
-      direction: 'income',
-      kind: 'salary',
-      title: '茶餐厅月薪',
-      amount: 1800,
-      account: 'bank',
-      summary: '在社区茶餐厅工作的固定月薪。',
-      activeFromMonth: '1984-12',
-      relatedAssetItemIds: [],
-      relatedActorIds: ['player'],
-      relatedPlaceIds: [],
-      source: 'opening',
-      status: 'active',
-      visibility: 'player_known'
-    };
+    const state = createInitialRuntimeState({
+      currentIdentity: 'civilian',
+      civilianProfileId: 'bank_employee'
+    });
     const result = applyPlayerIdentityContextPatch(state, {
       transitionId: 'transition_join_police_1',
       kind: 'join',
@@ -83,13 +71,19 @@ describe('player identity context', () => {
     expect(result.state.actors.player.roleProfiles.police?.status).toBe('active');
     expect(result.state.actors.player.roleProfiles.civilian?.status).toBe('suspended');
     expect(result.state.actors.player.organizationIds).toEqual(['org_hk_police']);
+    expect(
+      result.state.actors.player.organizationRelations.find((relation) => relation.organizationId === 'org_hsbc')
+    ).toMatchObject({ visibility: 'hidden', isPrimary: false });
+    expect(
+      result.state.actors.player.organizationRelations.find((relation) => relation.organizationId === 'org_hk_police')
+    ).toMatchObject({ visibility: 'player_known', isPrimary: true });
     expect(result.state.lawIdentity.status).toBe('active');
     expect(result.state.policePanel.unitName).toContain('旺角警署');
     expect(result.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.status).toBe('active');
-    expect(result.state.finance.cashflows.cashflow_civilian_job).toMatchObject({
-      title: '茶餐厅月薪',
-      amount: 1800,
-      status: 'active'
+    expect(result.state.finance.cashflows[PLAYER_CIVILIAN_PRIMARY_INCOME_ID]).toMatchObject({
+      title: '银行职员月薪',
+      amount: 3200,
+      status: 'paused'
     });
     expect(result.state.player.identityHistory).toHaveLength(1);
     expect(result.state.player.identityHistory[0]?.transitionId).toBe('transition_join_police_1');
@@ -132,9 +126,60 @@ describe('player identity context', () => {
     expect(result.state.actors.player.roleProfiles.police?.status).toBe('hidden');
     expect(result.state.actors.player.roleProfiles.triad?.status).toBe('cover');
     expect(result.state.lawIdentity.status).toBe('hidden');
-    expect(result.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.status).toBe('paused');
+    expect(result.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.status).toBe('active');
     expect(result.state.secretFacts.secret_player_undercover_police_1?.publicKnown).toBe(false);
     expect(result.state.player.identityHistory[0]?.secretFactIds).toEqual(['secret_player_undercover_police_1']);
+  });
+
+  it('restores a police officer after an undercover assignment and pauses income bound to the gang cover', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    const entered = applyPlayerIdentityContextPatch(state, {
+      transitionId: 'transition_police_cover_enter_restore',
+      kind: 'cover_enter',
+      fromIdentity: 'police',
+      toIdentity: 'gang_member',
+      publicIdentity: '和胜和庙街外围跑腿',
+      actualIdentitySummary: '警队派入和胜和的卧底警员。',
+      reason: '进入庙街关系网。',
+      targetRoleProfile: triadTarget()
+    });
+    entered.state.finance.cashflows.cashflow_player_triad_cover_duty = {
+      itemId: 'cashflow_player_triad_cover_duty',
+      direction: 'income',
+      kind: 'other',
+      title: '庙街看场月例',
+      amount: 1600,
+      account: 'cash',
+      identityBinding: 'gang_member',
+      summary: '卧底公开身份下的固定当值月例。',
+      activeFromMonth: '1984-12',
+      relatedAssetItemIds: [],
+      relatedActorIds: ['player'],
+      relatedPlaceIds: [],
+      source: 'writeback',
+      status: 'active',
+      visibility: 'private'
+    };
+
+    const restored = applyPlayerIdentityContextPatch(entered.state, {
+      transitionId: 'transition_police_cover_exit_restore',
+      kind: 'cover_exit',
+      fromIdentity: 'gang_member',
+      toIdentity: 'police',
+      publicIdentity: '旺角警署军装巡逻警员',
+      reason: '卧底任务完成，归队复职。',
+      targetRoleProfile: policeTarget()
+    });
+
+    expect(restored.applied).toBe(true);
+    expect(restored.state.player.currentIdentity).toBe('police');
+    expect(restored.state.actors.player.roleProfiles.police?.status).toBe('active');
+    expect(restored.state.actors.player.roleProfiles.triad?.status).toBe('hidden');
+    expect(restored.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]).toMatchObject({
+      status: 'active',
+      identityBinding: 'police'
+    });
+    expect(restored.state.finance.cashflows.cashflow_player_triad_cover_duty.status).toBe('paused');
   });
 
   it('routes a gang operative embedded in the police through the police identity', () => {
@@ -178,6 +223,134 @@ describe('player identity context', () => {
     expect(result.state.actors.player.policeNumber).toBe('6621');
     expect(result.state.lawIdentity.status).toBe('active');
     expect(result.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.status).toBe('active');
+  });
+
+  it('restores a gang member after a police cover ends and stops the cover salary', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member' });
+    state.finance.cashflows.cashflow_player_triad_regular_duty = {
+      itemId: 'cashflow_player_triad_regular_duty',
+      direction: 'income',
+      kind: 'other',
+      title: '庙街场务月例',
+      amount: 1500,
+      account: 'cash',
+      identityBinding: 'gang_member',
+      summary: '长期场务安排的固定月例。',
+      activeFromMonth: '1984-12',
+      relatedAssetItemIds: [],
+      relatedActorIds: ['player'],
+      relatedPlaceIds: [],
+      source: 'opening',
+      status: 'active',
+      visibility: 'private'
+    };
+    const entered = applyPlayerIdentityContextPatch(state, {
+      transitionId: 'transition_gang_police_cover_enter_restore',
+      kind: 'cover_enter',
+      fromIdentity: 'gang_member',
+      toIdentity: 'police',
+      publicIdentity: '旺角警署军装巡逻警员',
+      policeNumber: '6621',
+      actualIdentitySummary: '受和胜和上线指派进入警队的社团成员。',
+      reason: '以合法警员身份进入警署。',
+      targetRoleProfile: policeTarget()
+    });
+    const restored = applyPlayerIdentityContextPatch(entered.state, {
+      transitionId: 'transition_gang_police_cover_exit_restore',
+      kind: 'cover_exit',
+      fromIdentity: 'police',
+      toIdentity: 'gang_member',
+      publicIdentity: '和胜和庙街外围跑腿',
+      reason: '警队掩护任务结束，返回原社团身份。',
+      targetRoleProfile: triadTarget()
+    });
+
+    expect(restored.applied).toBe(true);
+    expect(restored.state.player.currentIdentity).toBe('gang_member');
+    expect(restored.state.actors.player.roleProfiles.triad?.status).toBe('active');
+    expect(restored.state.actors.player.roleProfiles.police?.status).toBe('hidden');
+    expect(restored.state.finance.cashflows.cashflow_player_triad_regular_duty.status).toBe('active');
+    expect(restored.state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.status).toBe('paused');
+  });
+
+  it('updates a formal triad role through a same-identity correction without changing the public shell', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    state.actors.actor_triad_patron = {
+      ...state.actors.player,
+      actorId: 'actor_triad_patron',
+      name: '阿成',
+      currentIdentity: 'gang_member',
+      publicIdentity: '地区线联络人'
+    };
+    const existing = state.actors.player.roleProfiles.triad!;
+
+    const result = applyPlayerIdentityContextPatch(state, {
+      transitionId: 'transition_triad_role_promotion_1',
+      kind: 'correction',
+      fromIdentity: 'gang_member',
+      toIdentity: 'gang_member',
+      publicIdentity: `${existing.societyName}庙街地区正式成员`,
+      reason: '组织正式确认玩家在地区线的位置。',
+      targetRoleProfile: {
+        identity: 'gang_member',
+        profile: {
+          ...existing,
+          roleTitle: '庙街地区正式成员',
+          rankSummary: '正式成员',
+          territorySummary: '庙街与油麻地一带',
+          patronActorIds: ['actor_triad_patron']
+        }
+      }
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.state.player.currentIdentity).toBe('gang_member');
+    expect(result.state.actors.player.roleProfiles.triad).toMatchObject({
+      status: 'active',
+      roleTitle: '庙街地区正式成员',
+      rankSummary: '正式成员',
+      patronActorIds: ['actor_triad_patron']
+    });
+    expect(result.state.actors.player.roleProfiles.police).toBeUndefined();
+  });
+
+  it('preserves established triad relationship ids when a same-identity correction omits them as empty arrays', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    state.actors.player.roleProfiles.triad = {
+      ...state.actors.player.roleProfiles.triad!,
+      patronActorIds: ['actor_triad_patron'],
+      peerActorIds: ['actor_triad_peer'],
+      rivalActorIds: ['actor_triad_rival']
+    };
+
+    const proposed = triadTarget();
+    if (proposed.identity !== 'gang_member') throw new Error('Expected a triad target profile.');
+    const result = applyPlayerIdentityContextPatch(state, {
+      transitionId: 'transition_triad_same_identity_partial_correction',
+      kind: 'correction',
+      fromIdentity: 'gang_member',
+      toIdentity: 'gang_member',
+      publicIdentity: '和胜和庙街地区成员',
+      reason: '只修正玩家在地区线中的公开职务。',
+      targetRoleProfile: {
+        identity: 'gang_member',
+        profile: {
+          ...proposed.profile,
+          roleTitle: '庙街地区成员',
+          patronActorIds: [],
+          peerActorIds: [],
+          rivalActorIds: []
+        }
+      }
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.state.actors.player.roleProfiles.triad).toMatchObject({
+      roleTitle: '庙街地区成员',
+      patronActorIds: ['actor_triad_patron'],
+      peerActorIds: ['actor_triad_peer'],
+      rivalActorIds: ['actor_triad_rival']
+    });
   });
 
   it('is idempotent by transition id and rejects mismatched source identity without partial writes', () => {

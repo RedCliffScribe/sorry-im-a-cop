@@ -4,6 +4,7 @@ import type { PromptContext } from '../context/selectContext';
 import type { NpcMemoryTier } from '../memory/npcMemoryLayers';
 import { resolvePromptText } from '../prompts/promptRegistry';
 import type { PromptSettings } from '../settings/types';
+import type { ForegroundContract } from '../drama/types';
 
 export interface NpcSimulationAdvice {
   actorId?: string;
@@ -24,6 +25,7 @@ export interface RunNpcSimulationInput {
   playerInput: string;
   client?: NarratorClient | null;
   promptSettings?: PromptSettings;
+  foregroundContract?: ForegroundContract;
 }
 
 export interface RunNpcSimulationResult {
@@ -123,12 +125,19 @@ function createProjectionBlock(context: PromptContext): string {
 export function createNpcSimulationPrompt(
   context: PromptContext,
   playerInput: string,
-  promptSettings?: PromptSettings
+  promptSettings?: PromptSettings,
+  foregroundContract?: ForegroundContract
 ): string {
   return [
     'NPC_SIMULATION_TASK',
     resolvePromptText('npc.simulation', promptSettings),
     '输出必须是 JSON object，形如：{"presentReactions":[{"actorId":"...","actorName":"...","hint":"...","basis":["..."],"confidence":0.7}],"remotePresence":[...],"notes":["..."]}。',
+    foregroundContract
+      ? `本回合前台契约：${JSON.stringify(foregroundContract)}`
+      : '本回合没有额外前台契约。',
+    '规则：presentReactions 最多返回 1 名在场人物，remotePresence 最多返回 1 名远场人物；只选择与玩家当前行动或前台计划直接相关的人物。',
+    '规则：不得把未入选的远场人物强行安排进现场，不得为了让建议生效而制造电话、传呼、新闻、巧遇或同步知情。',
+    '规则：NPC 模拟只提供人物反应建议，不得新增案件、组织议程、持久关系线或人物档案。',
     '',
     `time=${formatGameTimeLabel(context)}`,
     `place=${context.currentPlace?.name ?? '未知地点'}`,
@@ -186,18 +195,54 @@ export function parseNpcSimulationPackage(value: unknown): NpcSimulationPackage 
   };
 }
 
+function constrainNpcSimulationPackage(
+  simulationPackage: NpcSimulationPackage,
+  context: PromptContext,
+  foregroundContract?: ForegroundContract
+): NpcSimulationPackage {
+  const allowedActorIds = foregroundContract
+    ? new Set(foregroundContract.allowedActorIds)
+    : undefined;
+  const actorIdByName = new Map(
+    context.actorPackets.map((actor) => [actor.name, actor.actorId])
+  );
+  const isAllowed = (advice: NpcSimulationAdvice): boolean => {
+    if (!allowedActorIds) return true;
+    if (advice.actorId) return allowedActorIds.has(advice.actorId);
+    const resolvedActorId = advice.actorName
+      ? actorIdByName.get(advice.actorName)
+      : undefined;
+    return Boolean(resolvedActorId && allowedActorIds.has(resolvedActorId));
+  };
+  return {
+    presentReactions: simulationPackage.presentReactions.filter(isAllowed).slice(0, 1),
+    remotePresence: simulationPackage.remotePresence.filter(isAllowed).slice(0, 1),
+    notes: simulationPackage.notes.slice(0, 2)
+  };
+}
+
 export async function runNpcSimulation({
   context,
   playerInput,
   client,
-  promptSettings
+  promptSettings,
+  foregroundContract
 }: RunNpcSimulationInput): Promise<RunNpcSimulationResult> {
   if (!client) return { diagnostics: [] };
 
   try {
-    const prompt = createNpcSimulationPrompt(context, playerInput, promptSettings);
+    const prompt = createNpcSimulationPrompt(
+      context,
+      playerInput,
+      promptSettings,
+      foregroundContract
+    );
     const rawPackage = await client.complete(prompt);
-    const parsedPackage = parseNpcSimulationPackage(rawPackage);
+    const parsedPackage = constrainNpcSimulationPackage(
+      parseNpcSimulationPackage(rawPackage),
+      context,
+      foregroundContract
+    );
     const suggestionCount = parsedPackage.presentReactions.length + parsedPackage.remotePresence.length;
     const memoryProjection = selectNpcSimulationMemoryProjection(context);
 
@@ -248,6 +293,8 @@ export function formatNpcSimulationPackageForPrompt(simulationPackage: NpcSimula
     'AUX_NPC_SIMULATION_PACKAGE',
     '规则：以下内容是独立 NPC 模拟 API 给主叙事的未裁定建议，不是已发生事实；主叙事可以采纳、改写或忽略。',
     '规则：只有正文自然承接后，才允许通过结构化 writeback 写入状态、记忆、关系、动态或延迟事件。',
+    '规则：这不是必须逐项执行的任务清单；本回合只选少量真正改变当前现场、人物回应或后续局面的建议。',
+    '规则：remotePresence 中的人物可以继续留在远场且不出现在正文；不得为了采纳建议而强造电话、传呼、新闻、巧遇或同步知情。',
     '### presentReactions',
     simulationPackage.presentReactions.length
       ? simulationPackage.presentReactions.map(formatAdviceLine).join('\n')

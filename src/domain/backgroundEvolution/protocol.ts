@@ -8,6 +8,7 @@ import {
   newsIssuePatchSchema,
   relationshipMilestonePatchSchema,
   signalPatchSchema,
+  triadOrganizationStatePatchSchema,
   visibilitySchema,
   writebackGameTimeSchema
 } from '../writeback/schema';
@@ -84,7 +85,8 @@ export const organizationEvolutionPatchSchema = z
     visibility: evolutionVisibilitySchema.optional(),
     currentState: z.string().min(1).max(360).optional(),
     pressureSummary: z.string().min(1).max(300).optional(),
-    stanceTowardPlayer: z.string().min(1).max(260).optional()
+    stanceTowardPlayer: z.string().min(1).max(260).optional(),
+    triadState: triadOrganizationStatePatchSchema.optional()
   })
   .strict();
 
@@ -102,6 +104,8 @@ export const backgroundRelationshipPatchSchema = z.object({
   actorId: z.string().min(1),
   summary: z.string().min(1).max(360).optional(),
   status: z.enum(['active', 'dormant', 'strained', 'ended']).optional(),
+  intimacySummary: z.string().min(1).max(260).optional(),
+  trustSummary: z.string().min(1).max(260).optional(),
   conflictSummary: z.string().min(1).max(260).optional(),
   promiseSummary: z.string().min(1).max(260).optional(),
   riskSummary: z.string().min(1).max(260).optional(),

@@ -55,6 +55,9 @@ describe('relationship context projector', () => {
 
     expect(projection.threads.map((item) => item.threadId)).toEqual(['rel_lam']);
     expect(projection.threads[0]?.reasons).toContain('active_actor');
+    expect(projection.identityRegistry).toContainEqual(
+      expect.objectContaining({ threadId: 'rel_lam', primaryActorId: 'npc_lam' })
+    );
   });
 
   it('omits hidden relationship threads from prompt projection and heartbeat candidates', () => {
@@ -70,6 +73,7 @@ describe('relationship context projector', () => {
 
     expect(projection.threads).toEqual([]);
     expect(projection.heartbeatCandidates).toEqual([]);
+    expect(projection.identityRegistry).toEqual([]);
     expect(projection.diagnostics.omittedHiddenCount).toBe(1);
   });
 

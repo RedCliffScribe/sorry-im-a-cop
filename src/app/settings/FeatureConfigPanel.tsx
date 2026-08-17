@@ -210,13 +210,13 @@ function StatusChips({ items }: { items: Array<[string, number]> }) {
 function ToggleCard({
   title,
   description,
-  checked = true,
+  checked,
   onChange
 }: {
   title: string;
   description: string;
-  checked?: boolean;
-  onChange?: (checked: boolean) => void;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
 }) {
   return (
     <label className="option-card">
@@ -226,9 +226,8 @@ function ToggleCard({
       </span>
       <input
         type="checkbox"
-        {...(onChange
-          ? { checked, onChange: (event) => onChange(event.target.checked) }
-          : { defaultChecked: checked })}
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
       />
     </label>
   );
@@ -245,7 +244,7 @@ function NumericCard({
   description: string;
   value: number;
   min?: number;
-  onChange?: (value: number) => void;
+  onChange: (value: number) => void;
 }) {
   return (
     <label className="option-card option-card-input">
@@ -257,11 +256,46 @@ function NumericCard({
         aria-label={title}
         type="number"
         min={min}
-        {...(onChange
-          ? { value, onChange: (event) => onChange(Number(event.target.value)) }
-          : { defaultValue: value })}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
       />
     </label>
+  );
+}
+
+function FixedRuleCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="option-card" role="note" aria-label={`${title}：固定规则`}>
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </span>
+      <div className="status-chip-list" aria-hidden="true">
+        <span>固定规则</span>
+      </div>
+    </div>
+  );
+}
+
+function FixedValueCard({
+  title,
+  description,
+  value
+}: {
+  title: string;
+  description: string;
+  value: number;
+}) {
+  return (
+    <div className="option-card" role="note" aria-label={`${title}：固定值 ${value}`}>
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </span>
+      <div className="status-chip-list" aria-hidden="true">
+        <span>固定值：{value}</span>
+      </div>
+    </div>
   );
 }
 
@@ -392,12 +426,12 @@ function WritebackRepairPage({ settings, onChange, onOpenApiConfig }: Omit<Featu
       </section>
 
       <section className="settings-section">
-        <h3>修复边界</h3>
+        <h3>固定修复边界</h3>
         <div className="option-grid">
-          <ToggleCard title="启用写回修复" description="关闭后主剧情写回不合法时直接失败，不尝试修复。" />
-          <ToggleCard title="只修复结构协议" description="禁止根据正文自由补事实，只能修复字段、格式和范围。" />
-          <ToggleCard title="失败后不改状态" description="修复失败时保留原 runtime state，不写入半成品。" />
-          <NumericCard title="最大修复次数" description="单回合最多尝试修复的次数。" value={1} />
+          <FixedRuleCard title="启用写回修复" description="主剧情写回不合法时会尝试一次结构修复。" />
+          <FixedRuleCard title="只修复结构协议" description="禁止根据正文自由补事实，只能修复字段、格式和范围。" />
+          <FixedRuleCard title="失败后不改状态" description="修复失败时保留原 runtime state，不写入半成品。" />
+          <FixedValueCard title="最大修复次数" description="单回合最多尝试修复的次数。" value={1} />
         </div>
       </section>
 
@@ -448,11 +482,11 @@ function NpcSimulationPage({ settings, onChange, onOpenApiConfig }: Omit<Feature
       </section>
 
       <section className="settings-section">
-        <h3>运行边界</h3>
+        <h3>固定运行边界</h3>
         <div className="option-grid">
-          <ToggleCard title="只生成未裁定建议" description="辅助 API 不写正文、不判定结果、不改变本地状态。" />
-          <ToggleCard title="保留主剧情裁量" description="主剧情模型可以采纳、改写或忽略辅助模拟包。" />
-          <ToggleCard title="失败后继续回合" description="独立 API 失败时回落到主 prompt 内的本地 NPC 候选。" />
+          <FixedRuleCard title="只生成未裁定建议" description="辅助 API 不写正文、不判定结果、不改变本地状态。" />
+          <FixedRuleCard title="保留主剧情裁量" description="主剧情模型可以采纳、改写或忽略辅助模拟包。" />
+          <FixedRuleCard title="失败后继续回合" description="独立 API 失败时回落到主 prompt 内的本地 NPC 候选。" />
         </div>
       </section>
     </section>
@@ -491,12 +525,12 @@ function BackgroundEvolutionPage({ settings, onChange, onOpenApiConfig }: Omit<F
       </section>
 
       <section className="settings-section">
-        <h3>运行边界</h3>
+        <h3>固定运行边界</h3>
         <div className="option-grid">
-          <ToggleCard title="按游戏时间复核" description="普通短回合不会推动远场行动；默认至少间隔六个游戏小时。" />
-          <ToggleCard title="案件不保证办成" description="允许无结果、受阻、失败、移交或放弃，行动完成不等于案件状态前进。" />
-          <ToggleCard title="主回合优先" description="远场演化失败或中止时整批不写入，已经完成的主回合仍会保存。" />
-          <ToggleCard title="确定性记忆投影" description="正式案件行动的开始与结果会写入承办 NPC 记忆和既有案件动态。" />
+          <FixedRuleCard title="按游戏时间复核" description="普通短回合不会推动远场行动；默认至少间隔六个游戏小时。" />
+          <FixedRuleCard title="案件不保证办成" description="允许无结果、受阻、失败、移交或放弃，行动完成不等于案件状态前进。" />
+          <FixedRuleCard title="主回合优先" description="远场演化失败或中止时整批不写入，已经完成的主回合仍会保存。" />
+          <FixedRuleCard title="确定性记忆投影" description="正式案件行动的开始与结果会写入承办 NPC 记忆和既有案件动态。" />
         </div>
       </section>
     </section>
@@ -534,11 +568,11 @@ function AuxiliaryGenerationPage({ settings, onChange, onOpenApiConfig }: Omit<F
       </section>
 
       <section className="settings-section">
-        <h3>运行边界</h3>
+        <h3>固定运行边界</h3>
         <div className="option-grid">
-          <ToggleCard title="只生成资料" description="辅助生成不写正文、不判定行动、不直接改变人物或案件。" />
-          <ToggleCard title="使用真实报纸名" description="报纸名可直接使用大公报、明报、成报、星岛日报等真实名称。" />
-          <ToggleCard title="失败后继续回合" description="辅助生成失败只留下诊断，不让玩家行动失败。" />
+          <FixedRuleCard title="只生成资料" description="辅助生成不写正文、不判定行动、不直接改变人物或案件。" />
+          <FixedRuleCard title="使用真实报纸名" description="报纸名可直接使用大公报、明报、成报、星岛日报等真实名称。" />
+          <FixedRuleCard title="失败后继续回合" description="辅助生成失败只留下诊断，不让玩家行动失败。" />
         </div>
       </section>
     </section>

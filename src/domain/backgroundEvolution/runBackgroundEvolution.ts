@@ -13,7 +13,8 @@ import {
   parseBackgroundEvolutionWriteback
 } from './protocol';
 import type { BackgroundEvolutionSelection } from './selection';
-import { cloneGameTime } from './time';
+import { addGameHours, cloneGameTime, compareGameTimes } from './time';
+import { advanceSignalLifecycle } from '../dynamic/signalLifecycle';
 
 export interface RunBackgroundEvolutionInput {
   state: RuntimeState;
@@ -64,6 +65,62 @@ function withLastRun(
   };
 }
 
+function reviewWasApplied(state: RuntimeState, reviewKey: string): boolean {
+  return (
+    Object.values(state.backgroundEvolution.npcTracks).some(
+      (track) => track.lastAppliedReviewKey === reviewKey
+    ) ||
+    Object.values(state.backgroundEvolution.organizationTracks).some(
+      (track) => track.lastAppliedReviewKey === reviewKey
+    ) ||
+    state.backgroundEvolution.recentOutcomes.some(
+      (outcome) => outcome.sourceReviewKey === reviewKey
+    )
+  );
+}
+
+function deferUnansweredCandidates(
+  state: RuntimeState,
+  selection: BackgroundEvolutionSelection,
+  foregroundTurnId: string
+): RuntimeState {
+  const next = structuredClone(state);
+  const npcReviewCooldownUntil = {
+    ...(next.backgroundEvolution.npcReviewCooldownUntil ?? {})
+  };
+
+  for (const candidate of selection.npcCandidates) {
+    if (reviewWasApplied(next, candidate.reviewKey)) {
+      delete npcReviewCooldownUntil[candidate.actorId];
+      continue;
+    }
+    npcReviewCooldownUntil[candidate.actorId] = addGameHours(next.time, 24);
+    if (!candidate.trackId) continue;
+    const track = next.backgroundEvolution.npcTracks[candidate.trackId];
+    if (!track || compareGameTimes(track.nextReviewAt, next.time) > 0) continue;
+    track.nextReviewAt = addGameHours(
+      next.time,
+      candidate.relatedCaseIds.length > 0 ? 6 : 24
+    );
+  }
+
+  for (const candidate of selection.cityCandidates) {
+    const track = next.citySituationTracks[candidate.trackId];
+    if (
+      !track ||
+      track.lastOutputTurnId === foregroundTurnId ||
+      !track.nextReviewAt ||
+      compareGameTimes(track.nextReviewAt, next.time) > 0
+    ) {
+      continue;
+    }
+    track.nextReviewAt = addGameHours(next.time, 24);
+  }
+
+  next.backgroundEvolution.npcReviewCooldownUntil = npcReviewCooldownUntil;
+  return next;
+}
+
 function baseRecord(
   state: RuntimeState,
   selection: BackgroundEvolutionSelection,
@@ -89,6 +146,7 @@ export async function runBackgroundEvolution({
 }: RunBackgroundEvolutionInput): Promise<RunBackgroundEvolutionResult> {
   const startedAt = Date.now();
   const record = baseRecord(state, selection, foregroundTurnId);
+  const lifecycleState = advanceSignalLifecycle(state).state;
   if (selection.selectedReviewKeys.length === 0) {
     const lastRun: BackgroundEvolutionRunRecord = {
       ...record,
@@ -97,7 +155,7 @@ export async function runBackgroundEvolution({
       durationMs: Date.now() - startedAt,
       errorReason: 'no_candidates'
     };
-    return { state: withLastRun(state, lastRun), diagnostics: [], status: 'skipped', aborted: false };
+    return { state: withLastRun(lifecycleState, lastRun), diagnostics: [], status: 'skipped', aborted: false };
   }
   if (!client) {
     const lastRun: BackgroundEvolutionRunRecord = {
@@ -108,7 +166,7 @@ export async function runBackgroundEvolution({
       errorReason: 'route_disabled'
     };
     return {
-      state: withLastRun(state, lastRun),
+      state: withLastRun(lifecycleState, lastRun),
       diagnostics: [
         {
           path: ['backgroundEvolution'],
@@ -148,16 +206,21 @@ export async function runBackgroundEvolution({
       outputTokens: estimateNarrativeTokens(outputText),
       durationMs: Date.now() - startedAt
     };
+    const deferredState = deferUnansweredCandidates(
+      applied.state,
+      selection,
+      foregroundTurnId
+    );
     const reviewedState =
       selection.organizationCandidates.length > 0
         ? {
-            ...applied.state,
+            ...deferredState,
             backgroundEvolution: {
-              ...applied.state.backgroundEvolution,
-              lastOrganizationReviewAt: cloneGameTime(applied.state.time)
+              ...deferredState.backgroundEvolution,
+              lastOrganizationReviewAt: cloneGameTime(deferredState.time)
             }
           }
-        : applied.state;
+        : deferredState;
     const appliedState =
       applied.appliedPatchCount > 0
         ? {
@@ -194,7 +257,7 @@ export async function runBackgroundEvolution({
       errorReason
     };
     return {
-      state: withLastRun(state, lastRun),
+      state: withLastRun(lifecycleState, lastRun),
       diagnostics: [
         {
           path: ['backgroundEvolution'],

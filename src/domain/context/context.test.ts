@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialRuntimeState } from '../runtime/initialState';
+import { createForegroundContract } from '../drama/coherence';
+import { collectLocalJudgementSources } from '../conflict/localJudgement';
+import { defaultDramaticContentSettings } from '../drama/settings';
+import type { DramaPlan, DramaPlanningContext } from '../drama/types';
 import type {
   Actor,
   CombatEvent,
@@ -47,6 +51,24 @@ describe('context selection', () => {
     expect(context.playerSummary).toContain('大陆新移民家庭');
     expect(context.playerSummary).toContain('亲属');
     expect(context.playerSummary).toContain('警员编号：9527');
+  });
+
+  it('feeds the current save Cantonese flavor directly into every ordinary-turn prompt', () => {
+    const state = createInitialRuntimeState({ cantoneseFlavor: 'heavy' });
+    const heavyContext = selectContext(state, '继续和街坊谈话');
+    const heavyPrompt = composePrompt(heavyContext, '继续和街坊谈话');
+
+    expect(heavyContext.cantoneseFlavor).toBe('heavy');
+    expect(heavyPrompt).toContain('## 本局粤语风味');
+    expect(heavyPrompt).toContain('当前等级：较多');
+    expect(heavyPrompt).toContain('对白较多使用粤语表达和港式句式');
+
+    state.player.cantoneseFlavor = 'off';
+    const offPrompt = composePrompt(selectContext(state, '继续和街坊谈话'), '继续和街坊谈话');
+
+    expect(offPrompt).toContain('当前等级：关闭');
+    expect(offPrompt).toContain('对白使用标准书面中文，不主动加入粤语词汇');
+    expect(offPrompt).not.toContain('当前等级：较多');
   });
 
   it('asks the opening narrator to generate a four-digit police number when none was entered', () => {
@@ -97,6 +119,27 @@ describe('context selection', () => {
     expect(policePrompt).not.toContain('## 市民身份入口');
   });
 
+  it('feeds exact livelihood employer templates as candidate material only', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'civilian',
+      civilianProfileId: 'hospital_nurse'
+    });
+    const prompt = composePrompt(
+      selectContext(state, '先确认今晚的护理排班'),
+      '先确认今晚的护理排班'
+    );
+
+    expect(prompt).toContain('## 市民职业与营生投影');
+    expect(prompt).toContain('everydayEmployerTemplateCandidates:');
+    expect(prompt).toContain('templateId=private_clinic');
+    expect(prompt).toContain('candidate vocabulary');
+    expect(prompt).toContain('never prove that an employer, event or pressure already exists');
+    expect(prompt).toContain('workSchedule:');
+    expect(prompt).toContain('pattern=周一至周五 · 轮班日更 window=08:00–16:00');
+    expect(prompt).toContain('周六、周日休息');
+    expect(prompt).toContain('不要在休息日或下班后自动把玩家写成正在上班');
+  });
+
   it('lists the exact clothing mode enum accepted by writeback', () => {
     const state = createInitialRuntimeState();
     const context = selectContext(state, '下班后换便服');
@@ -138,6 +181,10 @@ describe('context selection', () => {
     expect(context.timeLabel).toContain('星期一');
     expect(prompt).toContain('警务值班节奏');
     expect(prompt).toContain('临近交班');
+    expect(prompt).toContain('班别：晚更');
+    expect(prompt).toContain('时段：14:00–22:45');
+    expect(prompt).toContain('下一更：1988年9月13日 星期二 晚更 14:00–22:45');
+    expect(prompt).toContain('4天晚更 → 2天轮休');
     expect(prompt).toContain('不要因为玩家是警察就每回合自动新增报案');
     expect(prompt).toContain('交班、下班、补眠、私人生活');
   });
@@ -237,6 +284,31 @@ describe('context selection', () => {
     expect(seedSection).not.toMatch(/李联捷|才志明|查良庸|古隆/u);
   });
 
+  it('projects screen characters as ordinary NPC candidates with an isolated role identity', () => {
+    const state = createInitialRuntimeState();
+    state.time.year = 1986;
+    const context = selectContext(state, '去码头找李马克谈一谈');
+    const prompt = composePrompt(context, '去码头找李马克谈一谈');
+
+    expect(context.screenCharacterSeedProjection.characters.map((character) => character.displayName)).toContain(
+      '李马克'
+    );
+    expect(prompt).toContain('SCREEN_CHARACTER_SEED_PROJECTION');
+    expect(prompt).toContain('runtimeActorId=npc_screen_screen_film_better_tomorrow_mark_lee');
+    expect(prompt).toContain('SCREEN_CHARACTER_IDENTITY_LOCK');
+    expect(prompt).toContain('source-work identity is an internal');
+    const screenSection = prompt.slice(
+      prompt.indexOf('SCREEN_CHARACTER_SEED_PROJECTION'),
+      prompt.indexOf('## 时代种子人物资料库')
+    );
+    expect(screenSection).toContain('displayName=李马克');
+    expect(screenSection).toContain('worldpackAvailableYears=1986-1996');
+    expect(screenSection).not.toMatch(/firstReleaseYear|releaseYear|上映年份|首映年份/u);
+    expect(screenSection).not.toContain('sourceWorkId=');
+    expect(screenSection).not.toMatch(/周润发|Chow Yun-fat|performerName|portrayedBy/u);
+    expect(Object.keys(state.actors)).toEqual(['player']);
+  });
+
   it('uses the configured narrative length profile in the main turn prompt', () => {
     const state = createInitialRuntimeState();
     const context = selectContext(state, '今晚巡逻慢一点，多写现场细节');
@@ -245,13 +317,17 @@ describe('context selection', () => {
       narrativeLengthLevel: 'long'
     });
 
-    expect(prompt).toContain('常规回合 narrativeText 目标 900-1400 个中文字符');
-    expect(prompt).toContain('复杂回合 narrativeText 目标 1400-2200 个中文字符');
-    expect(prompt).toContain('每个常规回合至少 7-12 个显示段落或对白行');
-    expect(prompt).toContain('输出前自检');
-    expect(prompt).toContain('现场锚点、玩家行动承接、NPC 或环境反应、局面变化、下一步可互动点');
+    expect(prompt).toContain('常规回合 narrativeText 目标 900-1400 个中文字符且不得少于 900 个中文字符');
+    expect(prompt).toContain('复杂回合目标 1400-2200 个中文字符');
+    expect(prompt).toContain('简单、等待、文书和过渡回合也不得自行降档');
+    expect(prompt).toContain('围绕同一事务纵向展开');
+    expect(prompt).toContain('不设固定段落数');
+    expect(prompt).not.toContain('每个常规回合至少 7-12 个显示段落或对白行');
+    expect(prompt).not.toContain('必须同时有现场锚点、玩家行动承接');
     expect(prompt).toContain('禁止用第二人称选择题或征询句收尾');
     expect(prompt).toContain('行动选项只写入 suggestedActions');
+    expect(prompt).toContain('每个成功回合必须生成 2-4 个非空 suggestedActions');
+    expect(prompt).toContain('不得留空、复用上一回合选项');
   });
 
   it('locks the selected narrative perspective without constraining character dialogue', () => {
@@ -259,19 +335,120 @@ describe('context selection', () => {
     const context = selectContext(state, '推门进入报案室');
 
     const firstPersonPrompt = composePrompt(context, '推门进入报案室', {
-      narrativePerspective: 'first_person'
+      narrativePerspective: 'first_person',
+      playerPortrayalMode: 'player_led'
     });
     expect(firstPersonPrompt).toContain('本局选择第一人称');
     expect(firstPersonPrompt).toContain('固定以“我”指代玩家');
     expect(firstPersonPrompt).toContain('人物对白仍按说话关系自然使用“我、你、他/她”');
+    expect(firstPersonPrompt).toContain('不得把玩家未输入的对白、想法、判断、决定、承诺、主观感受、表情、身体反应或额外动作写成已经发生的事实');
+    expect(firstPersonPrompt).toContain('准备、打算、想要、尝试、等待机会、观察后再决定');
+    expect(firstPersonPrompt).toContain('不等于后续动作已经执行');
+    expect(firstPersonPrompt).toContain('玩家输入定义本回合玩家行动的有限包络');
+    expect(firstPersonPrompt).toContain('可以展开该行动本身必需的执行过程');
+    expect(firstPersonPrompt).toContain('正文只能继续 NPC 的行动、对白和环境造成的客观后果');
+    expect(firstPersonPrompt).toContain('输出前静默删除所有超出行动有限包络');
+    expect(firstPersonPrompt).toContain('重新叠放、推回或递交文书');
+    expect(firstPersonPrompt).toContain('“核对登记簿”允许写正在比对的栏目');
+    expect(firstPersonPrompt).toContain('玩家手掌下传来、耳边听见、闻到、感觉到');
+    expect(firstPersonPrompt).toContain('本回合玩家动作锁（最高优先级）');
+    expect(firstPersonPrompt).toContain('不是可以继续添加新决定的动作提纲');
+    expect(firstPersonPrompt).toContain('把这项已获授权的行动真正演成现场');
+    expect(firstPersonPrompt).toContain('不得轮流罗列视觉、听觉、嗅觉、触觉等感官细节');
+    expect(firstPersonPrompt).toContain('本回合场景事实锁（高优先级）');
+    expect(firstPersonPrompt).toContain('不得新造进门的人、同事、电话、传呼、案件、证物、秘密、危险或突发钩子');
+    expect(firstPersonPrompt).toContain('把选择留给玩家输入');
 
     const thirdPersonPrompt = composePrompt(context, '推门进入报案室', {
-      narrativePerspective: 'third_person'
+      narrativePerspective: 'third_person',
+      playerPortrayalMode: 'player_led'
     });
     expect(thirdPersonPrompt).toContain('本局选择第三人称');
     expect(thirdPersonPrompt).toContain('玩家姓名“陈启明”或代词“他”');
     expect(thirdPersonPrompt).toContain('不得使用“你”称呼玩家');
     expect(thirdPersonPrompt).not.toContain('本局选择第一人称');
+  });
+
+  it('allows natural player dialogue inside declared intent while keeping decisions player-owned', () => {
+    const state = createInitialRuntimeState({ playerName: '陈启明', gender: 'male' });
+    const context = selectContext(state, '问值日警长今晚为什么临时换更，并表示自己会先听完原因');
+
+    const prompt = composePrompt(context, '问值日警长今晚为什么临时换更，并表示自己会先听完原因', {
+      playerPortrayalMode: 'natural'
+    });
+
+    expect(prompt).toContain('本局选择“自然代演”');
+    expect(prompt).toContain('必须把这些内容在 narrativeText 中真正演出来');
+    expect(prompt).toContain('必须使用玩家姓名标签');
+    expect(prompt).toContain('符合既有性格、说话风格、粤语风味和当前关系');
+    expect(prompt).toContain('不得加入玩家输入没有表达的新观点、新问题、新事实、新条件');
+    expect(prompt).toContain('绝对不得替玩家作决定');
+    expect(prompt).toContain('不得擅自接受或拒绝提议、选择条件、承诺或发誓、签署或付款');
+    expect(prompt).toContain('拿不准时按“玩家主导”处理');
+    expect(prompt).toContain('下方原文定义本回合玩家要说和要做的内容、目标、立场与授权范围');
+    expect(prompt).toContain('不是要求逐字照抄的台词');
+    expect(prompt).toContain('必须先把这段输入在 narrativeText 中真正演出来');
+    expect(prompt).toContain('遇到会改变利益、义务、风险、关系、身份、资源或未来路线的节点');
+    expect(prompt).not.toContain('玩家输入是本回合玩家动作的封闭清单');
+  });
+
+  it('uses the strict player-led contract when explicitly selected', () => {
+    const state = createInitialRuntimeState();
+    const context = selectContext(state, '翻开登记簿核对时间');
+
+    const prompt = composePrompt(context, '翻开登记簿核对时间', {
+      playerPortrayalMode: 'player_led'
+    });
+
+    expect(prompt).toContain('本局选择“玩家主导”');
+    expect(prompt).toContain('玩家输入是本回合玩家动作的封闭清单');
+    expect(prompt).toContain('不得把玩家未输入的对白、想法、判断、决定、承诺');
+    expect(prompt).not.toContain('本局选择“自然代演”');
+  });
+
+  it('defaults protagonist portrayal to natural performance', () => {
+    const state = createInitialRuntimeState({ playerName: '陈启明' });
+    const context = selectContext(state, '问阿强昨晚去了哪里');
+
+    const prompt = composePrompt(context, '问阿强昨晚去了哪里');
+
+    expect(prompt).toContain('本局选择“自然代演”');
+    expect(prompt).toContain('必须把这些内容在 narrativeText 中真正演出来');
+    expect(prompt).not.toContain('本局选择“玩家主导”');
+  });
+
+  it('restores the original 1.0 prose structure without relaxing player control or length', () => {
+    const state = createInitialRuntimeState({ playerName: '陈启明' });
+    const context = selectContext(state, '问阿强昨晚去了哪里');
+
+    const prompt = composePrompt(context, '问阿强昨晚去了哪里', {
+      narrativeLengthLevel: 'long',
+      playerPortrayalMode: 'original'
+    });
+
+    expect(prompt).toContain('本局选择“原始”');
+    expect(prompt).toContain('场面—行动—反馈—局面变化');
+    expect(prompt).toContain('可以配合酒馆预设调整措辞、节奏、修辞与对白口味');
+    expect(prompt).toContain('不得新增观点、问题、事实、谎言、条件、让步、承诺');
+    expect(prompt).toContain('常规回合 narrativeText 目标 900-1400 个中文字符且不得少于 900 个中文字符');
+    expect(prompt).toContain('必须完成当前篇幅档位的目标与最低字符数');
+    expect(prompt).not.toContain('本局选择“自然代演”');
+  });
+
+  it('keeps the same narrative-length contract in all three portrayal modes', () => {
+    const state = createInitialRuntimeState();
+    const context = selectContext(state, '在值班室逐项核对记录');
+
+    for (const playerPortrayalMode of ['original', 'player_led', 'natural'] as const) {
+      const prompt = composePrompt(context, '在值班室逐项核对记录', {
+        narrativeLengthLevel: 'long',
+        playerPortrayalMode
+      });
+
+      expect(prompt).toContain('常规回合 narrativeText 目标 900-1400 个中文字符且不得少于 900 个中文字符');
+      expect(prompt).toContain('必须完成当前篇幅档位的目标与最低字符数');
+      expect(prompt).toContain('不能因主角少说话、场景简单或启用酒馆预设而自行缩短');
+    }
   });
 
   it('uses editable prompt overrides for main turn style guides', () => {
@@ -601,8 +778,14 @@ describe('context selection', () => {
     expect(prompt).toContain('警队月薪');
     expect(prompt).toContain('唐楼租金');
     expect(prompt).toContain('upsertCashflows is only for stable recurring monthly income/expense');
+    expect(prompt).toContain('player job or role income must set identityBinding');
+    expect(prompt).toContain('社团职级没有统一工资');
+    expect(prompt).toContain('完成录用、正式到职并建立持续按月发薪的工作');
+    expect(prompt).toContain('cashflow_player_civilian_primary_job');
     expect(prompt).toContain('routine one-time spending/income must not be converted into cashflow items');
     expect(prompt).toContain('every concrete one-time payment or income must include both the matching financePatch cash/bank delta');
+    expect(prompt).toContain('金钱写回必须使用本回合真实发生的具体整数金额');
+    expect(prompt).toContain('没有实际收支时不要为了“同步”而改写余额');
     expect(prompt).toContain('REPUTATION_CONTEXT_PROJECTION');
     expect(prompt).toContain('circle=neighborhoodMedia');
     expect(prompt).toContain('附近街坊知道他，但觉得他做事太硬');
@@ -690,6 +873,7 @@ describe('context selection', () => {
 
   it('projects visible social institution context and filters hidden actor relations', () => {
     const state = createInitialRuntimeState();
+    state.organizations.org_tvb.aliases = ['无线电视'];
     state.actors.player.organizationRelations.push(
       {
         organizationId: 'org_tvb',
@@ -719,6 +903,9 @@ describe('context selection', () => {
     expect(context.institutionProjection.diagnostics.omittedHiddenCount).toBeGreaterThanOrEqual(1);
     expect(prompt).toContain('INSTITUTION_CONTEXT_PROJECTION');
     expect(prompt).toContain('org_tvb');
+    expect(prompt).toContain('aliases=无线电视');
+    expect(prompt).toContain('ORGANIZATION_IDENTITY_LOCK');
+    expect(prompt).toContain('逐字复用提示词中已有的 organizationId');
     expect(prompt).toContain('organizationRelations');
     expect(prompt).toContain('organizationPatches');
     expect(prompt).toContain('do not automatically convict');
@@ -750,8 +937,14 @@ describe('context selection', () => {
     expect(prompt).toContain('INSTITUTION_CONTEXT_PROJECTION');
     expect(prompt).toContain('org_sun_yee_on');
     expect(prompt).toContain('structureTree=');
-    expect(prompt).toContain('坐馆');
+    expect(prompt).toContain('核心主事层');
     expect(prompt).toContain('人员未知');
+    expect(prompt).toContain('triadProfile.organizationStyle=');
+    expect(prompt).toContain('triadProfile.leadershipSelection=');
+    expect(prompt).toContain('triadState.leadership=');
+    expect(prompt).toContain('triadState.activityAreas=');
+    expect(prompt).toContain('triadProfile is immutable worldpack context');
+    expect(prompt).toContain('use only supplied actorId/placeId values');
   });
 
   it('keeps city power anchor expansion compact for ordinary low-signal actions', () => {
@@ -1044,6 +1237,135 @@ describe('context selection', () => {
     expect(prompt).toContain('陈强');
     expect(prompt).toContain('阿玲的未回电话');
     expect(prompt).toContain('未裁定建议');
+  });
+
+  it('recovers an unlinked same-post duty contact for radio continuity and NPC memory writeback', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'police',
+      lawIdentity: {
+        stationOrPost: 'Mong Kok Police Station（旺角警署）',
+        department: 'Uniform Branch（军装巡逻）'
+      }
+    });
+    const dutySergeant = createActor(state.actors.player, {
+      actorId: 'actor_opening_duty_sergeant',
+      name: '陈伟强',
+      currentIdentity: 'police',
+      publicIdentity: '旺角警署值日警长',
+      presence: 'absent',
+      visibility: 'player_known',
+      importance: 72,
+      interactionScore: 28,
+      organizationIds: ['org_hk_police'],
+      roleProfiles: {
+        police: {
+          ...state.actors.player.roleProfiles.police!,
+          rank: 'Sergeant',
+          stationOrPost: 'Mong Kok Police Station',
+          department: 'Uniform Branch'
+        }
+      },
+      relationshipSummary: '旺角警署值日警长，是玩家当值期间的直接工作联系人。'
+    });
+    state.actors[dutySergeant.actorId] = dutySergeant;
+
+    const context = selectContext(state, '用电台向值日警长报告刚才的异常情况。');
+    const prompt = composePrompt(context, '用电台向值日警长报告刚才的异常情况。');
+
+    expect(state.lawIdentity.supervisorActorIds).toEqual([]);
+    expect(context.remoteNpcPresenceProjection.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: dutySergeant.actorId,
+          actorName: '陈伟强',
+          source: 'roleContact'
+        })
+      ])
+    );
+    expect(context.npcMemoryProjection.diagnostics.routedActors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: dutySergeant.actorId, route: 'remote' })
+      ])
+    );
+    expect(prompt).toContain('actorId=actor_opening_duty_sergeant actor=陈伟强 source=roleContact');
+    expect(prompt).toContain('角色链路记忆完整性');
+    expect(prompt).toContain('就必须给该 actorId 写一条 actorMemories');
+  });
+
+  it('keeps triad patrons and peers in remote context after their responsibility is resolved', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    const playerTriadProfile = state.actors.player.roleProfiles.triad!;
+    const patron = createActor(state.actors.player, {
+      actorId: 'actor_triad_patron_sing',
+      name: '阿成',
+      currentIdentity: 'gang_member',
+      publicIdentity: '庙街地区线联络人',
+      presence: 'absent',
+      visibility: 'player_known',
+      importance: 78,
+      roleProfiles: {
+        triad: {
+          ...playerTriadProfile,
+          status: 'active',
+          roleTitle: '地区线联络人',
+          rankSummary: '资深成员',
+          territorySummary: '庙街及油麻地一带'
+        }
+      },
+      relationshipSummary: '把玩家带入地区线，并负责判断玩家是否守规矩。'
+    });
+    const peer = createActor(state.actors.player, {
+      actorId: 'actor_triad_peer_kit',
+      name: '阿杰',
+      currentIdentity: 'gang_member',
+      publicIdentity: '庙街同组成员',
+      presence: 'absent',
+      visibility: 'player_known',
+      importance: 66,
+      roleProfiles: {
+        triad: {
+          ...playerTriadProfile,
+          status: 'active',
+          roleTitle: '同组成员',
+          rankSummary: '外围成员',
+          territorySummary: '庙街一带'
+        }
+      },
+      relationshipSummary: '与玩家同组办事，既会搭手也会争表现。'
+    });
+    state.actors[patron.actorId] = patron;
+    state.actors[peer.actorId] = peer;
+    state.actors.player.roleProfiles.triad = {
+      ...playerTriadProfile,
+      roleTitle: '庙街外围成员',
+      rankSummary: '外围新人',
+      territorySummary: '庙街一带',
+      patronActorIds: [patron.actorId],
+      peerActorIds: [peer.actorId]
+    };
+
+    const context = selectContext(state, '先在原地等联络，不主动揽新事情。');
+    const prompt = composePrompt(context, '先在原地等联络，不主动揽新事情。');
+
+    expect(context.remoteNpcPresenceProjection.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: patron.actorId, actorName: '阿成', source: 'roleContact' }),
+        expect.objectContaining({ actorId: peer.actorId, actorName: '阿杰', source: 'roleContact' })
+      ])
+    );
+    expect(context.npcMemoryProjection.diagnostics.routedActors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: patron.actorId, route: 'remote' }),
+        expect.objectContaining({ actorId: peer.actorId, route: 'remote' })
+      ])
+    );
+    expect(prompt).toContain('TRIAD_MEMBERSHIP_CONTEXT');
+    expect(prompt).toContain(`patrons=阿成(${patron.actorId})`);
+    expect(prompt).toContain(`peers=阿杰(${peer.actorId})`);
+    expect(prompt).toContain('托话、场所联络或街面碰头');
+    expect(prompt).toContain(
+      'organizationId/societyName/roleTitle/rankSummary/territorySummary/patronActorIds/peerActorIds/rivalActorIds'
+    );
   });
 
   it('projects police panel context and promotion action hints into the prompt', () => {
@@ -1340,30 +1662,36 @@ describe('context selection', () => {
     expect(prompt).toContain('禁止从正文隐含写回状态');
     expect(prompt).toContain('正文风格与显示格式');
     expect(prompt).toContain('正文优先');
-    expect(prompt).toContain('常规回合 narrativeText 目标 500-900 个中文字符');
-    expect(prompt).toContain('复杂回合 narrativeText 目标 900-1500 个中文字符');
-    expect(prompt).toContain('至少 4-8 个显示段落或对白行');
+    expect(prompt).toContain('常规回合 narrativeText 目标 500-900 个中文字符且不得少于 500 个中文字符');
+    expect(prompt).toContain('复杂回合目标 900-1500 个中文字符');
+    expect(prompt).toContain('不设固定段落数');
+    expect(prompt).not.toContain('至少 4-8 个显示段落或对白行');
     expect(prompt).toContain('不要因为 JSON 写回字段很多而压缩正文');
     expect(prompt).toContain('【旁白】');
     expect(prompt).toContain('【角色名】');
     expect(prompt).toContain('成人关系描写指南');
     expect(prompt).toContain('adultPrivateProfile 是成年女性的香闺秘档');
     expect(prompt).toContain('女性 NPC 必须写 femaleProfile');
-    expect(prompt).toContain('确认成年女性 NPC 必须生成 adultPrivateProfile');
+    expect(prompt).toContain('成年女性、首次见面或普通人物建档本身都不是生成香闺秘档的理由');
+    expect(prompt).toContain('没有可靠事实就完全省略');
+    expect(prompt).toContain('普通人物档案补全任务禁止生成 femaleProfile.adultPrivateProfile');
+    expect(prompt).toContain('本地引擎只会按需建立最小 womb 跟踪');
+    expect(prompt).toContain('可以只写 adultPrivateProfile.womb.cervixStatus');
+    expect(prompt).toContain('本地会在 12 个游戏小时后恢复常态');
+    expect(prompt).not.toContain('确认成年女性 NPC 必须生成 adultPrivateProfile');
     expect(prompt).toContain('未来文生图资料');
-    expect(prompt).toContain('直接写该部位');
-    expect(prompt).toContain('直白、具体、粗俗、可感');
+    expect(prompt).toContain('description 采用直白、具体、可感的档案写法，只写对应部位');
     expect(prompt).toContain('动作、接触、摩擦、湿热、体液、喘息和身体反应');
-    expect(prompt).toContain('当前动作 → 接触部位与身体位置 → 方向、力度和节奏');
-    expect(prompt).toContain('双方生理、语言和情绪反馈 → 下一动作或调整');
-    expect(prompt).toContain('从已有的 RECENT_STORY_PROJECTION 或当前场景中确认最后一个确切姿势');
-    expect(prompt).toContain('慢节奏不是同义反复');
-    expect(prompt).toContain('不得只换姓名套用同一段结构');
-    expect(prompt).toContain('动作路径、主导感官、人物表达或现实后果至少两项');
-    expect(prompt).toContain('输出前静默逐句复核成人段落');
+    expect(prompt).toContain('先确认当前阶段：试探/前戏、进行中、接近高潮、高潮或事后照料');
+    expect(prompt).toContain('每一拍只推进一至两件真正发生变化的事');
+    expect(prompt).toContain('从 RECENT_STORY_PROJECTION 和当前场景确认最后一个确切姿势');
+    expect(prompt).toContain('不来自同义反复、全身扫描或器官清单');
+    expect(prompt).toContain('只换姓名套用同一段结构');
+    expect(prompt).toContain('没有替玩家决定反应、同意、升级或结果');
+    expect(prompt).toContain('输出前静默复核：阶段没有跳跃');
     expect(prompt.indexOf('成人段落输出前复核')).toBeGreaterThan(prompt.indexOf('玩家输入'));
-    expect(prompt).toContain('不要使用“甬道”这类女性器官隐喻');
-    expect(prompt).toContain('也不要用“巨物、坚硬”这类替代男性器官或勃起状态的词');
+    expect(prompt).toContain('不要用“甬道、花径、秘处、玉峰、春潮、云雨、攻城略地”等词遮蔽实际部位');
+    expect(prompt).toContain('也不要用“巨物、坚硬”等词替代男性器官或勃起状态');
     expect(prompt).toContain('imagePromptAnchor 是独立的文生图可画标签');
     expect(prompt).toContain('可保留如玉、细腻这类可画风格词');
     expect(prompt).toContain('不得反灌到 description');
@@ -1377,29 +1705,57 @@ describe('context selection', () => {
     expect(prompt).toContain('不要使用 callSign、publicRelationship、appearanceExpansion');
     expect(prompt).toContain('1980s 香港警队职级资料库');
     expect(prompt).toContain('SPC 绝不是 SP');
+    expect(prompt).toContain('香港警队行动单位资料库');
+    expect(prompt).toContain('Emergency Unit（冲锋队 EU）是总区级快速反应军装单位');
+    expect(prompt).toContain('Sergeant 通常承担一辆冲锋车的车辆指挥');
+    expect(prompt).toContain('PTU 可以在平日补充街面警力，但不能和 EU 混称');
+    expect(prompt).toContain('普通口角、噪音投诉');
+    expect(prompt).toContain('默认由分区军装处理');
+    expect(prompt).toContain('“冲锋车”特指 EU');
+    expect(prompt).not.toContain('EU = PTU');
+    expect(prompt).toContain('正式晋升、降职、复职或职级纠正确已生效时');
+    expect(prompt).toContain('必须写 playerPatch.policePanel.careerPath.currentRank');
+    expect(prompt).toContain('同一警察身份内的职级变化不是身份转换');
+    expect(prompt).toContain('同一警察身份内正式调往新警署、部门或行动单位');
+    expect(prompt).toContain('必须写 policeRoleProfilePatch');
     expect(prompt).toContain('narrativeText');
     expect(prompt).toContain('writebackVersion');
     expect(prompt).toContain('writeback');
+    expect(prompt).toContain('所有状态模块必须放进顶层 writeback 对象');
     expect(prompt).toContain('playerPatch');
     expect(prompt).toContain('financePatch');
     expect(prompt).toContain('grayLedgerPatch');
     expect(prompt).toContain('assetPatch');
     expect(prompt).toContain('placePatches');
     expect(prompt).toContain('casePatches');
+    expect(prompt).toContain('"playerRole": "execute"');
+    expect(prompt).toContain('禁止使用 playerAccessLevel');
+    expect(prompt).not.toContain("playerAccessLevel: 'rumor'");
     expect(prompt).toContain('organizationPatches');
     expect(prompt).toContain('structureTree');
     expect(prompt).toContain('新人物必须用 actorPatches 创建');
     expect(prompt).toContain('actorId 必须稳定');
+    expect(prompt).toContain('NPC 在 narrativeText 中明确进入、离开、换到另一房间');
+    expect(prompt).toContain('必须至少同步更新对应 actorPatches.presence');
+    expect(prompt).toContain('presence=present 只用于与玩家处在同一可见场景');
+    expect(prompt).toContain('禁止只在 statusSummary/recentInteractionMemory 写“离开”却让旧 presentActorIds 保留');
     expect(prompt).toContain('新普通 NPC 的 name 必须是可长期绑定身份的完整姓名');
     expect(prompt).toContain('缺少性别或年龄时不要创建新 Actor');
     expect(prompt).toContain('不要用“某人的手下/纹身男人/可疑男子”等临时描述凑 name');
     expect(prompt).toContain('roleProfiles');
     expect(prompt).toContain('NPC 记忆统一写入 actorMemories');
     expect(prompt).toContain('普通 NPC 不要写 vitalsPatch');
-    expect(prompt).toContain('玩家发生追逐、奔跑、搏斗、摔伤、负重、长时间巡逻、熬夜或休息恢复等明显体力变化时');
+    expect(prompt).toContain('每回合必须返回顶层 playerVitalsReview');
+    expect(prompt).toContain('playerVitalsReview.changed=false');
+    expect(prompt).toContain('changed=true 时，必须同时写 actorPatches');
+    expect(prompt).toContain('conditionPersistence');
+    expect(prompt).toContain('生命/体力是稀疏的游戏状态，不是逐回合代谢模拟');
+    expect(prompt).toContain('普通文书、交谈、等待');
     expect(prompt).toContain('警察写 police，社团人物写 triad，普通市民写 civilian');
     expect(prompt).toContain('正文一旦写出玩家脱下、换上、换成、改穿、穿上、伪装或更衣');
     expect(prompt).toContain('当前身份是警察不等于当前穿军装');
+    expect(prompt).toContain('卧底任务结束不是 leave 或新建身份');
+    expect(prompt).toContain('kind="cover_exit"');
     expect(prompt).toContain('大社团对玩家的态度');
     expect(prompt).toContain('未知职位或未知人员写“未知”');
     expect(prompt).toContain('不得把当前游戏时间之后才出现的真实影视剧、歌曲、新闻或公共事件写成已经发生、正在播出或正在流行');
@@ -1632,10 +1988,20 @@ describe('context selection', () => {
     const parsed = JSON.parse(prompt.slice(markerIndex + marker.length).trim());
 
     expect(parsed).toHaveProperty('writebackVersion');
+    expect(parsed.writebackVersion).toBe('1.7');
     expect(parsed).toHaveProperty('narrativeText');
     expect((parsed.narrativeText as string).length).toBeGreaterThan(220);
     expect(((parsed.narrativeText as string).match(/【[^】]+】/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(parsed).toHaveProperty('writeback');
+    expect(parsed).toHaveProperty('playerVitalsReview');
+    expect(parsed.playerVitalsReview).toMatchObject({ changed: false });
+    expect(parsed).toHaveProperty('pregnancyLifecycleReview');
+    expect(parsed.pregnancyLifecycleReview).toMatchObject({ changed: false, events: [] });
+    expect(
+      (parsed.writeback.actorPatches as Array<{ actorId?: string }>).some(
+        (patch) => patch.actorId === 'player'
+      )
+    ).toBe(false);
   });
 
   it('excludes hidden present actors', () => {
@@ -1693,6 +2059,73 @@ describe('context selection', () => {
     expect(presentActorIds).toContain(sceneActor.actorId);
     expect(presentActorIds).not.toContain(otherSceneActor.actorId);
     expect(presentActorIds).not.toContain(otherPlaceActor.actorId);
+  });
+
+  it('projects a named archive actor identity even when that actor has no routed memory', () => {
+    const state = createInitialRuntimeState();
+    state.memories = {};
+    state.actors.actor_shen_jinghe = {
+      ...state.actors.player,
+      actorId: 'actor_shen_jinghe',
+      name: '沈景和',
+      englishName: 'Shum King-wo',
+      aliases: ['沈老板'],
+      callName: '和叔',
+      publicIdentity: '九龙旧书店老板',
+      actualIdentitySummary: '玩家认识的九龙旧书店老板。',
+      profileSummary: '经营旧书店多年，熟悉附近街坊和旧报刊。',
+      positionSummary: '平日在九龙旧书店看铺。',
+      statusSummary: '最近仍在照常营业。',
+      relationshipSummary: '曾替玩家留过一批旧报纸。',
+      presence: 'absent',
+      currentSceneId: undefined,
+      visibility: 'player_known',
+      importance: 70
+    } as Actor;
+
+    const context = selectContext(state, '去找沈景和，问他那批旧报纸。');
+    const prompt = composePrompt(context, '去找沈景和，问他那批旧报纸。');
+
+    expect(context.npcMemoryProjection.entries).toEqual([]);
+    expect(context.explicitActorReferenceProjection.actors).toContainEqual(
+      expect.objectContaining({
+        actorId: 'actor_shen_jinghe',
+        name: '沈景和',
+        publicIdentity: '九龙旧书店老板',
+        ambiguous: false
+      })
+    );
+    expect(prompt).toContain('玩家点名人物身份锚点');
+    expect(prompt).toContain('actorId: actor_shen_jinghe');
+    expect(prompt).toContain('九龙旧书店老板');
+    expect(prompt).toContain('必须复用此 actorId');
+  });
+
+  it('marks same-name archive references as ambiguous instead of allowing a third identity', () => {
+    const state = createInitialRuntimeState();
+    for (const actorId of ['actor_chen_one', 'actor_chen_two']) {
+      state.actors[actorId] = {
+        ...state.actors.player,
+        actorId,
+        name: '陈伟',
+        aliases: [],
+        publicIdentity: actorId.endsWith('one') ? '警署文员' : '码头工人',
+        presence: 'absent',
+        currentSceneId: undefined,
+        visibility: 'player_known',
+        importance: 60
+      } as Actor;
+    }
+
+    const context = selectContext(state, '去找陈伟。');
+
+    expect(context.explicitActorReferenceProjection.actors).toHaveLength(2);
+    expect(
+      context.explicitActorReferenceProjection.actors.every((actor) => actor.ambiguous)
+    ).toBe(true);
+    expect(context.explicitActorReferenceProjection.diagnostics.ambiguousMatchValues).toContain(
+      '陈伟'
+    );
   });
 
   it('builds actor context packets with NPC profile, relationship, role data, and limited memories', () => {
@@ -2008,6 +2441,7 @@ describe('context selection', () => {
       aliases: ['大辉', 'Big Fai'],
       callName: '辉哥',
       gender: 'male',
+      birthDate: '1956-06-01',
       computedAge: 32,
       visualAgeAnchor: '三十出头',
       currentIdentity: 'gang_member',
@@ -2113,9 +2547,14 @@ describe('context selection', () => {
 
     expect(prompt).toContain('香闺秘档');
     expect(prompt).not.toContain('女性扩展档案状态');
-    expect(prompt).toContain('子宫档案: 状态=未受孕 / 宫口状态=紧闭 / 生命周期=无活动妊娠 / 历史=无 / 记录=无');
+    expect(prompt).toContain('子宫档案: 状态=未受孕 / 宫口状态=紧闭 / 生命周期=无活动妊娠 / 后续待验孕=无 / 历史=无 / 记录=无');
     expect(prompt).toContain('部位档案: 胸部=乳房饱满柔软，乳晕色泽自然，乳头敏感。 / 小穴=阴唇紧致细嫩，穴口收敛，阴蒂敏感。 / 屁穴=臀缝紧窄，屁穴小而紧闭，周围皱褶细密。');
     expect(prompt).toContain('pregnancyRiskPatches');
+    expect(prompt).toContain('pregnancyLifecycleReview');
+    expect(prompt).toContain('pregnancy_confirmed');
+    expect(prompt).toContain('本地只追加接触记录，不会建立第二个妊娠');
+    expect(prompt).toContain('paternityCandidates');
+    expect(prompt).toContain('列出全部候选');
     expect(prompt).toContain('本地引擎独占概率、验孕、孕期和分娩日期真值');
     expect(prompt).not.toContain('锚点已建立');
     expect(prompt).not.toContain('成人私密档案');
@@ -2369,6 +2808,7 @@ describe('context selection', () => {
     expect(prompt).toContain('The player has one statement.');
     expect(prompt).toContain('Bar owner statement');
     expect(prompt).toContain('The bar owner statement was added.');
+    expect(prompt).toContain('casePatches must include both that stable leadActorId and leadActorName');
     expect(prompt).toContain('DEFERRED_EVENT_PROJECTION');
     expect(prompt).toContain('Lead officer review');
     expect(prompt).toContain('every due event listed above must receive exactly one deferredEventPatches item');
@@ -2972,5 +3412,253 @@ describe('era prompt projection', () => {
     expect(prompt).toContain('1994 都市裂缝');
     expect(prompt).toContain('1994-07-08');
     expect(prompt).not.toContain('worldpack: hk_1988');
+  });
+});
+
+describe('narrative locale projection', () => {
+  it('requires Hong Kong Traditional Chinese for player-visible turn output', () => {
+    const state = createInitialRuntimeState();
+    const prompt = composePrompt(selectContext(state, '继续巡逻'), '继续巡逻', {
+      locale: 'zh-Hant-HK'
+    });
+
+    expect(prompt).toContain('## 玩家可见输出语言');
+    expect(prompt).toContain('香港繁體中文');
+    expect(prompt).toContain('suggestedActions');
+    expect(prompt).toContain('JSON 字段名、稳定 ID、枚举值');
+  });
+});
+
+describe('actor age projection', () => {
+  it('projects age from birth date and current game time instead of a stale cached value', () => {
+    const state = createInitialRuntimeState({
+      birthDate: '1972-01-15',
+      startTime: { year: 1989, month: 2, day: 1, hour: 12, minute: 0 }
+    });
+    state.actors.player.computedAge = 90;
+
+    const context = selectContext(state, '继续今天的工作');
+    const playerPacket = context.actorPackets.find((actor) => actor.actorId === 'player');
+    const prompt = composePrompt(context, '继续今天的工作');
+
+    expect(playerPacket?.computedAge).toBe(17);
+    expect(prompt).toContain('性别/年龄: 男 / 17岁');
+    expect(prompt).toContain('既有 actorId 的 birthDate 与 computedAge 是引擎保护字段');
+  });
+});
+
+describe('dramatic-content prompt projection', () => {
+  it('preserves the exact legacy static projections when no orchestration context is supplied', () => {
+    const state = createInitialRuntimeState();
+    const prompt = composePrompt(selectContext(state, '继续巡逻'), '继续巡逻');
+
+    expect(prompt).toContain('## 影视角色种子资料库');
+    expect(prompt).toContain('## 时代种子人物资料库');
+    expect(prompt).toContain('## Storypack 投影');
+    expect(prompt).not.toContain('## 戏剧化前台编排');
+  });
+
+  it('routes optional static candidates through one orchestration section without removing canonical facts', () => {
+    const state = createInitialRuntimeState();
+    const context = selectContext(state, '继续巡逻');
+      const dramaPlanningContext: DramaPlanningContext = {
+        planningScope: 'turn',
+        planningMode: 'full',
+        turnCounter: state.turnCounter,
+        currentTime: state.time,
+        playerInput: '继续巡逻',
+        settings: {
+          ...defaultDramaticContentSettings,
+          pacing: 'balanced'
+        },
+        pacing: 'balanced',
+        materialBudget: {
+          dynamicLimit: 10,
+          staticLimit: 5,
+          supportLimit: 2,
+          quietWindowTurns: 6
+        },
+        playerRoleContext: {
+          identity: state.player.currentIdentity,
+          publicRole: '警员',
+          stableContactActorIds: [],
+          activeMatterIds: []
+        },
+        currentPlaceId: state.location.currentPlaceId,
+        currentSceneId: state.location.currentSceneId,
+        recentTurnSummaries: [],
+        requiredContextSources: [],
+        userPrioritySources: [],
+        optionalDynamicSources: [],
+        staticSeedSources: [],
+        recentExecutions: [],
+        filterRuleIds: []
+      };
+    const dramaPlan: DramaPlan = {
+      planId: `drama_plan_turn_${state.turnCounter}`,
+      planningScope: 'turn',
+      mode: 'quiet',
+      primarySource: null,
+      supportSources: [],
+      sceneFunction: 'rest',
+      intensity: 'none',
+      playerMayIgnore: true,
+      maxNewActors: 0,
+      reasonSummary: '本回合不需要额外突出候选素材。'
+    };
+    const foregroundContract = createForegroundContract({
+      context: dramaPlanningContext,
+      promptContext: context,
+      plan: dramaPlan,
+      origin: 'local_fallback'
+    });
+    const prompt = composePrompt(context, '继续巡逻', {
+      dramaPlanningContext,
+      dramaPlan,
+      foregroundContract
+    });
+
+    expect(prompt).not.toContain('## 影视角色种子资料库');
+    expect(prompt).not.toContain('## 时代种子人物资料库');
+    expect(prompt).not.toContain('## Storypack 投影');
+    expect(prompt).toContain('## 戏剧化前台编排');
+    expect(prompt).toContain('计划只是本回合的编排建议，不是世界事实');
+    expect(prompt).toContain('"dramaExecutionTrace"');
+    expect(prompt).toContain('未采用计划也必须返回 not_used 空回执，不得省略');
+    expect(prompt).toContain('## DYNAMIC_CONTEXT');
+    expect(prompt).toContain('## 城市局势后台轨道投影');
+  });
+
+  it('lists stable eligible trait and equipped-item ids in the local judgement contract', () => {
+    const state = createInitialRuntimeState({
+      traits: [
+        {
+          traitId: 'trait_street_sense',
+          name: '街头直觉',
+          source: 'opening',
+          description: '熟悉街面危险信号。',
+          effectSummary: '辨认街头风险时可能提供帮助。',
+          scopes: ['observation'],
+          status: 'active',
+          visibility: 'player_known'
+        },
+        {
+          traitId: 'trait_dormant',
+          name: '休眠特质',
+          source: 'opening',
+          description: '当前不生效。',
+          effectSummary: '当前不可提供修正。',
+          scopes: ['other'],
+          status: 'dormant',
+          visibility: 'player_known'
+        }
+      ]
+    });
+    state.assets.items.asset_baton = {
+      itemId: 'asset_baton',
+      category: 'equipment',
+      name: '警棍',
+      summary: '执勤使用的标准警棍。',
+      relatedActorIds: [],
+      relatedCaseIds: [],
+      relatedPlaceIds: [],
+      visibility: 'player_known',
+      importance: 30
+    };
+    state.assets.items.asset_radio = {
+      itemId: 'asset_radio',
+      category: 'equipment',
+      name: '对讲机',
+      summary: '执勤联络设备。',
+      relatedActorIds: [],
+      relatedCaseIds: [],
+      relatedPlaceIds: [],
+      visibility: 'player_known',
+      importance: 20
+    };
+    state.assets.equippedItemIds = ['asset_baton'];
+
+    const prompt = composePrompt(selectContext(state, '我先观察巷口，再准备上前控制。'), '我先观察巷口，再准备上前控制。', {
+      localJudgement: {
+        presetRoll: 42,
+        attributes: state.player.attributes,
+        gameDifficulty: 'standard',
+        sources: collectLocalJudgementSources(state)
+      }
+    });
+
+    expect(prompt).toContain('sourceType=trait sourceId=trait_street_sense name=街头直觉');
+    expect(prompt).toContain('sourceType=equipment sourceId=asset_baton name=警棍');
+    expect(prompt).not.toContain('sourceId=trait_dormant');
+    expect(prompt).not.toContain('sourceId=asset_radio');
+    expect(prompt).toContain('trait/equipment 因素必须同时写出下方对应的稳定 sourceId');
+    expect(prompt).toContain('无相关来源时 factors 可以为空');
+    expect(prompt).toContain('"sourceType": "preparation"');
+    expect(prompt).toContain('"sourceType": "environment"');
+  });
+
+  it('only permits weather writeback for an actual condition change', () => {
+    const state = createInitialRuntimeState();
+    const prompt = composePrompt(
+      selectContext(state, '继续在当前天气下巡逻。'),
+      '继续在当前天气下巡逻。'
+    );
+
+    expect(prompt).toContain('不要仅因再次描写其影响而写 weatherPatch');
+    expect(prompt).toContain('新 condition 与当前 condition 不同时');
+    expect(prompt).toContain('天气到期后的变化由本地系统处理');
+    expect(prompt).toContain('不得为了气氛反复延长细雨、大雨、雷雨或台风');
+  });
+
+  it('projects legacy NPC relative-time memories as anchored absolute dates', () => {
+    const state = createInitialRuntimeState({
+      startTime: { year: 1988, month: 12, day: 8, hour: 10, minute: 0 }
+    });
+    state.actors.npc_temporal_contact = {
+      ...state.actors.player,
+      actorId: 'npc_temporal_contact',
+      name: '阿玲',
+      aliases: [],
+      presence: 'absent',
+      visibility: 'player_known'
+    };
+    state.memories.memory_temporal_legacy = createMemory('memory_temporal_legacy', {
+      text: '玩家说明天到茶餐厅见面。',
+      kind: 'actor',
+      tier: 'short_term',
+      relatedActorIds: ['npc_temporal_contact'],
+      gameTime: { year: 1988, month: 12, day: 1, hour: 10, minute: 0 }
+    });
+
+    const prompt = composePrompt(selectContext(state, '去找阿玲谈之前的约定'), '去找阿玲谈之前的约定');
+
+    expect(prompt).toContain('memory=玩家说1988年12月2日到茶餐厅见面。');
+    expect(prompt).toContain('temporalReferences=absolute=1988年12月02日');
+    expect(prompt).toContain('相对本回合为6天前');
+    expect(prompt).not.toContain('memory=玩家说明天到茶餐厅见面。');
+    expect(state.memories.memory_temporal_legacy.text).toBe('玩家说明天到茶餐厅见面。');
+  });
+
+  it('keeps prompt history sourced from StoryEntry.text without serializing blocks again', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_story_block_prompt_regression',
+      speaker: 'narrator',
+      text: 'VISIBLE_STORY_TEXT',
+      gameTime: state.time,
+      blocks: [
+        {
+          type: 'narration',
+          text: 'BLOCK_ONLY_MARKER',
+          sourceStyle: 'plain'
+        }
+      ]
+    });
+
+    const prompt = composePrompt(selectContext(state, '继续处理现场'), '继续处理现场');
+    expect(prompt).toContain('VISIBLE_STORY_TEXT');
+    expect(prompt).not.toContain('BLOCK_ONLY_MARKER');
+    expect(prompt).toContain('presentationHints');
+    expect(prompt).toContain('innerMonologueEmotions');
   });
 });

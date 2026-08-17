@@ -15,6 +15,7 @@ describe('monthly finance settlement', () => {
   it('settles active cashflows when the game time enters a later month', () => {
     const state = createInitialRuntimeState({
       currentIdentity: 'civilian',
+      civilianProfileId: 'unemployed',
       startTime: { year: 1988, month: 8, day: 31, hour: 23, minute: 50 }
     });
     state.finance.bankBalance = 1000;
@@ -82,6 +83,7 @@ describe('monthly finance settlement', () => {
   it('settles missed months and keeps only the latest three reports', () => {
     const state = createInitialRuntimeState({
       currentIdentity: 'civilian',
+      civilianProfileId: 'unemployed',
       startTime: { year: 1988, month: 8, day: 1, hour: 8, minute: 0 }
     });
     state.finance = upsertCashflow(state.finance, {

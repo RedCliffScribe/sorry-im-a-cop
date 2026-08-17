@@ -131,7 +131,9 @@ describe('identity prompt projection', () => {
     expect(prompt).toContain('主角与 NPC 都不会因为这里保存了事实而自动知道');
     expect(prompt).toContain('identityContextPatch');
     expect(prompt).toContain('secretFactPatches');
-    expect(prompt).toContain('必须同步写 playerPatch.clothing / playerPatch.equipment');
+    expect(prompt).toContain('必须同步写 playerPatch.clothing');
+    expect(prompt).toContain('assetPatch.equippedItemIds');
+    expect(prompt).toContain('不得只在 narrativeText 或 playerPatch.equipment 自由文本里写领装');
   });
 
   it('uses the police shell for a triad operative embedded in the police while hiding the triad profile from actor packets', () => {

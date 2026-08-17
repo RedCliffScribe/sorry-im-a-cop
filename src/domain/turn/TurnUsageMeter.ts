@@ -1,5 +1,5 @@
 import type { MemoryEmbeddingClient } from '../memory/MemoryEmbeddingClient';
-import type { NarratorClient } from '../narrator/NarratorClient';
+import type { NarratorClient, NarratorInput } from '../narrator/NarratorClient';
 import { estimateNarrativeTokens } from '../narrator/estimateNarrativeTokens';
 import type { TurnApiRoute, TurnApiUsage } from '../runtime/types';
 
@@ -9,6 +9,12 @@ function serializeOutput(value: unknown): string {
   } catch {
     return String(value ?? '');
   }
+}
+
+function serializeInput(input: NarratorInput): string {
+  return typeof input === 'string'
+    ? input
+    : input.messages.map((message) => message.content).join('\n');
 }
 
 export class TurnUsageMeter {
@@ -49,13 +55,18 @@ export class TurnUsageMeter {
           });
           this.record(
             route,
-            estimateNarrativeTokens(prompt),
+            estimateNarrativeTokens(serializeInput(prompt)),
             estimateNarrativeTokens(rawText || serializeOutput(result)),
             Math.max(0, Date.now() - startedAt)
           );
           return result;
         } catch (error) {
-          this.record(route, estimateNarrativeTokens(prompt), 0, Math.max(0, Date.now() - startedAt));
+          this.record(
+            route,
+            estimateNarrativeTokens(serializeInput(prompt)),
+            0,
+            Math.max(0, Date.now() - startedAt)
+          );
           throw error;
         }
       }

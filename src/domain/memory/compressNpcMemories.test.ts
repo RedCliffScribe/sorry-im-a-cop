@@ -71,6 +71,14 @@ describe('NPC memory compression', () => {
       const memory = actorMemory(`npc_memory_${index}`, actorId, index);
       state.memories[memory.memoryId] = memory;
     }
+    state.memories.npc_memory_1.temporalReferences = [
+      {
+        sourcePhrase: '后天',
+        resolvedStart: { year: 1984, month: 1, day: 3, hour: 0, minute: 0 },
+        resolvedEnd: { year: 1984, month: 1, day: 3, hour: 23, minute: 59 },
+        precision: 'day'
+      }
+    ];
     const client = new FakeMemorySummaryClient();
 
     const result = await compressNpcMemories(state, client, undefined, { maxOperations: 1 });
@@ -84,8 +92,13 @@ describe('NPC memory compression', () => {
     expect(coldSources).toHaveLength(8);
     expect(coldSources.every((memory) => !memory.embeddingVector && !memory.embeddingText)).toBe(true);
     expect(layers.midTerm[0].importance).toBe(50);
+    expect(layers.midTerm[0].temporalReferences).toContainEqual(
+      expect.objectContaining({ sourcePhrase: '后天', precision: 'day' })
+    );
     expect(result.state.actors[actorId].recentInteractionMemory).toBe('第 17 次持续互动');
     expect(client.prompts[0]).toContain('MEMORY_SUBJECT=NPC');
+    expect(client.prompts[0]).toContain('"resolvedStart"');
+    expect(client.prompts[0]).not.toContain('"sourcePhrase"');
     expect(client.prompts[0]).not.toContain('"importance"');
   });
 

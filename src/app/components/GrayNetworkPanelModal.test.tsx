@@ -13,6 +13,10 @@ describe('GrayNetworkPanelModal', () => {
     const dialog = screen.getByRole('dialog', { name: '社团' });
     expect(dialog).toHaveTextContent('社团档案');
     expect(within(dialog).getByRole('region', { name: '新义安社团面板' })).toHaveTextContent('玩家态度');
+    expect(dialog).toHaveTextContent('社团本色');
+    expect(dialog).toHaveTextContent('话事与交接');
+    expect(dialog).toHaveTextContent('势力范围与活动线');
+    expect(dialog).toHaveTextContent('并非排他控制');
     expect(dialog).toHaveTextContent('街面公开可知');
     expect(dialog).not.toHaveTextContent('隐藏省略');
     expect(dialog).not.toHaveTextContent('公开名号，细节待确认');
@@ -27,12 +31,19 @@ describe('GrayNetworkPanelModal', () => {
     expect(within(dialog).getByRole('button', { name: /十四K/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /和胜和/ })).toBeInTheDocument();
     expect(dialog).toHaveTextContent('组织架构');
-    expect(dialog).toHaveTextContent('坐馆');
-    expect(dialog).toHaveTextContent('叔父辈');
-    expect(dialog).toHaveTextContent('地区话事人');
+    expect(dialog).toHaveTextContent('核心主事层');
+    expect(dialog).toHaveTextContent('地区线负责人');
     expect(dialog).toHaveTextContent('人员未知');
     expect(dialog).toHaveTextContent('玩家态度');
     expect(dialog).not.toHaveTextContent('大社团层级公开可知');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /和胜和/ }));
+    expect(dialog).toHaveTextContent('坐馆与议事层');
+    expect(dialog).toHaveTextContent('叔父与调停人');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /十四K/ }));
+    expect(dialog).toHaveTextContent('支系名义层');
+    expect(dialog).toHaveTextContent('跨线中间人');
   });
 
   it('groups area records and suggested actions under the selected society', () => {
@@ -167,6 +178,48 @@ describe('GrayNetworkPanelModal', () => {
     expect(dialog).toHaveTextContent('对玩家保持戒备，认为他近期查夜场太勤。');
     expect(dialog).toHaveTextContent('旺角与尖沙咀外围有人试探夜场看场线。');
     expect(dialog).toHaveTextContent('若玩家继续追问夜场账目，可能引来外围成员试探。');
+  });
+
+  it('renders sparse leadership and activity-area evolution from society writeback', () => {
+    const base = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '刘博' });
+    const response = narratorResponseSchema.parse({
+      narrativeText: '堂口的议事风声传了出来。',
+      turnSummary: '新义安内部开始重新协调旺角线的人事。',
+      suggestedActions: [],
+      writeback: {
+        organizationPatches: [
+          {
+            organizationId: 'org_sun_yee_on',
+            triadState: {
+              leadership: {
+                phase: 'consultation',
+                visibleSummary: '核心主事层正在听取两条地区线的意见，尚未形成公开结果。',
+                nextMilestone: '预计三日内再议旺角夜场的人事安排。',
+                confidence: 'medium'
+              },
+              activityAreas: [
+                {
+                  placeId: 'place_portland_street',
+                  statusSummary: '旺角夜场线暂由资深联络人维持日常交代。',
+                  pressureSummary: '警方近期巡查增加，未经批准的街面冲突会被迅速切割。',
+                  confidence: 'medium'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
+    const state = applyNarratorResponse(base, response);
+
+    render(<GrayNetworkPanelModal state={state} onClose={vi.fn()} onDraftPlayerAction={vi.fn()} />);
+    const dialog = screen.getByRole('dialog', { name: '社团' });
+
+    expect(dialog).toHaveTextContent('内部协调');
+    expect(dialog).toHaveTextContent('核心主事层正在听取两条地区线的意见');
+    expect(dialog).toHaveTextContent('预计三日内再议旺角夜场的人事安排');
+    expect(dialog).toHaveTextContent('旺角夜场线暂由资深联络人维持日常交代');
+    expect(dialog).toHaveTextContent('警方近期巡查增加');
   });
 
   it('renders organization structure updates from society writeback', () => {
@@ -371,5 +424,141 @@ describe('GrayNetworkPanelModal', () => {
     expect(detail).toHaveTextContent('外围收风暂时中断');
     expect(detail).toHaveTextContent('旺角外围联络方式改变');
     expect(detail).toHaveTextContent('街面线索会变得更零散');
+  });
+
+  it('defaults to the current public triad and shows its existing patron, peer, direction, and responsibility', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    const profile = state.actors.player.roleProfiles.triad!;
+    state.actors.player.roleProfiles.triad = {
+      ...profile,
+      organizationId: 'org_wo_shing_wo',
+      societyName: '和胜和',
+      roleTitle: '庙街外围成员',
+      rankSummary: '外围新人',
+      territorySummary: '庙街与油麻地一带',
+      patronActorIds: ['actor_triad_patron'],
+      peerActorIds: ['actor_triad_peer'],
+      obligationSummary: '先了解街面情况，再按规矩向上线交代。',
+      riskSummary: '不可公开借用社团名义扩大冲突。'
+    };
+    state.actors.actor_triad_patron = {
+      ...state.actors.player,
+      actorId: 'actor_triad_patron',
+      name: '阿成',
+      currentIdentity: 'gang_member',
+      publicIdentity: '庙街地区线联络人'
+    };
+    state.actors.actor_triad_peer = {
+      ...state.actors.player,
+      actorId: 'actor_triad_peer',
+      name: '阿杰',
+      currentIdentity: 'gang_member',
+      publicIdentity: '同组外围成员'
+    };
+    state.dynamicEvents.currentMatters.matter_triad_responsibility = {
+      id: 'matter_triad_responsibility',
+      title: '弄清摊档争执',
+      summary: '阿成交代先了解争执原因，不要公开使用社团名义。',
+      status: 'active',
+      priority: 72,
+      visibility: 'known',
+      source: 'triad_responsibility',
+      matterKind: 'social',
+      pressureLevel: 2,
+      responseWindow: 'today',
+      currentHook: '摊档双方仍在互相指责。',
+      relatedActorIds: ['actor_triad_patron', 'actor_triad_peer'],
+      relatedPlaceIds: [state.location.currentPlaceId],
+      relatedCaseIds: [],
+      relatedOrganizationIds: ['org_wo_shing_wo'],
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+    state.dynamicEvents.currentMatters.matter_hidden_instruction = {
+      ...state.dynamicEvents.currentMatters.matter_triad_responsibility,
+      id: 'matter_hidden_instruction',
+      title: '玩家尚未知情的秘密交代',
+      priority: 100,
+      visibility: 'hidden'
+    };
+    state.backgroundEvolution.organizationTracks.track_wo_shing_wo = {
+      trackId: 'track_wo_shing_wo',
+      organizationId: 'org_wo_shing_wo',
+      status: 'active',
+      objective: '降低庙街警方关注，先恢复街面稳定',
+      currentAction: '由地区线分别了解摊档纠纷的来龙去脉',
+      currentStatus: '老成员希望调停，年轻成员主张强硬处理。',
+      startedAt: state.time,
+      nextReviewAt: { ...state.time, day: state.time.day + 1 },
+      relatedActorIds: ['actor_triad_patron'],
+      relatedPlaceIds: [state.location.currentPlaceId],
+      relatedCaseIds: [],
+      relatedCityTrackIds: [],
+      visibility: 'player_known'
+    };
+
+    render(<GrayNetworkPanelModal state={state} onClose={vi.fn()} onDraftPlayerAction={vi.fn()} />);
+
+    const dialog = screen.getByRole('dialog', { name: '社团' });
+    const detail = within(dialog).getByRole('region', { name: '和胜和社团面板' });
+    const membership = within(detail).getByRole('region', { name: '我的社团' });
+    expect(detail).toHaveTextContent('当前所属社团');
+    expect(membership).toHaveTextContent('庙街外围成员');
+    expect(membership).toHaveTextContent('阿成');
+    expect(membership).toHaveTextContent('阿杰');
+    expect(membership).toHaveTextContent('降低庙街警方关注');
+    expect(membership).toHaveTextContent('弄清摊档争执');
+    expect(membership).toHaveTextContent('交代人：阿成');
+    expect(membership).not.toHaveTextContent('玩家尚未知情的秘密交代');
+  });
+
+  it('does not expose a hidden triad membership while the current public identity is police', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police', playerName: '陈启明' });
+    state.actors.player.roleProfiles.triad = {
+      status: 'hidden',
+      organizationId: 'org_wo_shing_wo',
+      societyName: '和胜和',
+      roleTitle: '秘密地区成员',
+      rankSummary: '不可公开的社团位置',
+      territorySummary: '秘密庙街线',
+      patronActorIds: ['actor_secret_patron'],
+      peerActorIds: [],
+      rivalActorIds: [],
+      obligationSummary: '秘密社团责任',
+      riskSummary: '身份暴露风险'
+    };
+    state.actors.actor_secret_patron = {
+      ...state.actors.player,
+      actorId: 'actor_secret_patron',
+      name: '秘密上线'
+    };
+    state.dynamicEvents.currentMatters.matter_hidden_triad_responsibility = {
+      id: 'matter_hidden_triad_responsibility',
+      title: '不应显示的社团责任',
+      summary: '警察公开身份下不应在社团面板显示。',
+      status: 'active',
+      priority: 100,
+      visibility: 'hidden',
+      source: 'triad_responsibility',
+      matterKind: 'social',
+      pressureLevel: 3,
+      responseWindow: 'today',
+      currentHook: '这是隐藏身份下的内部交代。',
+      relatedActorIds: ['actor_secret_patron'],
+      relatedPlaceIds: [state.location.currentPlaceId],
+      relatedCaseIds: [],
+      relatedOrganizationIds: ['org_wo_shing_wo'],
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+
+    render(<GrayNetworkPanelModal state={state} onClose={vi.fn()} onDraftPlayerAction={vi.fn()} />);
+
+    const dialog = screen.getByRole('dialog', { name: '社团' });
+    expect(within(dialog).queryByRole('region', { name: '我的社团' })).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent('秘密地区成员');
+    expect(dialog).not.toHaveTextContent('秘密上线');
+    expect(dialog).not.toHaveTextContent('秘密社团责任');
+    expect(dialog).not.toHaveTextContent('不应显示的社团责任');
   });
 });

@@ -89,6 +89,21 @@ describe('runBackgroundEvolution', () => {
 
   it('does not call an API when no candidates are due', async () => {
     const state = createInitialRuntimeState();
+    state.dynamicEvents.signals.signal_old = {
+      id: 'signal_old',
+      title: '早已过去的风声',
+      summary: '即使没有后台候选，本地生命周期也应整理它。',
+      signalType: 'rumor',
+      reliability: 'unknown',
+      status: 'active',
+      visibility: 'known',
+      relatedActorIds: [],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      relatedOrganizationIds: [],
+      createdAt: addGameHours(state.time, -300),
+      updatedAt: addGameHours(state.time, -300)
+    };
     const selection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_1' });
     const client: NarratorClient = { complete: vi.fn() };
 
@@ -97,6 +112,7 @@ describe('runBackgroundEvolution', () => {
     expect(client.complete).not.toHaveBeenCalled();
     expect(result.status).toBe('skipped');
     expect(result.state.backgroundEvolution.lastRun?.errorReason).toBe('no_candidates');
+    expect(result.state.dynamicEvents.signals.signal_old.status).toBe('archived');
   });
 
   it('records the last applied game time only when validated patches change state', async () => {
@@ -174,5 +190,43 @@ describe('runBackgroundEvolution', () => {
       selectBackgroundEvolutionCandidates({ state: result.state, foregroundTurnId: 'turn_org_next' })
         .organizationCandidates
     ).toEqual([]);
+  });
+
+  it('backs off an unanswered NPC and due city review without inventing narrative facts', async () => {
+    const state = stateWithCandidate();
+    const cityTrack =
+      state.citySituationTracks.track_1988_mong_kok_nightlife_society_pressure;
+    cityTrack.nextReviewAt = { ...state.time };
+    const originalCityBeat = cityTrack.currentBeat;
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_empty_review'
+    });
+    const client: NarratorClient = { complete: vi.fn().mockResolvedValue({}) };
+
+    const result = await runBackgroundEvolution({
+      state,
+      selection,
+      client,
+      foregroundTurnId: 'turn_empty_review'
+    });
+
+    expect(result.status).toBe('succeeded');
+    expect(result.state.backgroundEvolution.npcReviewCooldownUntil?.actor_liu).toEqual(
+      addGameHours(state.time, 24)
+    );
+    expect(
+      result.state.citySituationTracks[cityTrack.trackId].nextReviewAt
+    ).toEqual(addGameHours(state.time, 24));
+    expect(result.state.citySituationTracks[cityTrack.trackId].currentBeat).toBe(
+      originalCityBeat
+    );
+    expect(
+      selectBackgroundEvolutionCandidates({
+        state: result.state,
+        foregroundTurnId: 'turn_after_empty_review'
+      }).npcCandidates
+    ).toEqual([]);
+    expect(result.state.backgroundEvolution.lastAppliedAt).toBeUndefined();
   });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import { createActorDefaults } from '../runtime/actorFactory';
+import { applyManualActorProfileEdit, createManualActorProfileDraft } from '../runtime/manualActorProfile';
 import { PLAYER_POLICE_SALARY_CASHFLOW_ID } from '../finance/playerSalaryCashflow';
+import { recoverCaseWritebackIntents } from '../cases/caseWritebackIntent';
 import { applyNarratorResponse } from './applyWriteback';
 import { validateNarratorResponse as validateNarratorResponseStrict } from './validateWriteback';
 
@@ -17,15 +19,378 @@ function validateNarratorResponse(value: unknown) {
 }
 
 describe('writeback protocol', () => {
+  it('preserves player-corrected stable actor fields while allowing dynamic actor updates', () => {
+    let state = createInitialRuntimeState();
+    state.actors.npc_manual_profile = createActorDefaults({
+      actorId: 'npc_manual_profile',
+      name: '原姓名',
+      currentIdentity: 'civilian',
+      profileSummary: '原简介',
+      personality: '原性格',
+      clothing: '原衣着',
+      relationshipSummary: '原关系',
+      presence: 'present',
+      visibility: 'player_known'
+    });
+    const draft = createManualActorProfileDraft(state.actors.npc_manual_profile);
+    draft.name = '玩家确认姓名';
+    draft.personality = '玩家确认性格';
+    state = applyManualActorProfileEdit(state, 'npc_manual_profile', draft);
+
+    const response = validateNarratorResponse({
+      narrativeText: '人物换上外套，并与玩家建立新的合作默契。',
+      writeback: {
+        actorPatches: [{
+          actorId: 'npc_manual_profile',
+          name: '模型误改姓名',
+          personality: '模型误改性格',
+          clothing: '深色新外套',
+          relationshipSummary: '与玩家形成合作关系'
+        }]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    expect(next.actors.npc_manual_profile.name).toBe('玩家确认姓名');
+    expect(next.actors.npc_manual_profile.personality).toBe('玩家确认性格');
+    expect(next.actors.npc_manual_profile.clothing).toBe('深色新外套');
+    expect(next.actors.npc_manual_profile.relationshipSummary).toBe('与玩家形成合作关系');
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({ code: 'actor_manual_profile_override_preserved' })
+    );
+  });
+
+  it('recovers a case intent with legacy access and locally normalizable list fields', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    const response = validateNarratorResponse({
+      narrativeText: '玩家正式接手案件并登记第一项调查进展。',
+      writeback: {
+        casePatches: [
+          {
+            caseId: 'case_recovered_intent',
+            title: '油麻地伤人案',
+            summary: '报案室已经登记伤人案件，玩家负责初步调查。',
+            status: 'open',
+            playerAccessLevel: 'assigned',
+            relatedActorIds: 'player',
+            activityLog: {
+              kind: '进展',
+              summary: '玩家接收报案材料。',
+              relatedActorIds: 'player'
+            }
+          }
+        ]
+      }
+    });
+
+    expect(response.writeback.casePatches).toEqual([]);
+    const recovered = recoverCaseWritebackIntents(state, response);
+
+    expect(recovered.response.writeback.casePatches).toEqual([
+      expect.objectContaining({
+        caseId: 'case_recovered_intent',
+        status: 'investigating',
+        playerRole: 'execute',
+        relatedActorIds: ['player'],
+        activityLog: [
+          expect.objectContaining({
+            kind: 'note',
+            relatedActorIds: ['player']
+          })
+        ]
+      })
+    ]);
+    expect(recovered.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'case_intent_recovered' })
+    );
+  });
+
+  it('applies tens-of-billions balances exactly and keeps the player mirror synchronized', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '银行完成家族信托款项的账户确认。',
+      writeback: {
+        financePatch: {
+          cashSet: 50_000,
+          bankSet: 50_000_000_000,
+          summary: '账户已按银行结单更新。'
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.finance.cashOnHand).toBe(50_000);
+    expect(next.finance.bankBalance).toBe(50_000_000_000);
+    expect(next.player.economy.cashOnHand).toBe(50_000);
+    expect(next.player.economy.bankBalance).toBe(50_000_000_000);
+  });
+
+  it('preserves structured local judgement factor source metadata', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      writebackVersion: '1.6',
+      narrativeText: '玩家借助警棍控制距离。',
+      writeback: {
+        judgementCheckPatches: [
+          {
+            rulesetVersion: 'v1.1-local-d100',
+            checkId: 'check_grounded_equipment',
+            turnId: 'turn_1',
+            gameTime: state.time,
+            title: '控制近身距离',
+            category: 'melee',
+            relatedActorIds: ['player'],
+            relatedPlaceIds: [state.location.currentPlaceId],
+            relatedCaseIds: [],
+            primaryAttribute: 'action',
+            difficultyTier: 'standard',
+            presetRoll: 42,
+            effectiveTarget: 55,
+            outcome: 'success',
+            shortSummary: '玩家控制住近身距离。',
+            factors: [
+              {
+                sourceType: 'equipment',
+                sourceId: 'asset_baton',
+                label: '警棍在手',
+                value: 5,
+                reason: '已装备的警棍有助于保持控制距离。'
+              }
+            ],
+            visibility: 'player_known'
+          }
+        ]
+      }
+    });
+
+    expect(response.writeback.judgementCheckPatches[0]?.factors).toEqual([
+      {
+        sourceType: 'equipment',
+        sourceId: 'asset_baton',
+        label: '警棍在手',
+        value: 5,
+        reason: '已装备的警棍有助于保持控制距离。'
+      }
+    ]);
+  });
+
+  it('drops only an overflowing money field and records its exact writeback path', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '银行职员重新核对了现金和存款。',
+      writeback: {
+        financePatch: {
+          cashSet: 50_000,
+          bankSet: 100_000_000_000,
+          summary: '银行结单存在一项异常大数。'
+        }
+      }
+    });
+    const next = applyNarratorResponse(state, response);
+
+    expect(response.writeback.financePatch?.cashSet).toBe(50_000);
+    expect(response.writeback.financePatch?.bankSet).toBeUndefined();
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'financePatch', 'bankSet']
+      })
+    );
+    expect(next.finance.cashOnHand).toBe(50_000);
+    expect(next.finance.bankBalance).toBe(state.finance.bankBalance);
+  });
+
+  it('keeps an empty suggested action list recoverable but records a diagnostic warning', () => {
+    const result = validateNarratorResponseStrict({
+      narrativeText: '正文已经正常生成。',
+      turnSummary: '本回合正文已经完成，但主剧情没有给出行动选项。',
+      suggestedActions: [],
+      writeback: {}
+    });
+
+    expect(result.suggestedActions).toEqual([]);
+    expect(result.validationWarnings).toContainEqual({
+      path: ['suggestedActions'],
+      message: '主剧情没有返回本回合行动选项；界面将清空旧选项，避免误用上一回合内容。',
+      code: 'missing_suggested_actions'
+    });
+  });
+
+  it('preserves the structured player vitals review in a valid narrator response', () => {
+    const result = validateNarratorResponseStrict({
+      writebackVersion: '1.6',
+      narrativeText: '玩家留在桌边核对记录。',
+      turnSummary: '玩家核对了值班记录。',
+      suggestedActions: ['继续核对'],
+      playerVitalsReview: {
+        changed: false,
+        reason: '玩家本回合只进行了静态文书工作，身体状态没有变化。'
+      },
+      writeback: {}
+    });
+
+    expect(result.playerVitalsReview).toEqual({
+      changed: false,
+      reason: '玩家本回合只进行了静态文书工作，身体状态没有变化。'
+    });
+  });
+
+  it('promotes known writeback modules misplaced at the narrator response top level', () => {
+    const result = validateNarratorResponseStrict({
+      writebackVersion: '1.6',
+      narrativeText: '玩家下班后回到种植道住所休息。',
+      turnSummary: '玩家离开警署，回到种植道住所并换上居家衣物。',
+      suggestedActions: ['在家休息'],
+      playerVitalsReview: {
+        changed: false,
+        reason: '玩家乘车回家，没有生命或体力变化。'
+      },
+      writeback: {},
+      locationPatch: {
+        currentPlaceId: 'place_player_home',
+        reason: '玩家已经回家。'
+      },
+      playerPatch: {
+        clothing: {
+          currentSummary: '居家衣物。',
+          mode: 'off_duty_plain',
+          lastChangedReason: '回家后换装。'
+        }
+      },
+      currentMatterPatches: [
+        {
+          id: 'matter_wait_for_reply',
+          title: '等待回音',
+          summary: '玩家已经留下字条，等待同事回音。',
+          status: 'dormant',
+          priority: 30,
+          visibility: 'known',
+          source: 'writeback'
+        }
+      ]
+    });
+
+    expect(result.writeback.locationPatch?.currentPlaceId).toBe('place_player_home');
+    expect(result.writeback.playerPatch?.clothing).toMatchObject({
+      currentSummary: '居家衣物。',
+      mode: 'off_duty_plain'
+    });
+    expect(result.writeback.currentMatterPatches).toHaveLength(1);
+    expect(result.validationWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ['writeback', 'locationPatch'],
+          code: 'misplaced_writeback_promoted'
+        }),
+        expect.objectContaining({
+          path: ['writeback', 'playerPatch'],
+          code: 'misplaced_writeback_promoted'
+        }),
+        expect.objectContaining({
+          path: ['writeback', 'currentMatterPatches'],
+          code: 'misplaced_writeback_promoted'
+        })
+      ])
+    );
+  });
+
+  it('salvages the turn and records a diagnostic when playerVitalsReview is malformed', () => {
+    const result = validateNarratorResponseStrict({
+      writebackVersion: '1.6',
+      narrativeText: '玩家留在桌边核对记录。',
+      turnSummary: '玩家核对了值班记录。',
+      suggestedActions: ['继续核对'],
+      playerVitalsReview: {
+        changed: 'no',
+        reason: ''
+      },
+      writeback: {}
+    });
+
+    expect(result.playerVitalsReview).toBeUndefined();
+    expect(result.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['playerVitalsReview', 'changed'],
+        code: 'invalid_type'
+      })
+    );
+  });
+
   it('preserves a valid turn summary while sanitizing an invalid writeback child', () => {
     const result = validateNarratorResponseStrict({
+      writebackVersion: '1.6',
       narrativeText: '正文。',
       turnSummary: '玩家已经把小说前三章寄往报社。',
       suggestedActions: [],
+      playerVitalsReview: {
+        changed: true,
+        reason: '玩家搬运了沉重的稿件箱，体力有所下降。'
+      },
+      dramaPlan: {
+        planId: 'drama_plan_turn_1',
+        planningScope: 'turn',
+        mode: 'quiet',
+        primarySource: null,
+        supportSources: [],
+        sceneFunction: 'rest',
+        intensity: 'none',
+        playerMayIgnore: true,
+        maxNewActors: 0,
+        reasonSummary: '本回合保持安静。'
+      },
+      dramaExecutionTrace: {
+        planId: 'drama_plan_turn_1',
+        status: 'not_used',
+        usedSourceRefs: [],
+        resultingWritebackRefs: []
+      },
       writeback: { actorPatches: [{ actorId: 42 }] }
     });
 
     expect(result.turnSummary).toBe('玩家已经把小说前三章寄往报社。');
+    expect(result.playerVitalsReview).toEqual({
+      changed: true,
+      reason: '玩家搬运了沉重的稿件箱，体力有所下降。'
+    });
+    expect(result.dramaPlan).toMatchObject({
+      planId: 'drama_plan_turn_1',
+      mode: 'quiet'
+    });
+    expect(result.dramaExecutionTrace).toEqual({
+      planId: 'drama_plan_turn_1',
+      status: 'not_used',
+      usedSourceRefs: [],
+      resultingWritebackRefs: []
+    });
+    expect(result.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'actorPatches', 0, 'actorId']
+      })
+    );
+  });
+
+  it('normalizes a valid nested drama execution trace before strict validation', () => {
+    const result = validateNarratorResponseStrict({
+      narrativeText: '正文。',
+      turnSummary: '玩家完成本回合行动。',
+      suggestedActions: ['继续观察。'],
+      writeback: {
+        actorPatches: [],
+        dramaExecutionTrace: {
+          planId: 'drama_plan_turn_1',
+          status: 'not_used',
+          usedSourceRefs: [],
+          resultingWritebackRefs: []
+        }
+      }
+    });
+
+    expect(result.dramaExecutionTrace).toEqual({
+      planId: 'drama_plan_turn_1',
+      status: 'not_used',
+      usedSourceRefs: [],
+      resultingWritebackRefs: []
+    });
   });
 
   it('keeps valid equipment when a neighboring player clothing field is invalid', () => {
@@ -56,7 +421,7 @@ describe('writeback protocol', () => {
       })
     );
     expect(next.player.equipment).toEqual(['史密斯威森M10左轮手枪', '警棍', '对讲机']);
-    expect(next.assets.equippedItemIds).toHaveLength(3);
+    expect(next.assets.equippedItemIds).toHaveLength(0);
   });
 
   it('rejects a legacy clothing string instead of preserving a stale clothing mode', () => {
@@ -147,6 +512,64 @@ describe('writeback protocol', () => {
     expect(Object.values(next.memories)[0]?.text).toContain('report room');
     expect(next.actors.player.traitProgress[0]?.name).toBe('Station Rhythm');
     expect(next.storyLog.at(-1)?.text).toBe('The player enters the report room.');
+  });
+
+  it('persists story blocks after same-turn actors exist while preserving narrativeText exactly', () => {
+    const state = createInitialRuntimeState();
+    const narrativeText =
+      '【旁白】证人走进报案室。\n【陈伟强】“我昨晚一直在家。”\n【内心】他避开了时间问题。';
+    const response = validateNarratorResponse({
+      narrativeText,
+      presentationHints: {
+        dialogueEmotions: ['serious'],
+        innerMonologueEmotions: ['worried']
+      },
+      suggestedActions: ['继续核对时间。', '先查看登记记录。'],
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_new_witness',
+            name: '陈伟强',
+            gender: 'male',
+            computedAge: 29,
+            currentIdentity: 'civilian',
+            profileSummary: '刚进入报案室接受询问的证人。',
+            presence: 'present',
+            visibility: 'player_known'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    const entry = next.storyLog.at(-1);
+    expect(entry?.text).toBe(narrativeText);
+    expect(entry?.dialogueSpeakerActorIds).toEqual({ 陈伟强: 'npc_new_witness' });
+    expect(entry?.blocks).toEqual([
+      { type: 'narration', text: '证人走进报案室。', sourceStyle: 'tagged' },
+      {
+        type: 'dialogue',
+        text: '“我昨晚一直在家。”',
+        speakerLabel: '陈伟强',
+        speakerActorId: 'npc_new_witness',
+        emotion: 'serious'
+      },
+      {
+        type: 'inner_monologue',
+        text: '他避开了时间问题。',
+        actorId: state.player.actorId,
+        emotion: 'worried'
+      }
+    ]);
+  });
+
+  it('normalizes invalid presentation emotion metadata without rejecting the turn', () => {
+    const response = validateNarratorResponse({
+      narrativeText: '【值日警长】收队。',
+      presentationHints: { dialogueEmotions: ['furious'] },
+      writeback: {}
+    });
+    expect(response.presentationHints).toEqual({ dialogueEmotions: ['neutral'] });
   });
 
   it('normalizes female profile alias fields and relationship network edges from actor writeback', () => {
@@ -398,8 +821,8 @@ describe('writeback protocol', () => {
                 headline: '旺角街头再起争执',
                 body: '警方称事件仍在了解中，街坊则议论纷纷。',
                 tone: '谨慎',
-                playerRelated: true,
-                relatedActorIds: ['player'],
+                playerRelated: false,
+                relatedActorIds: [],
                 relatedPlaceIds: [state.location.currentPlaceId],
                 relatedCaseIds: [],
                 relatedOrganizationIds: []
@@ -415,6 +838,62 @@ describe('writeback protocol', () => {
     expect(next.dynamicEvents.currentMatters.matter_mongkok_media_heat.title).toBe('报馆盯上旺角冲突');
     expect(next.dynamicEvents.signals.signal_teahouse_rumor.signalType).toBe('street');
     expect(next.dynamicEvents.newsIssues.news_1988_09_12_evening.articles[0]?.headline).toContain('旺角');
+  });
+
+  it('does not persist a newspaper issue made only from an ordinary player private purchase', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '你办妥手续，把新车停进车位。',
+      writeback: {
+        playerPatch: {
+          reputation: {
+            notorietyDelta: 250,
+            summary: '模型错误地把普通购车当成全城关注。',
+            reason: '购车。',
+            circlePatches: [
+              {
+                circle: 'neighborhoodMedia',
+                visibilityDelta: 250,
+                summary: '模型错误地声称媒体已经关注。',
+                reason: '购车。'
+              }
+            ]
+          }
+        },
+        newsIssuePatches: [
+          {
+            id: 'news_private_purchase',
+            date: state.time,
+            outletName: '明报',
+            headline: `${state.player.name}购入新车`,
+            summary: '一名普通市民购入私家车。',
+            articles: [
+              {
+                id: 'article_private_purchase',
+                section: 'local',
+                headline: '普通市民购入新车',
+                body: `${state.player.name}今天买下一辆私家车。`,
+                playerRelated: true,
+                relatedActorIds: [state.player.actorId],
+                relatedPlaceIds: [],
+                relatedCaseIds: [],
+                relatedOrganizationIds: []
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.player.reputation.notoriety).toBe(250);
+    expect(next.dynamicEvents.newsIssues.news_private_purchase).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'player_news_suppressed' })
+      ])
+    );
   });
 
   it('preserves local news lifecycle fields when the narrator updates an issue', () => {
@@ -511,6 +990,224 @@ describe('writeback protocol', () => {
     });
   });
 
+  it('remaps a renamed player-owned enterprise patch to its canonical organization id', () => {
+    const state = createInitialRuntimeState();
+    state.organizations.org_xiao_enterprise = {
+      organizationId: 'org_xiao_enterprise',
+      name: '萧氏企业',
+      type: 'business',
+      summary: '玩家持有并经营的本地企业。',
+      publicKnowledge: '萧氏名下的商业机构。',
+      currentState: '评估流程正在接受内部复核。',
+      stanceTowardPlayer: '玩家是该企业的经营者。',
+      pressureSummary: '内部评估程序承受压力。',
+      relatedActorIds: ['player'],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      visibility: 'player_known',
+      importance: 75
+    };
+    state.actors.player.organizationIds.push('org_xiao_enterprise');
+    state.actors.player.organizationRelations.push({
+      organizationId: 'org_xiao_enterprise',
+      relationType: 'owner',
+      roleTitle: '经营者',
+      summary: '玩家持有并经营萧氏企业。',
+      visibility: 'player_known',
+      isPrimary: false
+    });
+
+    const response = validateNarratorResponse({
+      narrativeText: '萧氏家族企业的内审复核继续推进。',
+      writeback: {
+        placePatches: [
+          {
+            placeId: state.location.currentPlaceId,
+            owningOrganizationId: 'org_xiao_family_enterprise'
+          }
+        ],
+        actorPatches: [
+          {
+            actorId: 'player',
+            organizationIds: ['org_xiao_family_enterprise'],
+            organizationRelations: [
+              {
+                organizationId: 'org_xiao_family_enterprise',
+                relationType: 'owner',
+                roleTitle: '经营者',
+                summary: '玩家持有并经营萧氏家族企业。',
+                visibility: 'player_known'
+              }
+            ]
+          }
+        ],
+        organizationPatches: [
+          {
+            organizationId: 'org_xiao_family_enterprise',
+            name: '萧氏家族企业',
+            type: 'business',
+            currentState: '内审部门对行政拨款的交叉比对正在延滞。',
+            relatedActorIds: ['player']
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.organizations.org_xiao_family_enterprise).toBeUndefined();
+    expect(next.organizations.org_xiao_enterprise).toMatchObject({
+      organizationId: 'org_xiao_enterprise',
+      name: '萧氏企业',
+      currentState: '内审部门对行政拨款的交叉比对正在延滞。',
+      aliases: expect.arrayContaining(['萧氏家族企业'])
+    });
+    expect(next.actors.player.organizationIds).toContain('org_xiao_enterprise');
+    expect(next.actors.player.organizationIds).not.toContain('org_xiao_family_enterprise');
+    expect(next.places[state.location.currentPlaceId].owningOrganizationId).toBe(
+      'org_xiao_enterprise'
+    );
+    expect(
+      next.actors.player.organizationRelations.some(
+        (relation) => relation.organizationId === 'org_xiao_family_enterprise'
+      )
+    ).toBe(false);
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'organization_identity_id_remapped',
+        path: ['writeback', 'organizationPatches', 0, 'organizationId']
+      })
+    );
+  });
+
+  it('reuses a unique stored organization alias even without a player ownership relation', () => {
+    const state = createInitialRuntimeState();
+    state.organizations.org_tvb.aliases = ['无线电视'];
+
+    const response = validateNarratorResponse({
+      narrativeText: '无线电视更新了新闻部的公开安排。',
+      writeback: {
+        organizationPatches: [
+          {
+            organizationId: 'org_wireless_television',
+            name: '无线电视',
+            currentState: '新闻部正在调整公开采访安排。'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.organizations.org_wireless_television).toBeUndefined();
+    expect(next.organizations.org_tvb).toMatchObject({
+      organizationId: 'org_tvb',
+      name: 'TVB',
+      aliases: expect.arrayContaining(['无线电视']),
+      currentState: '新闻部正在调整公开采访安排。'
+    });
+  });
+
+  it('does not merge a genuinely distinct player-owned enterprise by surname alone', () => {
+    const state = createInitialRuntimeState();
+    state.organizations.org_xiao_enterprise = {
+      organizationId: 'org_xiao_enterprise',
+      name: '萧氏企业',
+      type: 'business',
+      summary: '玩家持有并经营的本地企业。',
+      publicKnowledge: '萧氏名下的商业机构。',
+      currentState: '经营稳定。',
+      stanceTowardPlayer: '玩家是该企业的经营者。',
+      pressureSummary: '暂无明确压力。',
+      relatedActorIds: ['player'],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      visibility: 'player_known',
+      importance: 75
+    };
+    state.actors.player.organizationRelations.push({
+      organizationId: 'org_xiao_enterprise',
+      relationType: 'owner',
+      roleTitle: '经营者',
+      summary: '玩家持有并经营萧氏企业。',
+      visibility: 'player_known'
+    });
+
+    const response = validateNarratorResponse({
+      narrativeText: '玩家另行成立了一家物流公司。',
+      writeback: {
+        organizationPatches: [
+          {
+            organizationId: 'org_xiao_logistics',
+            name: '萧氏物流企业',
+            type: 'business',
+            summary: '独立经营的物流企业。',
+            relatedActorIds: ['player']
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.organizations.org_xiao_enterprise.name).toBe('萧氏企业');
+    expect(next.organizations.org_xiao_logistics).toMatchObject({
+      organizationId: 'org_xiao_logistics',
+      name: '萧氏物流企业'
+    });
+  });
+
+  it('updates only known society activity areas while preserving the immutable profile', () => {
+    const state = createInitialRuntimeState();
+    const originalProfile = state.organizations.org_sun_yee_on.triadProfile;
+    const response = validateNarratorResponse({
+      narrativeText: '旺角线开始收紧夜场联络。',
+      writeback: {
+        organizationPatches: [
+          {
+            organizationId: 'org_sun_yee_on',
+            triadState: {
+              leadership: {
+                phase: 'contested',
+                visibleSummary: '两条地区线对夜场事务的处理办法出现分歧。',
+                nextMilestone: '等待核心主事层协调。',
+                confidence: 'low'
+              },
+              activityAreas: [
+                {
+                  placeId: 'place_portland_street',
+                  statusSummary: '夜场线暂缓扩大人手。',
+                  pressureSummary: '警方巡查增加。',
+                  confidence: 'medium'
+                },
+                {
+                  placeId: 'place_unknown_claimed_territory',
+                  statusSummary: '不应写入的新地盘。',
+                  pressureSummary: '无来源。',
+                  confidence: 'high'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.organizations.org_sun_yee_on.triadProfile).toEqual(originalProfile);
+    expect(next.organizations.org_sun_yee_on.triadState?.leadership).toMatchObject({
+      phase: 'contested',
+      visibleSummary: '两条地区线对夜场事务的处理办法出现分歧。'
+    });
+    expect(next.organizations.org_sun_yee_on.triadState?.activityAreas).toContainEqual(
+      expect.objectContaining({ placeId: 'place_portland_street', statusSummary: '夜场线暂缓扩大人手。' })
+    );
+    expect(next.organizations.org_sun_yee_on.triadState?.activityAreas).not.toContainEqual(
+      expect.objectContaining({ placeId: 'place_unknown_claimed_territory' })
+    );
+  });
+
   it('applies weather writeback as environment state', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
@@ -550,6 +1247,55 @@ describe('writeback protocol', () => {
 
     expect(response.validationWarnings?.some((warning) => warning.path.includes('weatherPatch'))).toBe(true);
     expect(next.storyLog.at(-1)?.text).toBe('天气描述漂了一下。');
+  });
+
+  it('drops a weather patch without condition without failing the turn', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '当前天气继续影响街面，但没有发生变化。',
+      writeback: {
+        weatherPatch: {
+          impactSummary: '路面仍然湿滑。',
+          validForMinutes: 1440
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(response.writeback.weatherPatch).toBeUndefined();
+    expect(
+      response.validationWarnings?.some((warning) =>
+        warning.path.includes('weatherPatch')
+      )
+    ).toBe(true);
+    expect(next.storyLog.at(-1)?.text).toContain('没有发生变化');
+  });
+
+  it('keeps the original expiry when the model repeats the current condition', () => {
+    const state = createInitialRuntimeState();
+    const current = state.environment.weather;
+    const response = validateNarratorResponse({
+      narrativeText: '当前天气仍在影响巡逻。',
+      writeback: {
+        weatherPatch: {
+          condition: current.condition,
+          impactSummary: '模型只是再次描述当前天气。',
+          validForMinutes: 1440
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.environment.weather.startedAt).toEqual(current.startedAt);
+    expect(next.environment.weather.validUntil).toEqual(current.validUntil);
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'weather_same_condition_not_extended',
+        path: ['environment', 'weather']
+      })
+    );
   });
 
   it('persists current matter semantic fields for player-facing current matters', () => {
@@ -664,6 +1410,133 @@ describe('writeback protocol', () => {
     expect(next.dynamicEvents.currentMatters.matter_valid).toBeDefined();
     expect(next.dynamicEvents.currentMatters.matter_bad).toBeUndefined();
     expect(response.validationWarnings?.some((warning) => warning.path.includes('currentMatterPatches'))).toBe(true);
+  });
+
+  it('normalizes the unambiguous player_known alias on current matter visibility', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '玩家把夜班车传闻登记为待核对事项。',
+      writeback: {
+        currentMatterPatches: [
+          {
+            id: 'matter_midnight_bus_rumor',
+            title: '核对午夜巴士传闻',
+            summary: '玩家准备核对司机、车次与报案记录。',
+            status: 'active',
+            priority: 55,
+            visibility: 'player_known',
+            source: 'official_dlc'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(response.writeback.currentMatterPatches).toEqual([
+      expect.objectContaining({
+        id: 'matter_midnight_bus_rumor',
+        visibility: 'known'
+      })
+    ]);
+    expect(next.dynamicEvents.currentMatters.matter_midnight_bus_rumor?.visibility).toBe('known');
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'currentMatterPatches', 0, 'visibility'],
+        code: 'current_matter_visibility_alias_normalized'
+      })
+    );
+  });
+
+  it('preserves a texture-only remain receipt without requiring world writeback evidence', () => {
+    const result = validateNarratorResponseStrict({
+      narrativeText: '街坊闲谈中再次提到夜班车，但没有形成新的世界事实。',
+      turnSummary: '午夜巴士传闻只作为本回合背景出现。',
+      suggestedActions: ['继续原本行动'],
+      dramaExecutionTrace: {
+        planId: 'drama_plan_turn_1',
+        status: 'used_as_texture',
+        usedSourceRefs: [{
+          providerId: 'official-dlc',
+          sourceType: 'official_dlc_event',
+          sourceId: 'urban_legends_alpha:midnight_bus',
+          dlcId: 'urban_legends_alpha'
+        }],
+        resultingWritebackRefs: [],
+        narrativeArcProgress: [{
+          arcInstanceId: 'arc_official-dlc_urban_legends_alpha_midnight_bus',
+          sourceRef: {
+            providerId: 'official-dlc',
+            sourceType: 'official_dlc_event',
+            sourceId: 'urban_legends_alpha:midnight_bus',
+            dlcId: 'urban_legends_alpha'
+          },
+          decision: 'remain',
+          currentStageId: 'street_rumor',
+          usedNodeIds: [],
+          supportingWritebackRefs: [],
+          summary: '传闻仍在街坊闲谈中存在。'
+        }]
+      },
+      writeback: {}
+    });
+
+    expect(result.dramaExecutionTrace?.narrativeArcProgress).toEqual([
+      expect.objectContaining({
+        decision: 'remain',
+        supportingWritebackRefs: []
+      })
+    ]);
+    expect(result.validationWarnings ?? []).not.toContainEqual(
+      expect.objectContaining({ code: 'narrative_arc_progress_schema_invalid' })
+    );
+  });
+
+  it('ignores malformed remain evidence without dropping the safe remain receipt', () => {
+    const result = validateNarratorResponseStrict({
+      narrativeText: '夜班车传闻被顺带提及，但没有形成新的世界事实。',
+      turnSummary: '剧情弧保持当前阶段。',
+      suggestedActions: ['继续原本行动'],
+      dramaExecutionTrace: {
+        planId: 'drama_plan_turn_1',
+        status: 'used_as_texture',
+        usedSourceRefs: [{
+          providerId: 'official-dlc',
+          sourceType: 'official_dlc_event',
+          sourceId: 'urban_legends_alpha:midnight_bus',
+          dlcId: 'urban_legends_alpha'
+        }],
+        resultingWritebackRefs: [],
+        narrativeArcProgress: [{
+          arcInstanceId: 'arc_official-dlc_urban_legends_alpha_midnight_bus',
+          sourceRef: {
+            providerId: 'official-dlc',
+            sourceType: 'official_dlc_event',
+            sourceId: 'urban_legends_alpha:midnight_bus',
+            dlcId: 'urban_legends_alpha'
+          },
+          decision: 'remain',
+          currentStageId: 'street_rumor',
+          usedNodeIds: [],
+          supportingWritebackRefs: [{ kind: 'current_matter' }],
+          summary: '传闻没有产生新进展。'
+        }]
+      },
+      writeback: {}
+    });
+
+    expect(result.dramaExecutionTrace?.narrativeArcProgress).toEqual([
+      expect.objectContaining({
+        decision: 'remain',
+        supportingWritebackRefs: []
+      })
+    ]);
+    expect(result.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['dramaExecutionTrace', 'narrativeArcProgress', 0, 'supportingWritebackRefs'],
+        code: 'narrative_arc_remain_evidence_ignored'
+      })
+    );
   });
 
   it('soft-drops malformed dynamic writeback items without losing valid siblings', () => {
@@ -1176,6 +2049,53 @@ describe('writeback protocol', () => {
     expect(response.validationWarnings?.some((warning) => warning.path.includes('relationshipThreadPatches'))).toBe(true);
   });
 
+  it('keeps a relationship intent when one evidence kind needs normalization or removal', () => {
+    const response = validateNarratorResponse({
+      narrativeText: '张秀兰在本回合明确作出承诺。关系证据需要本地整理。',
+      writeback: {
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_zhang_xiulan_fate',
+            kind: 'fate',
+            title: '张秀兰的承诺',
+            summary: '两人形成一项明确承诺。',
+            relatedActorIds: ['player'],
+            relationshipRole: '承诺对象',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'currentTurn',
+                refId: 'current_turn',
+                summary: '本回合明确形成承诺。'
+              },
+              {
+                kind: 'unknown_value',
+                refId: 'memory_missing',
+                summary: '无法核验的模型字段。'
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(response.writeback.relationshipThreadPatches).toHaveLength(1);
+    expect(response.writeback.relationshipThreadPatches[0].evidenceRefs).toEqual([
+      {
+        kind: 'current_turn',
+        refId: 'current_turn',
+        summary: '本回合明确形成承诺。'
+      }
+    ]);
+    expect(response.rawRelationshipThreadPatches).toHaveLength(1);
+    expect(response.validationWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'relationship_evidence_kind_normalized' }),
+        expect.objectContaining({ code: 'relationship_evidence_ref_removed' })
+      ])
+    );
+  });
+
   it('records relationship patch diagnostics when a new thread is incomplete', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
@@ -1194,8 +2114,181 @@ describe('writeback protocol', () => {
 
     expect(next.relationshipThreads.rel_incomplete).toBeUndefined();
     expect(
-      next.storyLog.at(-1)?.writebackDiagnostics?.some((issue) => issue.code === 'relationship_creation_evidence_missing')
+      next.storyLog.at(-1)?.writebackDiagnostics?.some((issue) => issue.code === 'relationship_creation_rejected')
     ).toBe(true);
+  });
+
+  it('preserves an invalid raw combat record for local envelope recovery', () => {
+    const response = validateNarratorResponse({
+      narrativeText: '持刀者翻入室内，双方发生短促交锋。',
+      turnSummary: '玩家与持刀者发生冲突。',
+      writeback: {
+        combatEventPatches: [
+          {
+            combatId: 'combat_raw_recovery',
+            turnId: 'turn_0001',
+            gameTime: {
+              year: 1988,
+              month: 9,
+              day: 12,
+              hour: 21,
+              minute: 30
+            },
+            title: '室内持械冲突',
+            type: 'armed',
+            locationId: 'place_opening',
+            participants: [
+              {
+                actorId: 'player',
+                name: '玩家',
+                side: 'player',
+                roleSummary: '保护现场人物'
+              }
+            ],
+            outcome: 'opponent_escaped',
+            intensity: 65,
+            combatText: '玩家贴近夺刀时被迫侧身，对方借机翻窗逃离。',
+            resultSummary: '对方逃离现场。',
+            consequenceSummary: '现场留下伤情与追查线索。',
+            judgementCheckIds: ['check_turn_0001_1']
+          }
+        ]
+      }
+    });
+
+    expect(response.writeback.combatEventPatches).toEqual([]);
+    expect(response.rawCombatEventPatches).toHaveLength(1);
+    expect(response.validationWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: expect.arrayContaining(['combatEventPatches'])
+        })
+      ])
+    );
+  });
+
+  it('allows an existing relationship thread update without re-running the creation evidence gate', () => {
+    const state = createInitialRuntimeState();
+    const created = applyNarratorResponse(
+      state,
+      validateNarratorResponse({
+        narrativeText: '玩家与士多老板形成一项明确承诺。',
+        writeback: {
+          relationshipThreadPatches: [
+            {
+              threadId: 'rel_existing_neighbor',
+              kind: 'network',
+              title: '邻里承诺',
+              summary: '士多老板答应替玩家留意夜间动静。',
+              relatedActorIds: ['player'],
+              relationshipRole: '邻里联系人',
+              creationBasis: 'debt_or_promise',
+              evidenceRefs: [
+                {
+                  kind: 'current_turn',
+                  refId: 'current_turn',
+                  summary: '本回合明确形成承诺。'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    );
+
+    const updated = applyNarratorResponse(
+      created,
+      validateNarratorResponse({
+        narrativeText: '士多老板后来补充了一条消息。',
+        writeback: {
+          relationshipThreadPatches: [
+            {
+              threadId: 'rel_existing_neighbor',
+              summary: '士多老板继续替玩家留意夜间动静，并补充了一条消息。',
+              currentPull: '下次路过士多时可以自然问起后续。'
+            }
+          ]
+        }
+      })
+    );
+
+    expect(updated.relationshipThreads.rel_existing_neighbor.summary).toContain('补充了一条消息');
+    expect(updated.relationshipThreads.rel_existing_neighbor.evidenceRefs).toEqual(
+      created.relationshipThreads.rel_existing_neighbor.evidenceRefs
+    );
+    expect(
+      updated.storyLog.at(-1)?.writebackDiagnostics?.some((issue) => issue.code === 'relationship_creation_rejected')
+    ).not.toBe(true);
+  });
+
+  it('keeps the old relationship when a new actor reuses its threadId', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_old_contact = createActorDefaults({
+      actorId: 'npc_old_contact',
+      name: '旧联系人',
+      currentIdentity: 'civilian',
+      presence: 'absent'
+    });
+    state.actors.npc_new_contact = createActorDefaults({
+      actorId: 'npc_new_contact',
+      name: '新联系人',
+      currentIdentity: 'civilian',
+      presence: 'absent'
+    });
+    state.relationshipThreads.rel_contact = {
+      threadId: 'rel_contact',
+      kind: 'network',
+      title: '旧联系人这条线',
+      summary: '这条关系属于旧联系人。',
+      relatedActorIds: ['player', 'npc_old_contact'],
+      primaryActorId: 'npc_old_contact',
+      relationshipRole: '旧联系人',
+      status: 'active',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 60,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+
+    const next = applyNarratorResponse(
+      state,
+      validateNarratorResponse({
+        narrativeText: '新联系人明确答应与玩家保持联络。',
+        writeback: {
+          relationshipThreadPatches: [
+            {
+              threadId: 'rel_contact',
+              kind: 'network',
+              title: '新联系人这条线',
+              summary: '新联系人答应与玩家保持联络。',
+              relatedActorIds: ['player', 'npc_new_contact'],
+              primaryActorId: 'npc_new_contact',
+              relationshipRole: '新联系人',
+              creationBasis: 'debt_or_promise',
+              evidenceRefs: [
+                {
+                  kind: 'current_turn',
+                  refId: 'current_turn',
+                  summary: '本回合明确形成持续联络承诺。'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    );
+
+    expect(next.relationshipThreads.rel_contact).toMatchObject({
+      title: '旧联系人这条线',
+      primaryActorId: 'npc_old_contact'
+    });
+    expect(Object.values(next.relationshipThreads)).toContainEqual(
+      expect.objectContaining({ title: '新联系人这条线', primaryActorId: 'npc_new_contact' })
+    );
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({ code: 'relationship_thread_id_collision_reassigned' })
+    );
   });
 
   it('applies police panel progress from structured player writeback', () => {
@@ -1300,7 +2393,50 @@ describe('writeback protocol', () => {
     expect(next.finance.ledger[0]?.gameTime).toEqual(next.time);
   });
 
-  it('applies experience gain through local progression rules', () => {
+  it('locally restores a ledger detail when tolerant validation drops a malformed model entry', () => {
+    const state = createInitialRuntimeState();
+    state.finance.cashOnHand = 200;
+    state.player.economy.cashOnHand = 200;
+    const response = validateNarratorResponse({
+      narrativeText: '玩家在德记茶餐厅吃过午饭后离开。',
+      writeback: {
+        financePatch: {
+          cashDelta: -48,
+          summary: '在德记茶餐厅支付了午餐与冻柠茶费用。',
+          ledgerEntries: [
+            {
+              direction: 'expense',
+              amount: 48,
+              account: 'cash',
+              title: '德记午餐',
+              summary: null
+            }
+          ]
+        }
+      }
+    });
+
+    expect(response.writeback.financePatch?.ledgerEntries).toEqual([]);
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'financePatch', 'ledgerEntries', 0, 'summary']
+      })
+    );
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.finance.cashOnHand).toBe(152);
+    expect(next.finance.ledger.at(-1)).toMatchObject({
+      direction: 'expense',
+      amount: 48,
+      account: 'cash',
+      title: '现金支出补记',
+      summary: '在德记茶餐厅支付了午餐与冻柠茶费用。',
+      source: 'local_recovery'
+    });
+  });
+
+  it('treats model-only experience as a capped proposal and records the award', () => {
     const state = createInitialRuntimeState();
     state.player.progression = {
       level: 1,
@@ -1322,10 +2458,106 @@ describe('writeback protocol', () => {
     const next = applyNarratorResponse(state, response);
 
     expect(next.player.progression).toEqual({
-      level: 3,
-      experience: 10,
-      unspentAttributePoints: 10
+      level: 1,
+      experience: 98,
+      unspentAttributePoints: 0
     });
+    expect(next.storyLog.at(-1)?.experienceAward).toMatchObject({
+      awardId: 'xp:turn_0001',
+      total: 8,
+      modelSuggestedGain: 220,
+      capped: true
+    });
+  });
+
+  it('awards canonical local judgement experience even when progression is omitted', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '玩家在压力下完成现场观察。',
+      writeback: {
+        judgementCheckPatches: [
+          {
+            rulesetVersion: 'v1.1-local-d100',
+            checkId: 'check_xp_hard_success',
+            turnId: 'model_turn',
+            gameTime: state.time,
+            title: '辨认可疑车辆',
+            category: 'observation',
+            relatedActorIds: ['player'],
+            relatedPlaceIds: [state.location.currentPlaceId],
+            relatedCaseIds: [],
+            primaryAttribute: 'thinking',
+            primaryAttributeValue: 55,
+            difficultyTier: 'hard',
+            difficultyModifier: -10,
+            gameDifficultyModifier: 0,
+            contextModifierTotal: 0,
+            effectiveTarget: 45,
+            presetRoll: 30,
+            difficulty: 45,
+            score: 30,
+            margin: 15,
+            outcome: 'success',
+            shortSummary: '玩家认出了车辆特征。',
+            factors: [],
+            visibility: 'player_known'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.player.progression.experience).toBe(10);
+    expect(next.storyLog.at(-1)?.experienceAward).toMatchObject({
+      total: 10,
+      sources: [
+        expect.objectContaining({
+          sourceId: 'judgement:check_xp_hard_success',
+          amount: 10
+        })
+      ]
+    });
+  });
+
+  it('ignores an invalid model progression proposal without discarding local judgement intent', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '玩家继续完成现场观察。',
+      writeback: {
+        playerPatch: {
+          progression: {
+            experienceGain: 'not-a-number'
+          }
+        },
+        judgementCheckPatches: [
+          {
+            rulesetVersion: 'v1.1-local-d100',
+            checkId: 'check_progression_tolerant',
+            turnId: 'model_turn',
+            gameTime: state.time,
+            title: '核对现场细节',
+            category: 'observation',
+            relatedActorIds: ['player'],
+            relatedPlaceIds: [],
+            relatedCaseIds: [],
+            primaryAttribute: 'thinking',
+            difficultyTier: 'standard',
+            outcome: 'success',
+            shortSummary: '玩家确认了现场细节。',
+            factors: []
+          }
+        ]
+      }
+    });
+
+    expect(response.writeback.playerPatch?.progression).toBeUndefined();
+    expect(response.rawJudgementCheckPatches).toHaveLength(1);
+    expect(
+      response.validationWarnings?.some(
+        (warning) => warning.code === 'progression_model_proposal_ignored'
+      )
+    ).toBe(true);
   });
 
   it('normalizes common finance ledger aliases from model output', () => {
@@ -1822,6 +3054,7 @@ describe('writeback protocol', () => {
   it('runs monthly settlement when a turn advances into a later month', () => {
     const state = createInitialRuntimeState({
       currentIdentity: 'civilian',
+      civilianProfileId: 'unemployed',
       startTime: { year: 1988, month: 8, day: 31, hour: 23, minute: 50 }
     });
     state.finance.bankBalance = 1000;
@@ -2584,7 +3817,7 @@ describe('writeback protocol', () => {
     ).toBe(true);
   });
 
-  it('applies female profile writeback to an adult female NPC without adding NPC vitals', () => {
+  it('applies a developing private dossier incrementally without adding NPC vitals', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
       writebackVersion: '1.5',
@@ -2668,12 +3901,120 @@ describe('writeback protocol', () => {
 
     expect(actor.vitals).toBeUndefined();
     expect(actor.femaleProfile?.addressToPlayer).toBe('王Sir');
-    expect(actor.femaleProfile?.adultPrivateProfile?.profileStatus).toBe('ready');
+    expect(actor.femaleProfile?.adultPrivateProfile?.profileStatus).toBe('developing');
     expect(actor.femaleProfile?.adultPrivateProfile?.womb?.status).toBe('未受孕');
     expect(actor.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).toBe('乳房饱满柔软，乳晕色泽自然，乳头敏感。');
+
+    const followUp = validateNarratorResponse({
+      writebackVersion: '1.5',
+      narrativeText: 'Later interactions establish two additional durable private facts.',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_lily_ho',
+            femaleProfile: {
+              adultPrivateProfile: {
+                profileStatus: 'ready',
+                fetishNotes: '已经确认她偏好带有掌控感的挑逗，但会主动说明边界。',
+                sensitivePoints: '颈侧、乳尖与腰侧是已经明确表现出的敏感点。'
+              }
+            }
+          }
+        ]
+      }
+    });
+    const matured = applyNarratorResponse(next, followUp);
+
+    expect(matured.actors.npc_lily_ho.femaleProfile?.adultPrivateProfile?.profileStatus).toBe('ready');
+    expect(matured.actors.npc_lily_ho.femaleProfile?.adultPrivateProfile?.partProfiles?.胸部?.description).toBe(
+      '乳房饱满柔软，乳晕色泽自然，乳头敏感。'
+    );
+    expect(matured.actors.npc_lily_ho.femaleProfile?.adultPrivateProfile?.fetishNotes).toContain('掌控感');
   });
 
-  it('creates an adult private profile anchor when adult female writeback omits it', () => {
+  it('accepts a cervix-only update for an existing private dossier without creating a new dossier', () => {
+    const state = createInitialRuntimeState();
+    const actorBase = {
+      gender: 'female' as const,
+      birthDate: '1962-03-08',
+      computedAge: 26,
+      currentIdentity: 'civilian' as const,
+      publicIdentity: '市民',
+      roleProfiles: {},
+      positionSummary: '市民',
+      profileSummary: '成年女性。',
+      appearance: '成年女性。',
+      clothing: '日常衣着。',
+      personality: '谨慎。',
+      speechStyle: '直接。',
+      motivation: '维持生活。',
+      longTermGoal: '生活安定。',
+      values: '重视承诺。',
+      visibility: 'player_known' as const
+    };
+    state.actors.npc_existing_private = createActorDefaults({
+      ...actorBase,
+      actorId: 'npc_existing_private',
+      name: '已有档案人物',
+      femaleProfile: {
+        adultPrivateProfile: {
+          enabled: true,
+          ageConfirmedAdult: true,
+          profileStatus: 'developing',
+          womb: {
+            status: '未受孕',
+            cervixStatus: '紧闭',
+            records: [{ date: '1988-09-10', description: '既有结构化记录。' }]
+          }
+        }
+      }
+    });
+    state.actors.npc_without_private = createActorDefaults({
+      ...actorBase,
+      actorId: 'npc_without_private',
+      name: '尚无档案人物'
+    });
+
+    const response = validateNarratorResponse({
+      writebackVersion: '1.5',
+      narrativeText: '本回合只形成一项有剧情依据的短期身体变化。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_existing_private',
+            femaleProfile: {
+              adultPrivateProfile: {
+                womb: {
+                  cervixStatus: '本回合形成的短期状态'
+                }
+              }
+            }
+          },
+          {
+            actorId: 'npc_without_private',
+            femaleProfile: {
+              adultPrivateProfile: {
+                womb: {
+                  cervixStatus: '不应据此新建档案'
+                }
+              }
+            }
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    const existingWomb = next.actors.npc_existing_private.femaleProfile?.adultPrivateProfile?.womb;
+
+    expect(existingWomb?.status).toBe('未受孕');
+    expect(existingWomb?.records).toEqual([{ date: '1988-09-10', description: '既有结构化记录。' }]);
+    expect(existingWomb?.cervixStatus).toBe('本回合形成的短期状态');
+    expect(existingWomb?.cervixStatusUpdatedAt).toEqual(state.time);
+    expect(next.actors.npc_without_private.femaleProfile?.adultPrivateProfile).toBeUndefined();
+  });
+
+  it('does not create an adult private profile from adulthood or public female fields alone', () => {
     const state = createInitialRuntimeState();
     state.actors.npc_may = createActorDefaults({
       actorId: 'npc_may',
@@ -2712,36 +4053,7 @@ describe('writeback protocol', () => {
     const profile = next.actors.npc_may?.femaleProfile;
 
     expect(profile?.addressToPlayer).toBe('阿星');
-    expect(profile?.adultPrivateProfile).toMatchObject({
-      enabled: true,
-      ageConfirmedAdult: true,
-      source: 'writeback',
-      profileStatus: 'ready',
-      womb: {
-        status: '未受孕',
-        cervixStatus: '紧闭',
-        records: []
-      }
-    });
-    const privateProfileText = JSON.stringify(profile?.adultPrivateProfile);
-    expect(privateProfileText).not.toContain('待补全');
-    expect(privateProfileText).not.toContain('pending');
-    expect(privateProfileText).not.toContain('暂无记录');
-    expect(privateProfileText).not.toContain('视觉锚点');
-    expect(privateProfileText).not.toContain('锚点已建立');
-    expect(privateProfileText).not.toContain('依据成年女性档案');
-    expect(privateProfileText).not.toContain('保持一致');
-    expect(profile?.adultPrivateProfile?.partProfiles?.胸部?.description).toMatch(/乳房|乳头|乳晕|乳尖/);
-    expect(profile?.adultPrivateProfile?.partProfiles?.胸部?.description).not.toContain('周嘉敏');
-    expect(profile?.adultPrivateProfile?.partProfiles?.胸部?.description).not.toContain('笑起来眉眼弯弯');
-    expect(profile?.adultPrivateProfile?.partProfiles?.小穴?.description).toMatch(/阴唇|阴蒂|穴口|阴道/);
-    expect(profile?.adultPrivateProfile?.partProfiles?.小穴?.description).not.toContain('周嘉敏');
-    expect(profile?.adultPrivateProfile?.partProfiles?.屁穴?.description).toMatch(/屁穴|肛|后庭|臀缝/);
-    expect(profile?.adultPrivateProfile?.partProfiles?.屁穴?.description).not.toContain('周嘉敏');
-    expect(profile?.adultPrivateProfile?.fetishNotes).toMatch(/欲望|挑逗|支配|掌控|羞耻|性/);
-    expect(profile?.adultPrivateProfile?.fetishNotes).not.toContain('稳定女友');
-    expect(profile?.adultPrivateProfile?.sensitivePoints).not.toContain('稳定女友');
-    expect(profile?.adultPrivateProfile?.updatedAt).toEqual(next.time);
+    expect(profile?.adultPrivateProfile).toBeUndefined();
   });
 
   it('rejects adult private profile text that leaks public biography or romance notes into NSFW fields', () => {
@@ -2805,22 +4117,7 @@ describe('writeback protocol', () => {
     });
 
     const next = applyNarratorResponse(state, response);
-    const privateProfile = next.actors.npc_may?.femaleProfile?.adultPrivateProfile;
-    const privateProfileText = JSON.stringify(privateProfile);
-
-    expect(privateProfileText).not.toContain('家务');
-    expect(privateProfileText).not.toContain('男友');
-    expect(privateProfileText).not.toContain('面容');
-    expect(privateProfileText).not.toContain('信任和爱慕');
-    expect(privateProfileText).not.toContain('稳定收入');
-    expect(privateProfileText).not.toContain('求婚');
-    expect(privateProfileText).not.toContain('甬道');
-    expect(privateProfileText).not.toContain('巨物');
-    expect(privateProfileText).not.toContain('坚硬');
-    expect(privateProfile?.partProfiles?.胸部?.description).toMatch(/乳房|乳头|乳晕|乳尖/);
-    expect(privateProfile?.partProfiles?.小穴?.description).toMatch(/阴唇|阴蒂|穴口|阴道/);
-    expect(privateProfile?.partProfiles?.屁穴?.description).toMatch(/屁穴|肛|后庭|臀缝/);
-    expect(privateProfile?.fetishNotes).toMatch(/欲望|挑逗|支配|掌控|羞耻|性/);
+    expect(next.actors.npc_may?.femaleProfile?.adultPrivateProfile).toBeUndefined();
   });
 
   it('keeps public female profile but ignores adult private writeback for underage female NPCs', () => {
@@ -2885,7 +4182,7 @@ describe('writeback protocol', () => {
     expect(actor.femaleProfile?.adultPrivateProfile).toBeUndefined();
   });
 
-  it('does not interpret relationship-like actor names and only rejects structurally incomplete patches', () => {
+  it('accepts a minimum-valid actor without interpreting a relationship-like name', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
       narrativeText: 'A triad underling watches the player from across the street.',
@@ -2895,6 +4192,7 @@ describe('writeback protocol', () => {
             actorId: 'npc_sang_biu_underling',
             name: '丧彪的手下',
             gender: 'male',
+            birthDate: '1960-05-01',
             currentIdentity: 'triad',
             publicIdentity: '社团边缘成员',
             actualIdentitySummary: '和联胜丧彪派出的收数小弟。',
@@ -2915,17 +4213,17 @@ describe('writeback protocol', () => {
 
     const next = applyNarratorResponse(state, response);
 
-    expect(next.actors.npc_sang_biu_underling).toBeUndefined();
-    expect(next.storyLog.at(-1)?.writebackDiagnostics?.[0]).toMatchObject({
-      code: 'incomplete_new_actor_patch',
-      path: ['writeback', 'actorPatches', 0]
+    expect(next.actors.npc_sang_biu_underling).toMatchObject({
+      name: '丧彪的手下',
+      currentIdentity: 'gang_member',
+      publicIdentity: '社团边缘成员'
     });
     expect((next.storyLog.at(-1)?.writebackDiagnostics ?? []).some((issue) => issue.code === 'invalid_actor_name')).toBe(
       false
     );
   });
 
-  it('rejects sparse new NPC actor patches instead of creating hollow character cards', () => {
+  it('creates a lean NPC when it satisfies every core creation field', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
       narrativeText: 'A named street contact appears but the model only gives a thin patch.',
@@ -2934,6 +4232,8 @@ describe('writeback protocol', () => {
           {
             actorId: 'npc_ah_chuen',
             name: 'Ah Chuen',
+            gender: 'male',
+            computedAge: 31,
             currentIdentity: 'civilian',
             publicIdentity: 'Street contact'
           }
@@ -2943,11 +4243,122 @@ describe('writeback protocol', () => {
 
     const next = applyNarratorResponse(state, response);
 
-    expect(next.actors.npc_ah_chuen).toBeUndefined();
-    expect(next.storyLog.at(-1)?.writebackDiagnostics?.[0]).toMatchObject({
-      code: 'incomplete_new_actor_patch',
-      path: ['writeback', 'actorPatches', 0]
+    expect(next.actors.npc_ah_chuen).toMatchObject({
+      name: 'Ah Chuen',
+      gender: 'male',
+      computedAge: 31,
+      currentIdentity: 'civilian',
+      publicIdentity: 'Street contact',
+      personality: '',
+      interactionScore: 0,
+      importance: 50
     });
+  });
+
+  it('rejects a new NPC when the minimum identity contract is missing', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: 'A name is heard, but no stable identity is available yet.',
+      writeback: {
+        actorPatches: [{ actorId: 'npc_ah_ming', name: '阿明', gender: 'male', computedAge: 27 }]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_ah_ming).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'incomplete_new_actor_patch',
+        path: ['writeback', 'actorPatches', 0]
+      })
+    );
+  });
+
+  it('rejects a new NPC without an age anchor instead of filling a default age', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: 'A named shop assistant appears, but the model omitted all age information.',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_shop_assistant_no_age',
+            name: '阿杰',
+            gender: 'male',
+            currentIdentity: 'civilian',
+            publicIdentity: '药房店员'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_shop_assistant_no_age).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'incomplete_new_actor_patch',
+        message: expect.stringContaining('birthDate|computedAge')
+      })
+    );
+  });
+
+  it('rejects a new NPC without an explicit gender instead of accepting unknown', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: 'A contact is mentioned without a confirmed gender.',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_contact_unknown_gender',
+            name: '阿岚',
+            gender: 'unknown',
+            computedAge: 29,
+            currentIdentity: 'civilian',
+            publicIdentity: '街坊联络人'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_contact_unknown_gender).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'incomplete_new_actor_patch',
+        message: expect.stringContaining('gender')
+      })
+    );
+  });
+
+  it('rejects a future birth date when no valid computed age is available', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: 'A contact is mentioned with an impossible future birth date.',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_contact_future_birth',
+            name: '阿伦',
+            gender: 'male',
+            birthDate: '2099-01-01',
+            currentIdentity: 'civilian',
+            publicIdentity: '运输公司文员'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_contact_future_birth).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'incomplete_new_actor_patch',
+        message: expect.stringContaining('birthDate|computedAge')
+      })
+    );
   });
 
   it('does not merge an invented actorId into an existing NPC by name alone', () => {
@@ -3398,7 +4809,15 @@ describe('writeback protocol', () => {
     expect(next.player.vitals.health).toBe(92);
     expect(next.player.vitals.stamina).toBe(65);
     expect(next.player.vitals.conditionSummary).toContain('左肩擦伤');
+    expect(next.player.vitals.conditionLifecycle).toEqual({
+      persistence: 'unknown',
+      establishedAt: next.time,
+      lastReviewedAt: next.time
+    });
     expect(next.actors.player.vitals).toEqual(next.player.vitals);
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({ code: 'player_vitals_lifecycle_updated' })
+    );
   });
 
   it('applies writeback v1.5 player patches for economy, home, clothing, equipment, and reputation', () => {
@@ -3464,17 +4883,123 @@ describe('writeback protocol', () => {
     expect(next.actors.player.clothing).toBe(next.player.clothing);
     expect(next.actors.player.equipment).toEqual(next.player.equipment);
     expect(next.player.reputation.notoriety).toBe(25);
-    expect(next.player.reputation.overallReputation).toBe(8);
+    expect(next.player.reputation.overallReputation).toBe(2);
     expect(next.player.reputation.summary).toContain('旺角附近');
     expect(next.player.reputation.circles.neighborhoodMedia.visibility).toBe(20);
     expect(next.player.reputation.circles.neighborhoodMedia.standing).toBe(15);
     expect(next.player.reputation.circles.police.standing).toBe(-10);
     expect(next.player.reputation.logs).toHaveLength(3);
-    expect(next.player.reputation.logs[0]).toMatchObject({
+    expect(next.player.reputation.logs[2]).toMatchObject({
       kind: 'overall',
       notorietyDelta: 25,
-      overallReputationDelta: 8
+      overallReputationDelta: 2
     });
+  });
+
+  it('derives overall reputation when the model only returns a valid circle change', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'civilian' });
+    const response = validateNarratorResponse({
+      narrativeText: '街坊开始认可玩家处理纠纷的方式。',
+      writeback: {
+        playerPatch: {
+          reputation: {
+            summary: '附近街坊开始形成正面印象。',
+            reason: '玩家公开化解了一次纠纷。',
+            circlePatches: [
+              {
+                circle: 'neighborhoodMedia',
+                visibilitySet: 100,
+                standingSet: 50,
+                summary: '附近街坊认为玩家处事公道。',
+                reason: '玩家在多人见证下化解纠纷。'
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.player.reputation.circles.neighborhoodMedia).toMatchObject({
+      visibility: 100,
+      standing: 50
+    });
+    expect(next.player.reputation.overallReputation).toBe(25);
+    expect(next.player.reputation.logs).toContainEqual(
+      expect.objectContaining({
+        kind: 'overall',
+        overallReputationDelta: 25,
+        reason: '玩家公开化解了一次纠纷。'
+      })
+    );
+  });
+
+  it('uses local circle aggregation instead of a model-proposed overall score', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'civilian' });
+    const response = validateNarratorResponse({
+      narrativeText: '只有少量商业人士对玩家留下好印象。',
+      writeback: {
+        playerPatch: {
+          reputation: {
+            overallReputationSet: 90,
+            summary: '小范围商业评价有所改善。',
+            reason: '一场小型会面顺利结束。',
+            circlePatches: [
+              {
+                circle: 'business',
+                visibilitySet: 10,
+                standingSet: 50,
+                summary: '少量商人觉得玩家可靠。',
+                reason: '玩家兑现了一次小型会面承诺。'
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.player.reputation.overallReputation).toBe(5);
+    expect(next.player.reputation.overallReputation).not.toBe(90);
+  });
+
+  it('preserves valid circle patches when an overall reputation field is malformed', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'civilian' });
+    const response = validateNarratorResponse({
+      narrativeText: '警队内部评价出现变化。',
+      writeback: {
+        playerPatch: {
+          reputation: {
+            overallReputationDelta: '明显上升',
+            summary: '警队内部开始认可玩家。',
+            reason: '玩家完成了一项可靠工作。',
+            circlePatches: [
+              {
+                circle: 'police',
+                visibilitySet: 100,
+                standingSet: 40,
+                summary: '同僚开始认可玩家的可靠性。',
+                reason: '本回合工作得到同僚确认。'
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    expect(response.writeback.playerPatch?.reputation?.overallReputationDelta).toBeUndefined();
+    expect(response.writeback.playerPatch?.reputation?.circlePatches).toHaveLength(1);
+
+    const next = applyNarratorResponse(state, response);
+    expect(next.player.reputation.circles.police.standing).toBe(40);
+    expect(next.player.reputation.overallReputation).toBe(20);
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'playerPatch', 'reputation', 'overallReputationDelta']
+      })
+    );
   });
 
   it('ignores reputation patches without both summary and reason', () => {
@@ -3625,6 +5150,105 @@ describe('writeback protocol', () => {
 
     expect(afterRemove.assets.items.asset_gold_watch_001).toBeUndefined();
     expect(afterRemove.assets.items.asset_home_sham_shui_po_room).toBeDefined();
+  });
+
+  it('keeps spendable cash in finance while preserving cheque-like instruments as items', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      writebackVersion: '1.5',
+      narrativeText: '玩家收下五千港元现金和一张尚未兑现的银行本票。',
+      writeback: {
+        financePatch: {
+          cashDelta: 5_000,
+          reason: '收到现金报酬。'
+        },
+        assetPatch: {
+          upsertItems: [
+            {
+              itemId: 'asset_cash_reward',
+              category: 'valuable',
+              name: '5000港元现金',
+              summary: '刚收到的一笔现金报酬。'
+            },
+            {
+              itemId: 'asset_bank_draft',
+              category: 'document',
+              name: '五千港元银行本票',
+              summary: '尚未兑现的银行本票，可作为凭据保留。'
+            }
+          ],
+          equippedItemIds: ['asset_cash_reward']
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(response.writeback.assetPatch?.upsertItems.map((item) => item.itemId)).toEqual([
+      'asset_bank_draft'
+    ]);
+    expect(response.writeback.assetPatch?.equippedItemIds).toEqual([]);
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        code: 'cash_asset_rejected',
+        path: ['writeback', 'assetPatch', 'upsertItems', 'asset_cash_reward']
+      })
+    );
+    expect(next.finance.cashOnHand).toBe(state.finance.cashOnHand + 5_000);
+    expect(next.assets.items.asset_cash_reward).toBeUndefined();
+    expect(next.assets.items.asset_bank_draft).toBeDefined();
+  });
+
+  it('uses structured equipped item ids as the equipment source of truth', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      writebackVersion: '1.5',
+      narrativeText: '玩家把警棍和对讲机挂回执勤腰带。',
+      writeback: {
+        assetPatch: {
+          upsertItems: [
+            {
+              itemId: 'asset_baton',
+              category: 'equipment',
+              name: '警棍',
+              summary: '执勤使用的标准警棍。'
+            },
+            {
+              itemId: 'asset_radio',
+              category: 'equipment',
+              name: '对讲机',
+              summary: '用于当值联络的警用对讲机。'
+            }
+          ],
+          equippedItemIds: ['asset_baton', 'asset_radio']
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.assets.equippedItemIds).toEqual(['asset_baton', 'asset_radio']);
+    expect(next.player.equipment).toEqual(['警棍', '对讲机']);
+    expect(next.actors.player.equipment).toEqual(['警棍', '对讲机']);
+  });
+
+  it('does not manufacture item records from legacy equipment display names', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      writebackVersion: '1.5',
+      narrativeText: '玩家口头确认随身带着警棍和对讲机。',
+      writeback: {
+        playerPatch: {
+          equipment: ['警棍', '对讲机']
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.player.equipment).toEqual(['警棍', '对讲机']);
+    expect(next.assets.equippedItemIds).toEqual([]);
+    expect(Object.keys(next.assets.items)).toEqual([]);
   });
 
   it('mirrors asset evidence links into the case evidence store', () => {
@@ -3841,9 +5465,14 @@ describe('writeback protocol', () => {
 
     expect(next.player.reputation.circles.neighborhoodMedia.visibility).toBe(120);
     expect(next.player.reputation.circles.neighborhoodMedia.standing).toBe(-25);
+    expect(next.player.reputation.overallReputation).toBe(-13);
     expect(next.player.reputation.logs[0]).toMatchObject({
       kind: 'circle',
       circle: 'neighborhoodMedia'
+    });
+    expect(next.player.reputation.logs[1]).toMatchObject({
+      kind: 'overall',
+      overallReputationDelta: -13
     });
   });
 
@@ -4841,21 +6470,21 @@ describe('writeback protocol', () => {
     expect(next.storyLog.filter((entry) => entry.speaker === 'player')).toHaveLength(1);
   });
 
-  it('updates player police salary after a rank promotion writeback', () => {
+  it('synchronizes an inspector promotion across the player police state and salary', () => {
     const state = createInitialRuntimeState();
     state.time = { year: 1988, month: 10, day: 1, hour: 9, minute: 0 };
 
     expect(state.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID]?.amount).toBe(4200);
 
     const response = validateNarratorResponse({
-      narrativeText: 'The formal notice confirms the player has been promoted to sergeant.',
+      narrativeText: 'The formal notice confirms the player has been promoted to inspector.',
       writeback: {
         playerPatch: {
           policePanel: {
             careerPath: {
-              currentRank: 'Sergeant（警长 SGT）',
-              targetRank: 'Station Sergeant（警署警长 SSGT）',
-              routeSummary: '正式晋升后，下一步需要在警长岗位留下稳定记录。'
+              currentRank: 'Inspector（督察 IP）',
+              targetRank: 'Senior Inspector（高级督察 SIP）',
+              routeSummary: '正式晋升后，下一步需要在督察岗位留下稳定记录。'
             }
           }
         }
@@ -4865,10 +6494,173 @@ describe('writeback protocol', () => {
     const next = applyNarratorResponse(state, response);
     const salary = next.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID];
 
-    expect(next.lawIdentity.rank).toBe('Sergeant（警长 SGT）');
-    expect(salary?.amount).toBe(5200);
+    expect(next.lawIdentity.rank).toBe('Inspector（督察 IP）');
+    expect(next.policePanel.careerPath.currentRank).toBe('Inspector（督察 IP）');
+    expect(next.actors.player.roleProfiles.police?.rank).toBe('Inspector（督察 IP）');
+    expect(salary?.amount).toBe(6500);
     expect(salary?.activeFromMonth).toBe('1988-10');
-    expect(salary?.summary).toContain('Sergeant');
+    expect(salary?.summary).toContain('Inspector');
+  });
+
+  it('records the player actor as case lead when a case patch promotes the player to lead', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    state.actors[state.player.actorId].name = '陈厚生';
+    const response = validateNarratorResponse({
+      narrativeText: '上级正式授权陈厚生全权主办这宗案件。',
+      writeback: {
+        casePatches: [
+          {
+            caseId: 'case_cross_district_money_laundering',
+            title: '大角咀及九龙塘跨区非法集资与高利贷洗钱案',
+            caseType: 'organized_financial_crime',
+            status: 'investigating',
+            playerRole: 'lead',
+            summary: '案件已正式纳入跨区侦查。',
+            currentFocus: '追查紧急跨区线报。',
+            playerVisibleProgress: '玩家已获正式授权全权主办。'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.cases.case_cross_district_money_laundering).toMatchObject({
+      playerRole: 'lead',
+      leadActorId: state.player.actorId,
+      leadActorName: '陈厚生'
+    });
+  });
+
+  it('preserves another lead investigator when the player is only assisting', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    state.actors.actor_lau = createActorDefaults({
+      actorId: 'actor_lau',
+      name: '刘启',
+      currentIdentity: 'police',
+      publicIdentity: '便衣探员'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '刘启继续主办案件，玩家负责协助查证。',
+      writeback: {
+        casePatches: [
+          {
+            caseId: 'case_assist_control',
+            title: '协查案件',
+            caseType: 'assault',
+            status: 'investigating',
+            playerRole: 'assist',
+            leadActorId: 'actor_lau',
+            leadActorName: '刘启',
+            summary: '刘启主办，玩家协查。',
+            currentFocus: '核对证人口供。',
+            playerVisibleProgress: '玩家已完成第一轮协查。'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.cases.case_assist_control).toMatchObject({
+      playerRole: 'assist',
+      leadActorId: 'actor_lau',
+      leadActorName: '刘启'
+    });
+  });
+
+  it('synchronizes a chief superintendent promotion across every police rank mirror and salary', () => {
+    const state = createInitialRuntimeState({
+      startTime: { year: 1988, month: 10, day: 1, hour: 9, minute: 0 },
+      lawIdentity: {
+        rank: 'Senior Superintendent（高级警司 SSP）',
+        stationOrPost: 'Police Headquarters',
+        department: 'Force Headquarters',
+        assignmentSummary: 'Senior command duties'
+      }
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '警队正式公布晋升令，玩家获晋升为总警司。',
+      writeback: {
+        playerPatch: {
+          policePanel: {
+            careerPath: {
+              currentRank: 'Chief Superintendent（总警司 CSP）',
+              targetRank: 'Assistant Commissioner of Police（助理处长 ACP）',
+              routeSummary: '晋升后负责更高层级的警队指挥工作。'
+            }
+          }
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    const salary = next.finance.cashflows[PLAYER_POLICE_SALARY_CASHFLOW_ID];
+
+    expect(next.lawIdentity.rank).toBe('Chief Superintendent（总警司 CSP）');
+    expect(next.policePanel.careerPath.currentRank).toBe(
+      'Chief Superintendent（总警司 CSP）'
+    );
+    expect(next.actors.player.roleProfiles.police?.rank).toBe(
+      'Chief Superintendent（总警司 CSP）'
+    );
+    expect(salary?.amount).toBe(12500);
+    expect(salary?.summary).toContain('Chief Superintendent');
+  });
+
+  it('synchronizes a formal PTU-to-CID transfer without creating an identity transition', () => {
+    const state = createInitialRuntimeState({
+      lawIdentity: {
+        rank: 'Police Constable（警员 PC）',
+        stationOrPost: 'Police Tactical Unit（警察机动部队 PTU）',
+        department: 'Police Tactical Unit（警察机动部队 PTU）',
+        assignmentSummary: '机动部队大队日常训练与行动候命'
+      }
+    });
+    const identityHistory = [...state.player.identityHistory];
+    const response = validateNarratorResponse({
+      narrativeText: '正式调令已经生效，玩家离开机动部队，转到九龙总区刑事侦缉部门报到。',
+      turnSummary: '玩家的警察身份没有改变，所属单位正式由机动部队转为 CID。',
+      writeback: {
+        policeRoleProfilePatch: {
+          reason: '正式调令已经生效并完成 CID 报到。',
+          stationOrPost: 'Kowloon Regional Headquarters（九龙总区总部）',
+          department: 'Criminal Investigation Department（刑事侦缉处 CID）',
+          assignmentSummary: '刑事侦缉队调查员，负责案件调查与侦缉工作',
+          postRole: 'CID Detective（刑事侦缉队调查员）',
+          dutySummary: '负责案件调查、证人联络、线索核查与行动支援。'
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    const policeProfile = next.actors.player.roleProfiles.police;
+    const policeRelation = next.actors.player.organizationRelations.find(
+      (relation) => relation.organizationId === 'org_hk_police' && relation.isPrimary
+    );
+
+    expect(next.player.identityHistory).toEqual(identityHistory);
+    expect(next.player.currentIdentity).toBe('police');
+    expect(next.lawIdentity).toMatchObject({
+      stationOrPost: 'Kowloon Regional Headquarters（九龙总区总部）',
+      department: 'Criminal Investigation Department（刑事侦缉处 CID）',
+      assignmentSummary: '刑事侦缉队调查员，负责案件调查与侦缉工作',
+      dutySummary: '负责案件调查、证人联络、线索核查与行动支援。'
+    });
+    expect(policeProfile).toMatchObject({
+      stationOrPost: 'Kowloon Regional Headquarters（九龙总区总部）',
+      department: 'Criminal Investigation Department（刑事侦缉处 CID）',
+      assignmentSummary: '刑事侦缉队调查员，负责案件调查与侦缉工作',
+      postRole: 'CID Detective（刑事侦缉队调查员）'
+    });
+    expect(policeRelation).toMatchObject({
+      roleTitle: 'CID Detective（刑事侦缉队调查员）',
+      departmentOrUnit: 'Criminal Investigation Department（刑事侦缉处 CID）',
+      summary: '刑事侦缉队调查员，负责案件调查与侦缉工作'
+    });
+    expect(next.policePanel.unitName).toContain('刑事侦缉处');
+    expect(next.policePanel.unitSummary).toContain('刑事侦缉处');
+    expect(next.policePanel.unitName).not.toContain('机动部队');
   });
 
   it('sanitizes pregnancy patches independently so one invalid item does not discard a valid risk', () => {
@@ -4882,7 +6674,11 @@ describe('writeback protocol', () => {
             actorId: 'npc_adult_female',
             riskType: 'unprotected',
             summary: '明确的无保护受孕风险。',
-            fatherActorId: 'player'
+            fatherActorId: 'player',
+            paternityCandidates: [
+              { actorId: 'player', name: '玩家', visibility: 'player_known' },
+              { actorId: 'npc_other_candidate', name: '陈先生', visibility: 'player_known' }
+            ]
           },
           {
             actorId: 'npc_invalid',
@@ -4894,7 +6690,14 @@ describe('writeback protocol', () => {
     });
 
     expect(response.writeback.pregnancyRiskPatches).toEqual([
-      expect.objectContaining({ actorId: 'npc_adult_female', riskType: 'unprotected' })
+      expect.objectContaining({
+        actorId: 'npc_adult_female',
+        riskType: 'unprotected',
+        paternityCandidates: [
+          expect.objectContaining({ actorId: 'player' }),
+          expect.objectContaining({ actorId: 'npc_other_candidate' })
+        ]
+      })
     ]);
     expect(response.validationWarnings).toContainEqual(
       expect.objectContaining({
@@ -4923,14 +6726,6 @@ describe('writeback protocol', () => {
       motivation: '照顾生活。',
       longTermGoal: '维持安稳生活。',
       values: '重视承诺。',
-      femaleProfile: {
-        adultPrivateProfile: {
-          enabled: true,
-          ageConfirmedAdult: true,
-          profileStatus: 'ready',
-          womb: { status: '未受孕', cervixStatus: '紧闭', records: [] }
-        }
-      },
       visibility: 'player_known'
     });
     const riskResponse = validateNarratorResponse({
@@ -4942,6 +6737,10 @@ describe('writeback protocol', () => {
             actorId: 'npc_adult_female',
             riskType: 'unprotected',
             summary: '阿玲经历了一次明确的无保护受孕风险。',
+            paternityCandidates: [
+              { actorId: 'player', name: '玩家', visibility: 'player_known' },
+              { actorId: 'npc_other_candidate', name: '陈先生', visibility: 'player_known' }
+            ],
             fatherActorId: 'player',
             fatherName: '玩家',
             fatherVisibility: 'player_known'
@@ -4957,9 +6756,24 @@ describe('writeback protocol', () => {
       status: '待验孕',
       pregnancy: {
         status: 'pending_check',
-        paternityCandidates: [expect.objectContaining({ actorId: 'player', visibility: 'player_known' })]
+        paternityCandidates: [
+          expect.objectContaining({ actorId: 'player', visibility: 'player_known' }),
+          expect.objectContaining({ actorId: 'npc_other_candidate', visibility: 'player_known' })
+        ]
       }
     });
+    expect(registeredWomb?.records.at(-1)?.paternityCandidates).toEqual(
+      registeredWomb?.pregnancy?.paternityCandidates
+    );
+    expect(registered.actors.npc_adult_female.femaleProfile?.adultPrivateProfile).toMatchObject({
+      enabled: true,
+      ageConfirmedAdult: true,
+      profileStatus: 'developing',
+      source: 'writeback'
+    });
+    expect(registered.actors.npc_adult_female.femaleProfile?.adultPrivateProfile?.partProfiles).toBeUndefined();
+    expect(registered.actors.npc_adult_female.femaleProfile?.adultPrivateProfile?.fetishNotes).toBeUndefined();
+    expect(registered.actors.npc_adult_female.femaleProfile?.adultPrivateProfile?.sensitivePoints).toBeUndefined();
 
     const overwriteResponse = validateNarratorResponse({
       narrativeText: '后续回合没有新的验孕事实。',
@@ -5053,6 +6867,199 @@ describe('writeback protocol', () => {
     expect(next.actors.player.organizationIds).toContain('org_wo_shing_wo');
     expect(next.secretFacts.secret_player_handler_1?.visibility).toBe('player_known');
     expect(next.player.identityHistory[0]?.transitionId).toBe('transition_join_wo_shing_wo_1');
+  });
+
+  it('remaps reviewed actor ids inside a triad role profile and identity secret facts', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'civilian' });
+    state.actors.actor_canonical_patron = {
+      ...state.actors.player,
+      actorId: 'actor_canonical_patron',
+      name: '阿成',
+      currentIdentity: 'gang_member',
+      publicIdentity: '庙街地区线联络人'
+    };
+    const response = validateNarratorResponse({
+      narrativeText: '阿成正式带玩家进入和胜和庙街关系网。',
+      turnSummary: '玩家成为和胜和庙街外围成员，阿成是直属上线。',
+      writeback: {
+        identityContextPatch: {
+          transitionId: 'transition_join_wo_shing_wo_reviewed_patron',
+          kind: 'join',
+          fromIdentity: 'civilian',
+          toIdentity: 'gang_member',
+          publicIdentity: '和胜和庙街外围成员',
+          reason: '阿成正式接纳玩家进入地区线。',
+          targetRoleProfile: {
+            identity: 'gang_member',
+            profile: {
+              status: 'active',
+              organizationId: 'org_wo_shing_wo',
+              societyName: '和胜和',
+              roleTitle: '庙街外围成员',
+              rankSummary: '外围新人',
+              territorySummary: '庙街与油麻地一带',
+              patronActorIds: ['actor_temporary_patron'],
+              peerActorIds: [],
+              rivalActorIds: [],
+              obligationSummary: '按规矩向直属上线交代。',
+              riskSummary: '不可越权或公开借组织名义。'
+            }
+          },
+          secretFactPatches: [
+            {
+              operation: 'upsert',
+              fact: {
+                secretId: 'secret_reviewed_patron_link',
+                ownerType: 'player',
+                ownerId: 'player',
+                kind: 'relationship',
+                summary: '阿成是玩家未公开的直属上线。',
+                playerCharacterKnown: true,
+                publicKnown: false,
+                knownByActorIds: ['actor_temporary_patron'],
+                revealState: 'known_to_some_actors',
+                revealConditions: ['联络关系暴露。'],
+                visibility: 'player_known',
+                importance: 80
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    const next = applyNarratorResponse(state, response, {
+      actorIdAliases: { actor_temporary_patron: 'actor_canonical_patron' }
+    });
+
+    expect(next.actors.player.roleProfiles.triad?.patronActorIds).toEqual(['actor_canonical_patron']);
+    expect(next.secretFacts.secret_reviewed_patron_link?.knownByActorIds).toEqual(['actor_canonical_patron']);
+    expect(next.actorIdAliases).toMatchObject({
+      actor_temporary_patron: 'actor_canonical_patron'
+    });
+  });
+
+  it('accepts a structured pregnancy lifecycle review and medical confirmation patch', () => {
+    const response = validateNarratorResponseStrict({
+      writebackVersion: '1.7',
+      narrativeText: '医院检查明确确认已有妊娠。',
+      turnSummary: '医生完成检查并确认阿玲怀孕。',
+      suggestedActions: [],
+      playerVitalsReview: { changed: false, reason: '玩家身体状态没有变化。' },
+      pregnancyLifecycleReview: {
+        changed: true,
+        events: [
+          {
+            actorId: 'npc_adult_female',
+            event: 'pregnancy_confirmed',
+            reason: '医院检查明确确认妊娠。'
+          }
+        ],
+        reason: '本回合发生了医学确认。'
+      },
+      writeback: {
+        pregnancyResolutionPatches: [
+          {
+            actorId: 'npc_adult_female',
+            outcome: 'pregnancy_confirmed',
+            summary: '医院检查明确确认妊娠。'
+          }
+        ]
+      }
+    });
+
+    expect(response.pregnancyLifecycleReview).toMatchObject({
+      changed: true,
+      events: [expect.objectContaining({ event: 'pregnancy_confirmed' })]
+    });
+    expect(response.writeback.pregnancyResolutionPatches).toEqual([
+      expect.objectContaining({ outcome: 'pregnancy_confirmed' })
+    ]);
+  });
+
+  it('soft-drops a contradictory pregnancy lifecycle review without discarding valid writeback', () => {
+    const response = validateNarratorResponseStrict({
+      writebackVersion: '1.7',
+      narrativeText: '医院检查明确确认已有妊娠。',
+      turnSummary: '医生完成检查并确认阿玲怀孕。',
+      suggestedActions: [],
+      pregnancyLifecycleReview: {
+        changed: false,
+        events: [
+          {
+            actorId: 'npc_adult_female',
+            event: 'pregnancy_confirmed',
+            reason: '自相矛盾的复核。'
+          }
+        ],
+        reason: '错误地声明没有变化。'
+      },
+      writeback: {
+        pregnancyResolutionPatches: [
+          {
+            actorId: 'npc_adult_female',
+            outcome: 'pregnancy_confirmed',
+            summary: '医院检查明确确认妊娠。'
+          }
+        ]
+      }
+    });
+
+    expect(response.pregnancyLifecycleReview).toBeUndefined();
+    expect(response.writeback.pregnancyResolutionPatches).toHaveLength(1);
+    expect(response.validationWarnings).toContainEqual(
+      expect.objectContaining({ path: expect.arrayContaining(['pregnancyLifecycleReview']) })
+    );
+  });
+
+  it('does not erase established triad relationship ids when an API correction omits those arrays', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member' });
+    state.actors.player.roleProfiles.triad = {
+      ...state.actors.player.roleProfiles.triad!,
+      patronActorIds: ['actor_existing_patron'],
+      peerActorIds: ['actor_existing_peer'],
+      rivalActorIds: ['actor_existing_rival']
+    };
+    const response = validateNarratorResponse({
+      narrativeText: '上线只重新确认了玩家在庙街地区线中的职务。',
+      turnSummary: '玩家的社团职务称谓得到修正，既有组织关系没有变化。',
+      writeback: {
+        identityContextPatch: {
+          transitionId: 'transition_triad_api_partial_correction',
+          kind: 'correction',
+          fromIdentity: 'gang_member',
+          toIdentity: 'gang_member',
+          publicIdentity: '和胜和庙街地区成员',
+          reason: '修正地区线职务称谓。',
+          targetRoleProfile: {
+            identity: 'gang_member',
+            profile: {
+              organizationId: 'org_wo_shing_wo',
+              societyName: '和胜和',
+              roleTitle: '庙街地区成员',
+              rankSummary: '正式成员'
+            }
+          }
+        }
+      }
+    });
+
+    expect(response.writeback.identityContextPatch?.targetRoleProfile).toMatchObject({
+      identity: 'gang_member',
+      profile: {
+        patronActorIds: [],
+        peerActorIds: [],
+        rivalActorIds: []
+      }
+    });
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.player.roleProfiles.triad).toMatchObject({
+      roleTitle: '庙街地区成员',
+      patronActorIds: ['actor_existing_patron'],
+      peerActorIds: ['actor_existing_peer'],
+      rivalActorIds: ['actor_existing_rival']
+    });
   });
 
   it('normalizes explicit identity patch aliases returned by a compatible API without reading narrative prose', () => {

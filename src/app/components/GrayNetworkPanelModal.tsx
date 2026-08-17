@@ -1,7 +1,14 @@
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { projectGrayNetworkContext } from '../../domain/grayNetwork/grayNetworkContextProjector';
-import type { Organization, OrganizationStructureNode, RuntimeState } from '../../domain/runtime/types';
+import type {
+  CurrentMatter,
+  Organization,
+  OrganizationEvolutionTrack,
+  OrganizationStructureNode,
+  RuntimeState,
+  TriadRoleProfile
+} from '../../domain/runtime/types';
 
 interface GrayNetworkPanelModalProps {
   state: RuntimeState;
@@ -52,6 +59,16 @@ function riskLevelText(level?: string): string {
   return level ? labels[level] ?? level : '未明';
 }
 
+function leadershipPhaseText(phase?: string): string {
+  const labels: Record<string, string> = {
+    stable: '权力稳定',
+    consultation: '内部议事',
+    contested: '权力争持',
+    transition: '交接过渡'
+  };
+  return phase ? labels[phase] ?? phase : '未确认';
+}
+
 function placeName(state: RuntimeState, placeId: string): string {
   const place = state.places[placeId];
   return place ? place.nameZh ?? place.name : placeId;
@@ -61,6 +78,88 @@ function actorName(state: RuntimeState, actorId: string): string {
   const actor = state.actors[actorId];
   if (!actor) return actorId;
   return actor.englishName ? `${actor.name} / ${actor.englishName}` : actor.name;
+}
+
+function currentPublicTriadProfile(state: RuntimeState): TriadRoleProfile | undefined {
+  if (state.player.currentIdentity !== 'gang_member') return undefined;
+  const profile = state.actors[state.player.actorId]?.roleProfiles.triad;
+  return profile && (profile.status === 'active' || profile.status === 'cover') ? profile : undefined;
+}
+
+function joinedActorNames(state: RuntimeState, actorIds: string[]): string {
+  const names = actorIds.filter((actorId) => Boolean(state.actors[actorId])).map((actorId) => actorName(state, actorId));
+  return names.length ? names.join('、') : '尚未建立稳定联系';
+}
+
+function TriadMembershipOverview({
+  state,
+  profile,
+  evolutionTrack,
+  responsibilities
+}: {
+  state: RuntimeState;
+  profile: TriadRoleProfile;
+  evolutionTrack?: OrganizationEvolutionTrack;
+  responsibilities: CurrentMatter[];
+}) {
+  const currentResponsibility = responsibilities.find((item) => item.status === 'active') ?? responsibilities[0];
+  const assignerIds = currentResponsibility
+    ? currentResponsibility.relatedActorIds.filter((actorId) => profile.patronActorIds.includes(actorId))
+    : [];
+  const direction = evolutionTrack?.objective ?? evolutionTrack?.currentAction ?? evolutionTrack?.currentStatus;
+
+  return (
+    <section className="gray-network-membership-overview" aria-label="我的社团">
+      <header>
+        <div>
+          <h5>我的社团</h5>
+          <p>你在组织关系网中当前已经确认的位置、联系人和责任。</p>
+        </div>
+        <span>{profile.rankSummary ?? profile.roleTitle ?? '位置待确认'}</span>
+      </header>
+      <dl>
+        <div>
+          <dt>我的位置</dt>
+          <dd>{[profile.rankSummary, profile.roleTitle].filter(Boolean).join(' · ') || '位置待确认'}</dd>
+        </div>
+        <div>
+          <dt>活动范围</dt>
+          <dd>{profile.territorySummary ?? '尚未划定固定范围'}</dd>
+        </div>
+        <div>
+          <dt>直属上线</dt>
+          <dd>{joinedActorNames(state, profile.patronActorIds)}</dd>
+        </div>
+        <div>
+          <dt>同组人物</dt>
+          <dd>{joinedActorNames(state, profile.peerActorIds)}</dd>
+        </div>
+        <div>
+          <dt>当前组织方向</dt>
+          <dd>{direction ?? '暂未形成明确方向'}</dd>
+        </div>
+        <div className="gray-network-membership-responsibility">
+          <dt>当前责任</dt>
+          <dd>
+            {currentResponsibility ? (
+              <>
+                <strong>{currentResponsibility.title}</strong>
+                <span>{currentResponsibility.summary}</span>
+                {assignerIds.length ? <small>交代人：{joinedActorNames(state, assignerIds)}</small> : null}
+                {currentResponsibility.currentHook ? <small>当前情况：{currentResponsibility.currentHook}</small> : null}
+              </>
+            ) : (
+              '目前没有明确交代'
+            )}
+          </dd>
+        </div>
+      </dl>
+      <footer>
+        <span>组织责任：{profile.obligationSummary || '尚未形成明确责任'}</span>
+        <span>当前风险：{profile.riskSummary || '暂无明确风险'}</span>
+      </footer>
+    </section>
+  );
 }
 
 function currentPlaceName(state: RuntimeState): string {
@@ -151,6 +250,101 @@ function SocietyStructureTree({ society, state }: { society: Organization; state
   );
 }
 
+function SocietyProfile({ society, state }: { society: Organization; state: RuntimeState }) {
+  const profile = society.triadProfile;
+  const triadState = society.triadState;
+  if (!profile || !triadState) return null;
+  const leaderName = triadState.leadership.currentLeaderActorId
+    ? actorName(state, triadState.leadership.currentLeaderActorId)
+    : '尚未确认';
+  const candidateNames = triadState.leadership.knownCandidateActorIds.map((actorId) => actorName(state, actorId));
+
+  return (
+    <div className="gray-network-society-profile" aria-label={`${society.name}社团特征`}>
+      <article>
+        <h5>社团本色</h5>
+        <strong>{profile.organizationStyle}</strong>
+        <p>{profile.decisionCulture}</p>
+      </article>
+      <article>
+        <h5>主要营生线</h5>
+        <ul>
+          {profile.operatingLines.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </article>
+      <article>
+        <h5>规矩与裂缝</h5>
+        <strong>内部规矩</strong>
+        <ul>
+          {profile.customaryRules.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+        <strong>潜在分歧</strong>
+        <ul>
+          {profile.internalFaultLines.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </article>
+      <article className="gray-network-leadership-card">
+        <h5>话事与交接</h5>
+        <span>{leadershipPhaseText(triadState.leadership.phase)}</span>
+        <p>{profile.leadershipSelection}</p>
+        <dl>
+          <div>
+            <dt>玩家所知主事人</dt>
+            <dd>{leaderName}</dd>
+          </div>
+          <div>
+            <dt>可见候选</dt>
+            <dd>{candidateNames.join('、') || '暂无可靠人选'}</dd>
+          </div>
+          <div>
+            <dt>当前权力状态</dt>
+            <dd>{triadState.leadership.visibleSummary}</dd>
+          </div>
+          <div>
+            <dt>下一节点</dt>
+            <dd>{triadState.leadership.nextMilestone ?? '暂无'}</dd>
+          </div>
+        </dl>
+      </article>
+    </div>
+  );
+}
+
+function SocietyActivityAreas({ society, state }: { society: Organization; state: RuntimeState }) {
+  const profile = society.triadProfile;
+  const triadState = society.triadState;
+  if (!profile || !triadState) return null;
+
+  return (
+    <section className="gray-network-territory-section" aria-label={`${society.name}活动区域`}>
+      <header>
+        <h5>势力范围与活动线</h5>
+        <span>并非排他控制</span>
+      </header>
+      <div className="gray-network-territory-grid">
+        {profile.activityAreas.map((area) => {
+          const runtime = triadState.activityAreas.find((item) => item.placeId === area.placeId);
+          return (
+            <article key={area.placeId}>
+              <strong>{placeName(state, area.placeId)}</strong>
+              <span>可信度 {confidenceText(runtime?.confidence)}</span>
+              <p>{area.activitySummary}</p>
+              <p>{runtime?.statusSummary ?? '当前没有玩家可见的具体行动。'}</p>
+              <small>{runtime?.pressureSummary ?? area.localPressureSummary}</small>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function isVisibleSociety(organization: Organization): boolean {
   return organization.type === 'triad' && organization.visibility !== 'hidden';
 }
@@ -170,8 +364,12 @@ function referencesAny(values: string[], references: Set<string>, ignoredValue?:
 export function GrayNetworkPanelModal({ state, onClose, onDraftPlayerAction }: GrayNetworkPanelModalProps) {
   const projection = projectGrayNetworkContext(state);
   const societies = useMemo(() => Object.values(state.organizations).filter(isVisibleSociety).sort(societySort), [state.organizations]);
+  const playerTriadProfile = currentPublicTriadProfile(state);
   const [selectedSocietyId, setSelectedSocietyId] = useState<string | undefined>();
-  const selectedSociety = societies.find((item) => item.organizationId === selectedSocietyId) ?? societies[0];
+  const selectedSociety =
+    societies.find((item) => item.organizationId === selectedSocietyId) ??
+    societies.find((item) => item.organizationId === playerTriadProfile?.organizationId) ??
+    societies[0];
   const selectedSocietyDynamic = useMemo(() => {
     if (!selectedSociety) {
       return {
@@ -227,7 +425,9 @@ export function GrayNetworkPanelModal({ state, onClose, onDraftPlayerAction }: G
     ]);
 
     return {
-      matters: Object.values(state.dynamicEvents.currentMatters).filter((item) => item.relatedOrganizationIds.includes(organizationId)),
+      matters: Object.values(state.dynamicEvents.currentMatters).filter(
+        (item) => item.visibility === 'known' && item.relatedOrganizationIds.includes(organizationId)
+      ),
       signals: Object.values(state.dynamicEvents.signals).filter(
         (item) => item.relatedOrganizationIds.includes(organizationId) && item.status !== 'archived'
       ),
@@ -267,6 +467,17 @@ export function GrayNetworkPanelModal({ state, onClose, onDraftPlayerAction }: G
       )
     };
   }, [projection, selectedSociety, state.backgroundEvolution, state.citySituationTracks, state.dynamicEvents, state.player.actorId]);
+  const selectedMembershipProfile =
+    playerTriadProfile?.organizationId === selectedSociety?.organizationId ? playerTriadProfile : undefined;
+  const selectedResponsibilities = selectedMembershipProfile
+    ? selectedSocietyDynamic.matters.filter(
+        (item) =>
+          item.source === 'triad_responsibility' &&
+          item.matterKind === 'social' &&
+          item.visibility === 'known' &&
+          (item.status === 'active' || item.status === 'dormant')
+      )
+    : [];
 
   function handleDraftAction(text: string) {
     onDraftPlayerAction(text);
@@ -326,7 +537,7 @@ export function GrayNetworkPanelModal({ state, onClose, onDraftPlayerAction }: G
                       onClick={() => setSelectedSocietyId(society.organizationId)}
                     >
                       <strong>{society.name}</strong>
-                      <span>{society.currentState}</span>
+                      <span>{society.triadProfile?.organizationStyle ?? society.currentState}</span>
                     </button>
                   ))}
                 </div>
@@ -335,9 +546,23 @@ export function GrayNetworkPanelModal({ state, onClose, onDraftPlayerAction }: G
                   <div className="gray-network-society-detail" role="region" aria-label={`${selectedSociety.name}社团面板`}>
                     <header>
                       <h4>{selectedSociety.name}</h4>
-                      <span>街面公开可知</span>
+                      <span>{selectedMembershipProfile ? '当前所属社团' : '街面公开可知'}</span>
                     </header>
-                    <SocietyStructureTree society={selectedSociety} state={state} />
+                    {selectedMembershipProfile ? (
+                      <TriadMembershipOverview
+                        state={state}
+                        profile={selectedMembershipProfile}
+                        evolutionTrack={selectedSocietyDynamic.evolutionTrack}
+                        responsibilities={selectedResponsibilities}
+                      />
+                    ) : null}
+                    <SocietyProfile society={selectedSociety} state={state} />
+                    <SocietyActivityAreas society={selectedSociety} state={state} />
+                    <SocietyStructureTree
+                      key={selectedSociety.organizationId}
+                      society={selectedSociety}
+                      state={state}
+                    />
                     <dl className="police-panel-data-grid">
                       <div>
                         <dt>公开认知</dt>

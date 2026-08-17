@@ -46,6 +46,7 @@ describe('ReputationArchiveModal', () => {
     expect(dialog).toHaveTextContent('整体口碑');
     expect(dialog).toHaveTextContent('-12');
     expect(dialog).toHaveTextContent('在旺角附近开始有人知道他');
+    expect(dialog).toHaveTextContent('整体口碑由各圈层的知名度与评价在本地综合');
 
     const circles = within(dialog).getByLabelText('圈层口碑');
     expect(circles).toHaveTextContent('警队');

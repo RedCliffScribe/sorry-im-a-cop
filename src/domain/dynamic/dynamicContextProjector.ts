@@ -2,6 +2,7 @@ import { isGameTimeDue } from '../deferred/deferredEventProjector';
 import { getNewsIssueCategory } from '../news/newsIssueLifecycle';
 import type { CurrentMatter, DeferredEvent, NewsIssue, RuntimeState, Signal } from '../runtime/types';
 import { isArchivedCurrentMatter } from './currentMatterStatus';
+import { isCurrentSignal } from './signalLifecycle';
 
 export interface DynamicProjectionDiagnostics {
   sourceCurrentMatterCount: number;
@@ -100,10 +101,6 @@ function isRecentResolvedMatter(matter: CurrentMatter, state: RuntimeState, look
   return elapsedMinutes >= 0 && elapsedMinutes <= lookbackMinutes;
 }
 
-function isLiveSignal(signal: Signal): boolean {
-  return signal.status === 'active' || signal.status === 'stale';
-}
-
 function responseWindowScore(matter: CurrentMatter): number {
   if (matter.responseWindow === 'now') return 45;
   if (matter.responseWindow === 'today') return 25;
@@ -113,6 +110,19 @@ function responseWindowScore(matter: CurrentMatter): number {
 
 function scoreCurrentMatter(matter: CurrentMatter, state: RuntimeState, actors: Set<string>, cases: Set<string>): number {
   let score = matter.priority;
+  const playerTriadProfile =
+    state.player.currentIdentity === 'gang_member'
+      ? state.actors[state.player.actorId]?.roleProfiles.triad
+      : undefined;
+  const currentTriadResponsibility =
+    matter.source === 'triad_responsibility' &&
+    playerTriadProfile &&
+    (playerTriadProfile.status === 'active' || playerTriadProfile.status === 'cover') &&
+    Boolean(
+      playerTriadProfile.organizationId &&
+      matter.relatedOrganizationIds.includes(playerTriadProfile.organizationId)
+    );
+  if (currentTriadResponsibility) score += 100;
   if (matter.status === 'active') score += 30;
   if (matter.status === 'dormant') score += 5;
   if (matter.status === 'resolved' || matter.status === 'archived') score -= 60;
@@ -238,7 +248,7 @@ export function projectDynamicContext(state: RuntimeState, options: DynamicProje
       omittedHiddenCount += 1;
       return false;
     }
-    return isLiveSignal(signal);
+    return isCurrentSignal(signal, state.time);
   });
   const signals = selectScored(
     visibleSignals.map((signal) => ({ item: signal, score: scoreSignal(signal, state, actors, cases) })),

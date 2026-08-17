@@ -81,8 +81,47 @@ function wombOf(actors: RuntimeState['actors'], actorId = 'npc_adult_female') {
   return actors[actorId].femaleProfile?.adultPrivateProfile?.womb;
 }
 
+function forceCurrentChance(
+  actors: RuntimeState['actors'],
+  chancePercent: number,
+  actorId = 'npc_adult_female'
+): RuntimeState['actors'] {
+  const actor = actors[actorId];
+  const adultPrivateProfile = actor.femaleProfile?.adultPrivateProfile;
+  const womb = adultPrivateProfile?.womb;
+  const pregnancy = womb?.pregnancy;
+  if (!adultPrivateProfile || !womb || !pregnancy) return actors;
+  return {
+    ...actors,
+    [actorId]: {
+      ...actor,
+      femaleProfile: {
+        ...actor.femaleProfile,
+        adultPrivateProfile: {
+          ...adultPrivateProfile,
+          womb: {
+            ...womb,
+            pregnancy: { ...pregnancy, chancePercent }
+          }
+        }
+      }
+    }
+  };
+}
+
 function daysAfter(time: GameTime, days: number): GameTime {
   const date = new Date(Date.UTC(time.year, time.month - 1, time.day + days, time.hour, time.minute));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+    hour: date.getUTCHours(),
+    minute: date.getUTCMinutes()
+  };
+}
+
+function hoursAfter(time: GameTime, hours: number): GameTime {
+  const date = new Date(Date.UTC(time.year, time.month - 1, time.day, time.hour + hours, time.minute));
   return {
     year: date.getUTCFullYear(),
     month: date.getUTCMonth() + 1,
@@ -117,6 +156,74 @@ describe('pregnancy lifecycle', () => {
 
     expect(wombOf(result.actors, 'npc_minor')?.pregnancy).toBeUndefined();
     expect(result.diagnostics[0]?.code).toBe('pregnancy_actor_ineligible');
+  });
+
+  it('keeps a recent cervix status and restores the normal state after 12 game hours', () => {
+    const fixture = createFixture();
+    const observedAt = fixture.state.time;
+    const actor = fixture.actors.npc_adult_female;
+    const adultPrivateProfile = actor.femaleProfile?.adultPrivateProfile;
+    const womb = adultPrivateProfile?.womb;
+    expect(adultPrivateProfile && womb).toBeTruthy();
+    if (!adultPrivateProfile || !womb) return;
+
+    const actors = {
+      ...fixture.actors,
+      [actor.actorId]: {
+        ...actor,
+        femaleProfile: {
+          ...actor.femaleProfile,
+          adultPrivateProfile: {
+            ...adultPrivateProfile,
+            updatedAt: observedAt,
+            womb: {
+              ...womb,
+              cervixStatus: '本回合形成的短期状态',
+              cervixStatusUpdatedAt: observedAt
+            }
+          }
+        }
+      }
+    };
+
+    const recent = run({ ...fixture, actors }, { currentTime: hoursAfter(observedAt, 11) });
+    expect(wombOf(recent.actors)?.cervixStatus).toBe('本回合形成的短期状态');
+
+    const expiredAt = hoursAfter(observedAt, 12);
+    const expired = run({ ...fixture, actors }, { currentTime: expiredAt });
+    expect(wombOf(expired.actors)?.cervixStatus).toBe('紧闭');
+    expect(wombOf(expired.actors)?.cervixStatusUpdatedAt).toEqual(expiredAt);
+  });
+
+  it('uses the legacy private-profile update time when an old save has no dedicated cervix timestamp', () => {
+    const fixture = createFixture();
+    const observedAt = fixture.state.time;
+    const actor = fixture.actors.npc_adult_female;
+    const adultPrivateProfile = actor.femaleProfile?.adultPrivateProfile;
+    const womb = adultPrivateProfile?.womb;
+    expect(adultPrivateProfile && womb).toBeTruthy();
+    if (!adultPrivateProfile || !womb) return;
+
+    const actors = {
+      ...fixture.actors,
+      [actor.actorId]: {
+        ...actor,
+        femaleProfile: {
+          ...actor.femaleProfile,
+          adultPrivateProfile: {
+            ...adultPrivateProfile,
+            updatedAt: observedAt,
+            womb: {
+              ...womb,
+              cervixStatus: '旧存档短期状态'
+            }
+          }
+        }
+      }
+    };
+
+    const result = run({ ...fixture, actors }, { currentTime: hoursAfter(observedAt, 12) });
+    expect(wombOf(result.actors)?.cervixStatus).toBe('紧闭');
   });
 
   it('creates a stable delayed-check opportunity without rerolling on reload', () => {
@@ -165,40 +272,221 @@ describe('pregnancy lifecycle', () => {
     expect(wombOf(actors)?.records).toHaveLength(12);
   });
 
-  it('resolves a failed opportunity at the scheduled check and enforces cooldown', () => {
+  it('merges same-day risks but schedules risks from different days separately', () => {
+    const fixture = createFixture();
+    const first = run(fixture, { riskPatches: [risk()] });
+    const firstPregnancy = wombOf(first.actors)?.pregnancy;
+    const secondTime = daysAfter(fixture.state.time, 1);
+    const second = run(
+      { ...fixture, actors: first.actors },
+      {
+        currentTime: secondTime,
+        riskPatches: [risk('npc_adult_female', { summary: '第二天再次发生风险。' })]
+      }
+    );
+    const womb = wombOf(second.actors);
+    const queued = womb?.pendingPregnancyChecks?.[0];
+
+    expect(womb?.pregnancy?.pregnancyId).toBe(firstPregnancy?.pregnancyId);
+    expect(womb?.pendingPregnancyChecks).toHaveLength(1);
+    expect(queued?.registeredAt).toEqual(secondTime);
+    expect(queued?.checkDueAt).toEqual(daysAfter(firstPregnancy!.checkDueAt, 1));
+    expect(queued?.pregnancyId).not.toBe(firstPregnancy?.pregnancyId);
+  });
+
+  it('keeps every same-window paternity candidate while accepting legacy father fields', () => {
+    const fixture = createFixture();
+    const registered = run(fixture, {
+      riskPatches: [
+        risk('npc_adult_female', {
+          paternityCandidates: [
+            { actorId: 'player', name: '玩家', visibility: 'player_known' },
+            { actorId: 'npc_other_candidate', name: '陈先生', visibility: 'player_known' }
+          ],
+          fatherActorId: 'player',
+          fatherName: '玩家',
+          fatherVisibility: 'player_known'
+        })
+      ]
+    });
+    const womb = wombOf(registered.actors);
+
+    expect(womb?.pregnancy?.paternityCandidates).toEqual([
+      { actorId: 'player', name: '玩家', visibility: 'player_known' },
+      { actorId: 'npc_other_candidate', name: '陈先生', visibility: 'player_known' }
+    ]);
+    expect(womb?.records.at(-1)?.paternityCandidates).toEqual(womb?.pregnancy?.paternityCandidates);
+  });
+
+  it('merges repeated risks into an already queued opportunity from the same later day', () => {
+    const fixture = createFixture();
+    const first = run(fixture, { riskPatches: [risk()] });
+    const secondTime = daysAfter(fixture.state.time, 1);
+    const second = run(
+      { ...fixture, actors: first.actors },
+      {
+        currentTime: secondTime,
+        riskPatches: [risk('npc_adult_female', { summary: '第二天第一次风险。' })]
+      }
+    );
+    const queuedBefore = wombOf(second.actors)?.pendingPregnancyChecks?.[0];
+    const repeated = run(
+      { ...fixture, actors: second.actors },
+      {
+        currentTime: secondTime,
+        riskPatches: [
+          risk('npc_adult_female', {
+            riskType: 'tryingToConceive',
+            summary: '第二天再次发生风险。'
+          })
+        ]
+      }
+    );
+    const repeatedWomb = wombOf(repeated.actors);
+    const queuedAfter = repeatedWomb?.pendingPregnancyChecks?.[0];
+
+    expect(repeatedWomb?.pendingPregnancyChecks).toHaveLength(1);
+    expect(queuedAfter?.pregnancyId).toBe(queuedBefore?.pregnancyId);
+    expect(queuedAfter?.rollPercent).toBe(queuedBefore?.rollPercent);
+    expect(queuedAfter?.chancePercent).toBeGreaterThan(queuedBefore?.chancePercent ?? 0);
+    expect(queuedAfter?.riskTypes).toEqual(expect.arrayContaining(['unprotected', 'tryingToConceive']));
+  });
+
+  it('promotes the next scheduled check after an earlier negative result', () => {
+    const fixture = createFixture();
+    const first = run(fixture, { riskPatches: [risk()] });
+    const second = run(
+      { ...fixture, actors: first.actors },
+      {
+        currentTime: daysAfter(fixture.state.time, 1),
+        riskPatches: [risk('npc_adult_female', { summary: '第二天再次发生风险。' })]
+      }
+    );
+    const womb = wombOf(second.actors)!;
+    const firstPregnancy = womb.pregnancy!;
+    const queuedPregnancy = womb.pendingPregnancyChecks![0];
+    const checked = run(
+      { ...fixture, actors: forceCurrentChance(second.actors, 0) },
+      { currentTime: firstPregnancy.checkDueAt }
+    );
+    const checkedWomb = wombOf(checked.actors);
+
+    expect(checkedWomb?.lastPregnancyCheck?.result).toBe('negative');
+    expect(checkedWomb?.pregnancy?.pregnancyId).toBe(queuedPregnancy.pregnancyId);
+    expect(checkedWomb?.pregnancy?.status).toBe('pending_check');
+    expect(checkedWomb?.pendingPregnancyChecks).toBeUndefined();
+  });
+
+  it('clears every later scheduled check after an earlier positive result', () => {
+    const fixture = createFixture();
+    const first = run(fixture, { riskPatches: [risk()] });
+    const second = run(
+      { ...fixture, actors: first.actors },
+      {
+        currentTime: daysAfter(fixture.state.time, 1),
+        riskPatches: [risk('npc_adult_female', { summary: '第二天再次发生风险。' })]
+      }
+    );
+    const firstPregnancy = wombOf(second.actors)?.pregnancy;
+    expect(firstPregnancy).toBeDefined();
+    if (!firstPregnancy) throw new Error('预期第一笔怀孕风险已建立待判定状态。');
+    const checked = run(
+      { ...fixture, actors: forceCurrentChance(second.actors, 100) },
+      { currentTime: firstPregnancy.checkDueAt }
+    );
+    const checkedWomb = wombOf(checked.actors);
+
+    expect(checkedWomb?.lastPregnancyCheck?.result).toBe('positive');
+    expect(checkedWomb?.pregnancy?.status).toBe('suspected');
+    expect(checkedWomb?.pendingPregnancyChecks).toBeUndefined();
+  });
+
+  it('continues through multiple dated checks and clears the remaining queue on the first positive result', () => {
+    const fixture = createFixture();
+    const first = run(fixture, { riskPatches: [risk()] });
+    const second = run(
+      { ...fixture, actors: first.actors },
+      {
+        currentTime: daysAfter(fixture.state.time, 1),
+        riskPatches: [risk('npc_adult_female', { summary: '第二天风险。' })]
+      }
+    );
+    const third = run(
+      { ...fixture, actors: second.actors },
+      {
+        currentTime: daysAfter(fixture.state.time, 2),
+        riskPatches: [risk('npc_adult_female', { summary: '第三天风险。' })]
+      }
+    );
+    const firstDueAt = wombOf(third.actors)?.pregnancy?.checkDueAt;
+    expect(firstDueAt).toBeDefined();
+    if (!firstDueAt) throw new Error('预期第一笔怀孕风险已建立验孕日期。');
+
+    const firstChecked = run(
+      { ...fixture, actors: forceCurrentChance(third.actors, 0) },
+      { currentTime: firstDueAt }
+    );
+    const secondPregnancy = wombOf(firstChecked.actors)?.pregnancy;
+    expect(secondPregnancy).toBeDefined();
+    if (!secondPregnancy) throw new Error('预期第一笔阴性后已提升第二笔待判定。');
+
+    const secondChecked = run(
+      { ...fixture, actors: forceCurrentChance(firstChecked.actors, 100) },
+      { currentTime: secondPregnancy.checkDueAt }
+    );
+    const finalWomb = wombOf(secondChecked.actors);
+
+    expect(finalWomb?.lastPregnancyCheck?.result).toBe('positive');
+    expect(finalWomb?.pregnancy?.status).toBe('suspected');
+    expect(finalWomb?.pendingPregnancyChecks).toBeUndefined();
+  });
+
+  it('accepts a new risk immediately after an earlier negative result', () => {
     const fixture = createFixture();
     const registered = run(fixture, { riskPatches: [risk()] });
     const womb = wombOf(registered.actors)!;
     const pregnancy = womb.pregnancy!;
-    const forcedFailureActors = {
-      ...registered.actors,
-      npc_adult_female: {
-        ...registered.actors.npc_adult_female,
-        femaleProfile: {
-          ...registered.actors.npc_adult_female.femaleProfile!,
-          adultPrivateProfile: {
-            ...registered.actors.npc_adult_female.femaleProfile!.adultPrivateProfile!,
-            womb: {
-              ...womb,
-              pregnancy: { ...pregnancy, chancePercent: 0 }
-            }
-          }
-        }
-      }
-    };
     const checked = run(
-      { ...fixture, actors: forcedFailureActors },
+      { ...fixture, actors: forceCurrentChance(registered.actors, 0) },
       { currentTime: pregnancy.checkDueAt }
     );
 
     expect(wombOf(checked.actors)?.pregnancy).toBeUndefined();
     expect(wombOf(checked.actors)?.lastPregnancyCheck?.result).toBe('negative');
 
-    const cooldownAttempt = run(
+    const nextAttempt = run(
       { ...fixture, actors: checked.actors },
-      { currentTime: daysAfter(pregnancy.checkDueAt, 10), riskPatches: [risk()] }
+      { currentTime: daysAfter(pregnancy.checkDueAt, 1), riskPatches: [risk()] }
     );
-    expect(cooldownAttempt.diagnostics[0]?.code).toBe('pregnancy_check_cooldown');
+    expect(nextAttempt.diagnostics).toEqual([]);
+    expect(wombOf(nextAttempt.actors)?.pregnancy?.status).toBe('pending_check');
+  });
+
+  it('preserves paternity candidates in the durable record after a negative result', () => {
+    const fixture = createFixture();
+    const registered = run(fixture, {
+      riskPatches: [
+        risk('npc_adult_female', {
+          paternityCandidates: [
+            { actorId: 'player', name: '玩家', visibility: 'player_known' },
+            { actorId: 'npc_other_candidate', name: '陈先生', visibility: 'player_known' }
+          ]
+        })
+      ]
+    });
+    const pregnancy = wombOf(registered.actors)?.pregnancy;
+    expect(pregnancy).toBeDefined();
+    if (!pregnancy) throw new Error('预期已建立待判定风险。');
+
+    const checked = run(
+      { ...fixture, actors: forceCurrentChance(registered.actors, 0) },
+      { currentTime: pregnancy.checkDueAt }
+    );
+    const negativeRecord = wombOf(checked.actors)?.records.find(
+      (record) => record.pregnancyId === pregnancy.pregnancyId && record.pregnancyCheckResult === 'negative'
+    );
+
+    expect(negativeRecord?.paternityCandidates).toEqual(pregnancy.paternityCandidates);
   });
 
   it('advances a successful opportunity through confirmation and live birth', () => {
@@ -259,9 +547,109 @@ describe('pregnancy lifecycle', () => {
     });
     expect(result.actors.npc_adult_female.childActorIds).toContain(postpartum?.childActorId);
     expect(wombOf(result.actors)?.pregnancyHistory?.at(-1)?.outcome).toBe('live_birth');
+    expect(wombOf(result.actors)?.pregnancyHistory?.at(-1)?.paternityCandidates).toEqual([
+      expect.objectContaining({ actorId: 'player' })
+    ]);
     expect(Object.values(result.relationshipThreads)).toEqual([
       expect.objectContaining({ relationshipRole: '亲子与家庭' })
     ]);
+  });
+
+  it('accepts an explicit hospital confirmation before the automatic confirmation date', () => {
+    const fixture = createFixture();
+    const registered = run(fixture, { riskPatches: [risk()] });
+    const sourceWomb = wombOf(registered.actors)!;
+    const pregnancy = sourceWomb.pregnancy!;
+    const suspected = run(
+      { ...fixture, actors: forceCurrentChance(registered.actors, 100) },
+      { currentTime: pregnancy.checkDueAt }
+    );
+    const confirmedAt = daysAfter(pregnancy.checkDueAt, 1);
+
+    const confirmed = run(
+      { ...fixture, actors: suspected.actors },
+      {
+        currentTime: confirmedAt,
+        resolutionPatches: [
+          {
+            actorId: 'npc_adult_female',
+            outcome: 'pregnancy_confirmed',
+            summary: '医院检查已经明确确认妊娠。'
+          }
+        ]
+      }
+    );
+
+    expect(confirmed.diagnostics).toEqual([]);
+    expect(wombOf(confirmed.actors)?.status).toBe('已确认怀孕');
+    expect(wombOf(confirmed.actors)?.pregnancy).toMatchObject({
+      pregnancyId: pregnancy.pregnancyId,
+      status: 'confirmed',
+      confirmedAt
+    });
+    expect(wombOf(confirmed.actors)?.records.at(-1)).toMatchObject({
+      description: '医院检查已经明确确认妊娠。',
+      pregnancyId: pregnancy.pregnancyId,
+      pregnancyCheckResult: 'positive'
+    });
+  });
+
+  it('does not allow medical confirmation before a positive pregnancy check', () => {
+    const fixture = createFixture();
+    const registered = run(fixture, { riskPatches: [risk()] });
+    const attempted = run(
+      { ...fixture, actors: registered.actors },
+      {
+        resolutionPatches: [
+          {
+            actorId: 'npc_adult_female',
+            outcome: 'pregnancy_confirmed',
+            summary: '没有阳性结果时不应确认。'
+          }
+        ]
+      }
+    );
+
+    expect(attempted.diagnostics[0]?.code).toBe('pregnancy_confirmation_too_early');
+    expect(wombOf(attempted.actors)?.pregnancy?.status).toBe('pending_check');
+  });
+
+  it('continues recording risk contact during an active pregnancy without creating another pregnancy', () => {
+    const fixture = createFixture();
+    const registered = run(fixture, { riskPatches: [risk()] });
+    const sourceWomb = wombOf(registered.actors)!;
+    const pregnancy = sourceWomb.pregnancy!;
+    const suspected = run(
+      { ...fixture, actors: forceCurrentChance(registered.actors, 100) },
+      { currentTime: pregnancy.checkDueAt }
+    );
+    const beforeRecords = wombOf(suspected.actors)?.records.length ?? 0;
+    const contactTime = daysAfter(pregnancy.checkDueAt, 1);
+
+    const recorded = run(
+      { ...fixture, actors: suspected.actors },
+      {
+        currentTime: contactTime,
+        riskPatches: [
+          risk('npc_adult_female', {
+            summary: '活动孕期内发生的明确成人接触仍应留下记录。'
+          })
+        ]
+      }
+    );
+
+    expect(recorded.diagnostics).toEqual([]);
+    expect(wombOf(recorded.actors)?.pregnancy).toMatchObject({
+      pregnancyId: pregnancy.pregnancyId,
+      status: 'suspected'
+    });
+    expect(wombOf(recorded.actors)?.pendingPregnancyChecks).toBeUndefined();
+    expect(wombOf(recorded.actors)?.records).toHaveLength(beforeRecords + 1);
+    expect(wombOf(recorded.actors)?.records.at(-1)).toMatchObject({
+      date: `${contactTime.year}-${String(contactTime.month).padStart(2, '0')}-${String(contactTime.day).padStart(2, '0')}`,
+      description: '活动孕期内发生的明确成人接触仍应留下记录。'
+    });
+    expect(wombOf(recorded.actors)?.records.at(-1)?.pregnancyCheckDate).toBeUndefined();
   });
 
   it('rejects premature delivery, but safely closes an overdue pregnancy and then clears postpartum state', () => {
@@ -413,5 +801,16 @@ describe('pregnancy lifecycle', () => {
       outcome: 'pregnancy_ended',
       summary: '剧情明确确认妊娠已经终止。'
     });
+
+    const nextRisk = run(
+      { ...fixture, actors: ended.actors },
+      {
+        currentTime: daysAfter(pregnancy.checkDueAt, 2),
+        riskPatches: [risk()]
+      }
+    );
+    expect(nextRisk.diagnostics).toEqual([]);
+    expect(wombOf(nextRisk.actors)?.pregnancy).toMatchObject({ status: 'pending_check' });
+    expect(wombOf(nextRisk.actors)?.pregnancy?.pregnancyId).not.toBe(pregnancy.pregnancyId);
   });
 });

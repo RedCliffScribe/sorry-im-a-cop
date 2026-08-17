@@ -10,6 +10,7 @@ import {
   syncPlayerEconomyWithFinance,
   upsertCashflow
 } from './financeState';
+import { MAX_MONEY_AMOUNT } from './moneyAmount';
 
 describe('financeState helpers', () => {
   it('formats month keys from game time', () => {
@@ -50,6 +51,7 @@ describe('financeState helpers', () => {
       title: '警队月薪',
       amount: 4200,
       account: 'bank',
+      identityBinding: 'police',
       summary: '基层警员固定月薪。',
       activeFromMonth: '1988-09',
       relatedAssetItemIds: [],
@@ -60,8 +62,20 @@ describe('financeState helpers', () => {
       visibility: 'private'
     });
 
-    expect(withIncome.cashflows.salary_1988_pc.amount).toBe(4200);
-    expect(removeCashflow(withIncome, 'salary_1988_pc').cashflows.salary_1988_pc.status).toBe('ended');
+    const rewritten = upsertCashflow(withIncome, {
+      ...withIncome.cashflows.salary_1988_pc,
+      amount: 5200,
+      status: 'paused',
+      summary: '调整后的工资暂停发放。'
+    });
+
+    expect(Object.keys(rewritten.cashflows).filter((itemId) => itemId === 'salary_1988_pc')).toHaveLength(1);
+    expect(rewritten.cashflows.salary_1988_pc).toMatchObject({
+      amount: 5200,
+      status: 'paused',
+      identityBinding: 'police'
+    });
+    expect(removeCashflow(rewritten, 'salary_1988_pc').cashflows.salary_1988_pc.status).toBe('ended');
   });
 
   it('keeps player economy mirrored from finance', () => {
@@ -89,6 +103,31 @@ describe('financeState helpers', () => {
     expect(finance.cashflows).toEqual({});
     expect(finance.ledger).toEqual([]);
     expect(finance.reports).toEqual([]);
+  });
+
+  it('preserves tens-of-billions balances and bounds only malformed legacy overflow', () => {
+    const state = createInitialRuntimeState();
+    const richFinance = normalizeFinanceState(
+      {
+        ...state.finance,
+        cashOnHand: 50_000,
+        bankBalance: 50_000_000_000
+      },
+      state.time,
+      state.player.economy
+    );
+    const overflowFinance = normalizeFinanceState(
+      {
+        ...state.finance,
+        bankBalance: MAX_MONEY_AMOUNT + 1
+      },
+      state.time,
+      state.player.economy
+    );
+
+    expect(richFinance.cashOnHand).toBe(50_000);
+    expect(richFinance.bankBalance).toBe(50_000_000_000);
+    expect(overflowFinance.bankBalance).toBe(MAX_MONEY_AMOUNT);
   });
 
   it('appends compact ledger entries without changing money', () => {

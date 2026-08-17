@@ -1,4 +1,5 @@
 import type { CityOrganizationAnchor } from './cityPowerTypes';
+import { hkLateColonialCivilianOrganizations } from './hkLateColonialCivilianOrganizations';
 import { hkLateColonialTriadOrganizations } from './hkLateColonialTriadOrganizations';
 
 export const hkLateColonialOrganizations: CityOrganizationAnchor[] = [
@@ -254,12 +255,13 @@ export const hkLateColonialOrganizations: CityOrganizationAnchor[] = [
     defaultVisibility: 'public',
     sourceConfidence: 'high'
   },
+  ...hkLateColonialCivilianOrganizations,
   ...hkLateColonialTriadOrganizations,
   {
     type: 'CityOrganizationAnchor',
     organizationId: 'org_hk_stock_exchange',
     displayName: '香港联合交易所',
-    englishName: 'Hong Kong Stock Exchange',
+    englishName: 'The Stock Exchange of Hong Kong Limited',
     disguisedNames: ['交易所', '中环股票场', '上市大厅'],
     organizationType: 'finance',
     activeYears: { from: 1986, to: 1997 },

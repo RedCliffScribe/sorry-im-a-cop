@@ -3,6 +3,251 @@ import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import { createNarrativeDiagnostic } from './createNarrativeDiagnostic';
 
 describe('createNarrativeDiagnostic', () => {
+  it('distinguishes an in-flight main turn from a failed request', () => {
+    const state = createInitialRuntimeState();
+    const diagnostic = createNarrativeDiagnostic({
+      state,
+      lastTurnExecution: {
+        requestId: 'turn_request_4',
+        turnId: 'turn_0004',
+        status: 'running',
+        stage: 'generating_narrative',
+        startedAt: '2026-07-29T19:06:12.551Z',
+        stages: [
+          {
+            stage: 'preparing_turn',
+            startedAt: '2026-07-29T19:06:12.551Z',
+            finishedAt: '2026-07-29T19:06:13.551Z'
+          },
+          {
+            stage: 'generating_narrative',
+            startedAt: '2026-07-29T19:06:34.953Z'
+          }
+        ]
+      },
+      lastTurnNarratorAttemptStarts: [
+        {
+          attemptId: 'attempt_main_4',
+          purpose: 'main_turn',
+          stream: true,
+          requestedMaxTokens: 65_536,
+          startedAt: '2026-07-29T19:06:34.953Z'
+        }
+      ]
+    });
+
+    expect(diagnostic).toContain('## 本次主回合执行状态');
+    expect(diagnostic).toContain('status=running（进行中）');
+    expect(diagnostic).toContain('stage=generating_narrative');
+    expect(diagnostic).toContain('stageTimeline=');
+    expect(diagnostic).toContain('1. preparing_turn');
+    expect(diagnostic).toContain('2. generating_narrative');
+    expect(diagnostic).toContain('## 本次主回合 API 请求');
+    expect(diagnostic).toContain('请求状态：进行中');
+    expect(diagnostic).toContain('阶段：main_turn');
+    expect(diagnostic).toContain('不能据此判断为网络错误');
+    expect(diagnostic).toContain('## 最近开局 API 请求');
+  });
+
+  it('exports the exact terminal transport failure for the matching main-turn request', () => {
+    const state = createInitialRuntimeState();
+    const start = {
+      attemptId: 'attempt_main_5',
+      purpose: 'main_turn' as const,
+      stream: true,
+      requestedMaxTokens: 65_536,
+      startedAt: '2026-07-29T19:10:00.000Z'
+    };
+    const diagnostic = createNarrativeDiagnostic({
+      state,
+      lastError: 'Failed to fetch',
+      lastTurnExecution: {
+        requestId: 'turn_request_5',
+        turnId: 'turn_0005',
+        status: 'failed',
+        stage: 'generating_narrative',
+        startedAt: '2026-07-29T19:09:30.000Z',
+        finishedAt: '2026-07-29T19:10:10.000Z',
+        errorMessage: 'Failed to fetch'
+      },
+      lastTurnNarratorAttemptStarts: [start],
+      lastTurnNarratorAttempts: [
+        {
+          ...start,
+          finishReason: 'unknown',
+          rawText: '',
+          parseStatus: 'empty',
+          errorMessage: 'Failed to fetch',
+          finishedAt: '2026-07-29T19:10:10.000Z'
+        }
+      ],
+      lastJudgementRecoveryTrace: {
+        requestId: 'judgement_turn_0005',
+        turnId: 'turn_0005',
+        startedAt: '2026-07-29T19:09:30.000Z',
+        finishedAt: '2026-07-29T19:10:10.000Z',
+        terminalStatus: 'failed',
+        terminalError: 'Failed to fetch',
+        presetRoll: 51,
+        persisted: false,
+        rawJudgementPatches: [],
+        stages: []
+      }
+    });
+
+    expect(diagnostic).toContain('status=failed（失败）');
+    expect(diagnostic).toContain('error=Failed to fetch');
+    expect(diagnostic).toContain('请求状态：失败');
+    expect(diagnostic).toContain(
+      '失败分类：browser_transport_or_cors（浏览器没有取得可用 HTTP 响应；可能是网络、代理或 CORS）'
+    );
+    expect(diagnostic).toContain('完成时间：2026-07-29T19:10:10.000Z');
+    expect(diagnostic).toContain('错误：Failed to fetch');
+    expect(diagnostic).toContain('terminalStatus=failed');
+    expect(diagnostic).toContain('terminalError=Failed to fetch');
+  });
+
+  it('exports every V2 opening output budget source', () => {
+    const state = createInitialRuntimeState();
+    const diagnostic = createNarrativeDiagnostic({
+      state,
+      lastNarratorAttempts: [
+        {
+          attemptId: 'opening_budget_1',
+          purpose: 'opening_actor_enrichment_repair',
+          stream: false,
+          requestedMaxTokens: 8_192,
+          outputBudget: {
+            configuredMaxTokens: 32_768,
+            configuredMaxTokensSource: 'player_route',
+            stageMaxTokens: 32_768,
+            providerMaxOutputTokens: 8_192,
+            requestedMaxTokens: 8_192,
+            limitingSource: 'provider_capability'
+          },
+          finishReason: 'stop',
+          rawText: '{}',
+          parseStatus: 'success',
+          startedAt: '2026-07-28T00:00:00.000Z',
+          finishedAt: '2026-07-28T00:00:01.000Z'
+        }
+      ]
+    });
+
+    expect(diagnostic).toContain('玩家线路上限：32768');
+    expect(diagnostic).toContain('当前修复可用上限：32768');
+    expect(diagnostic).toContain('服务商能力上限：8192');
+    expect(diagnostic).toContain('最终请求上限：8192');
+    expect(diagnostic).toContain('限制来源：服务商能力上限');
+    expect(diagnostic).toContain('局部修复继承线路上限');
+  });
+
+  it('exports the latest experience settlement with source and cap diagnostics', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_32',
+      speaker: 'narrator',
+      text: '玩家完成了困难交涉。',
+      gameTime: state.time,
+      experienceAward: {
+        awardId: 'xp:turn_32',
+        turnId: 'turn_32',
+        total: 10,
+        sources: [
+          {
+            kind: 'judgement',
+            sourceId: 'judgement:check_xp',
+            amount: 10,
+            reason: '困难交涉判定成功'
+          }
+        ],
+        modelSuggestedGain: 0,
+        capped: false,
+        levelsGained: 0,
+        attributePointsGained: 0,
+        levelAfter: 1
+      }
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 最近经验结算');
+    expect(diagnostic).toContain('turnId=turn_32');
+    expect(diagnostic).toContain('total=10');
+    expect(diagnostic).toContain('judgement:check_xp(10)');
+    expect(diagnostic).toContain('capped=false');
+  });
+
+  it('exports the local overall reputation aggregation contract and baseline', () => {
+    const state = createInitialRuntimeState();
+    state.player.reputation.overallReputationBaseline = -5;
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('overallCalculation=local_circle_weighted baseline=-5');
+  });
+
+  it('exports bounded dramatic execution receipts without private planner payloads', () => {
+    const state = createInitialRuntimeState();
+    state.dramaticContent = {
+      openingId: 'first_shift',
+      settings: {
+        pacing: 'balanced',
+        materialLevel: 'standard',
+        planningRoute: 'auto',
+        channels: {
+          work_livelihood: 'medium',
+          relationships: 'medium',
+          cases_law: 'medium',
+          organizations: 'medium',
+          city_news: 'medium',
+          era_storypack: 'medium',
+          screen_characters: 'medium',
+          custom_characters: 'off',
+          custom_events: 'off'
+        }
+      },
+      instances: [],
+      recentDiagnostics: [
+        {
+          code: 'planning_failed',
+          message: 'PRIVATE_PLANNER_RESPONSE_MUST_NOT_BE_EXPORTED',
+          turnCounter: 2
+        }
+      ],
+      recentExecutions: [
+        {
+          turnCounter: 2,
+          pacing: 'balanced',
+          planningRoute: 'auto',
+          materialLevel: 'standard',
+          storypackInfluence: 'high',
+          screenCharacterSeedsEnabled: true,
+          planningCalled: true,
+          planningSucceeded: false,
+          planningDurationMs: 125,
+          inputCandidateCount: 8,
+          inputCharacterCount: 1600,
+          estimatedInputTokens: 400,
+          supportSourceRefs: [],
+          usedSourceRefs: [],
+          persistentWriteCount: 0,
+          degradeReason: 'planning_failed',
+          filterRuleIds: ['mandatory_due_preserved']
+        }
+      ]
+    };
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## Dramatic Content Execution Diagnostics / 戏剧化内容执行诊断');
+    expect(diagnostic).toContain('pacing=balanced');
+    expect(diagnostic).toContain('called=true');
+    expect(diagnostic).toContain('degrade=planning_failed');
+    expect(diagnostic).toContain('diagnosticCodes=planning_failed');
+    expect(diagnostic).not.toContain('PRIVATE_PLANNER_RESPONSE_MUST_NOT_BE_EXPORTED');
+  });
+
   it('includes the latest raw generation response when a generation fails', () => {
     const state = createInitialRuntimeState();
     const diagnostic = createNarrativeDiagnostic({
@@ -17,6 +262,46 @@ describe('createNarrativeDiagnostic', () => {
     expect(diagnostic).toContain('{"narrativeText":"正文","suggestedActions":["A" "B"]}');
     expect(diagnostic).toContain('## 最近错误');
     expect(diagnostic).toContain('Expected comma');
+  });
+
+  it('reports actor recovery state without exporting the queued raw payload', () => {
+    const state = createInitialRuntimeState();
+    state.pendingActorWritebackRecoveries = [
+      {
+        recoveryId: 'turn_0001:npc_waiting',
+        sourceTurnId: 'turn_0001',
+        sourceGameTime: { ...state.time },
+        actorId: 'npc_waiting',
+        writebackJson: 'RAW_ACTOR_PAYLOAD_MUST_STAY_PRIVATE',
+        attemptCount: 2,
+        lastAttemptTurn: 4,
+        nextRetryTurn: 8,
+        consecutiveFailureCount: 2,
+        lastFailureKind: 'network',
+        lastRouteMode: 'custom'
+      }
+    ];
+    state.storyLog.push({
+      turnId: 'turn_4',
+      speaker: 'narrator',
+      text: '本回合正文已经完成。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'actorPatches'],
+          code: 'actor_writeback_recovery_queued',
+          message: 'Deferred one actor package with retry backoff.'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('actor_writeback_recovery_queued');
+    expect(diagnostic).toContain('"pendingActorWritebackSummary"');
+    expect(diagnostic).toContain('"actorId": "npc_waiting"');
+    expect(diagnostic).toContain('"nextRetryTurn": 8');
+    expect(diagnostic).not.toContain('RAW_ACTOR_PAYLOAD_MUST_STAY_PRIVATE');
   });
 
   it('exports only the latest ten story turns for recent language diagnostics', () => {
@@ -794,5 +1079,272 @@ describe('createNarrativeDiagnostic', () => {
 
     expect(diagnostic).toContain('city_situation_track_review');
     expect(diagnostic).toContain('Advanced 1 city situation track.');
+    expect(diagnostic).toContain('## 最近部分写回警告\n- 无');
+  });
+
+  it('reports the latest actual partial writeback field and reason', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_money_warning',
+      speaker: 'narrator',
+      text: '银行结单已经核对。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['playerPatch', 'economy', 'bankBalance'],
+          code: 'too_big',
+          message: '金额超过产品上限。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({
+      state,
+      lastTurnExecution: {
+        requestId: 'turn_request_current',
+        turnId: 'turn_current',
+        status: 'running',
+        stage: 'generating_narrative',
+        startedAt: '2026-08-01T16:11:08.273Z'
+      }
+    });
+
+    expect(diagnostic).toContain('## 最近部分写回警告');
+    expect(diagnostic).toContain('sourceTurnId=turn_money_warning');
+    expect(diagnostic).toContain('sourceGameTime=');
+    expect(diagnostic).toContain('以下警告来自之前已写入的回合，不属于当前正在执行的请求。');
+    expect(diagnostic).toContain('unresolvedCount=1');
+    expect(diagnostic).toContain('code=too_big');
+    expect(diagnostic).toContain('path=playerPatch.economy.bankBalance');
+    expect(diagnostic).toContain('message=金额超过产品上限。');
+  });
+
+  it('does not export a first-pass validation warning that was repaired before persistence', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_asset_repaired',
+      speaker: 'narrator',
+      text: '车辆资料已完成字段级修复并写入。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'assetPatch', 'upsertItems', 0, 'accessSummary'],
+          code: 'invalid_type',
+          message: '首份权限摘要类型无效。'
+        },
+        {
+          path: ['writeback', 'assetPatch'],
+          code: 'asset_writeback_applied',
+          message: '最终车辆写回已通过并应用。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 最近部分写回警告\n- 无');
+  });
+
+  it('exports relationship evidence recovery with the owning persisted turn id', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_relationship_0013',
+      speaker: 'narrator',
+      text: '本回合尝试建立一条持续人脉。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'relationshipThreadPatches', 0, 'evidenceRefs', 1, 'kind'],
+          code: 'relationship_evidence_kind_normalized',
+          message: 'Relationship evidence kind "memories" was normalized to "memory".'
+        },
+        {
+          path: ['writeback', 'relationshipThreadPatches'],
+          code: 'relationship_structure_repair_applied',
+          message: 'Relationship structure repair supplied one verified patch.'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 最近已写入回合的关系证据恢复诊断');
+    expect(diagnostic).toContain('turnId=turn_relationship_0013');
+    expect(diagnostic).toContain('code=relationship_evidence_kind_normalized');
+    expect(diagnostic).toContain('code=relationship_structure_repair_applied');
+    expect(diagnostic).toContain('path=writeback.relationshipThreadPatches.0.evidenceRefs.1.kind');
+  });
+
+  it('exports the actual rejected judgement factor instead of describing a dice mismatch', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_judgement_factor',
+      speaker: 'narrator',
+      text: '玩家完成了一次本地判定。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'judgementCheckPatches', 0, 'factors', 1],
+          code: 'local_judgement_factor_rejected',
+          message: '第 2 项引用的装备 asset_radio 当前未装备或不存在，未采用该修正。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('code=local_judgement_factor_rejected');
+    expect(diagnostic).toContain(
+      'path=writeback.judgementCheckPatches.0.factors.1'
+    );
+    expect(diagnostic).toContain('asset_radio 当前未装备或不存在');
+    expect(diagnostic).not.toContain('判定结果与本地骰点不一致');
+  });
+
+  it('separates a failed current judgement request from diagnostics of a previous persisted turn', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_0001',
+      speaker: 'narrator',
+      text: '之前成功写入的回合。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'judgementCheckPatches', 0],
+          code: 'local_judgement_category_normalized',
+          message: '这是之前成功回合的诊断。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({
+      state,
+      lastError: '判定结构修复失败：仍缺少 writeback.judgementCheckPatches.0.category',
+      lastJudgementRecoveryTrace: {
+        requestId: 'judgement_turn_0002_request',
+        turnId: 'turn_0002',
+        startedAt: '2026-07-27T12:00:00.000Z',
+        finishedAt: '2026-07-27T12:00:01.000Z',
+        presetRoll: 73,
+        persisted: false,
+        rawPreflight: {
+          hasJudgement: true,
+          category: 'thinking',
+          primaryAttribute: 'thinking',
+          difficultyTier: 'standard'
+        },
+        rawPreflightAttempts: [
+          {
+            hasJudgement: true,
+            category: 'unknown_category'
+          },
+          {
+            hasJudgement: true,
+            category: 'thinking',
+            primaryAttribute: 'thinking',
+            difficultyTier: 'standard'
+          }
+        ],
+        rawJudgementPatches: [
+          {
+            category: 'unmapped_category',
+            effectiveTarget: '80'
+          }
+        ],
+        stages: [
+          {
+            stage: 'raw_parse',
+            status: 'succeeded',
+            occurredAt: '2026-07-27T12:00:00.100Z',
+            detail: '已保留原始判定意图。'
+          },
+          {
+            stage: 'structure_repair',
+            status: 'failed',
+            occurredAt: '2026-07-27T12:00:01.000Z',
+            detail: '仍缺少 category。',
+            paths: ['writeback.judgementCheckPatches.0.category']
+          }
+        ]
+      }
+    });
+
+    expect(diagnostic).toContain('## 本次判定请求恢复诊断');
+    expect(diagnostic).toContain('requestId=judgement_turn_0002_request');
+    expect(diagnostic).toContain('turnId=turn_0002');
+    expect(diagnostic).toContain('persisted=false');
+    expect(diagnostic).toContain('rawPreflight=');
+    expect(diagnostic).toContain('rawPreflightAttempts=');
+    expect(diagnostic).toContain('"hasJudgement": true');
+    expect(diagnostic).toContain('"category": "unknown_category"');
+    expect(diagnostic).toContain('"effectiveTarget": "80"');
+    expect(diagnostic).toContain('stage=structure_repair');
+    expect(diagnostic).toContain('status=failed');
+    expect(diagnostic).toContain('## 已写入回合的本地判定校正诊断');
+    expect(diagnostic).toContain(
+      '以下内容来自之前已经成功写入存档的回合，不代表上方当前失败请求'
+    );
+    expect(diagnostic).toContain('这是之前成功回合的诊断。');
+  });
+
+  it('exports bounded weather history and same-condition writeback diagnostics', () => {
+    const state = createInitialRuntimeState();
+    state.environment.recentConditions = ['cloudy', 'light_rain'];
+    state.storyLog.push({
+      turnId: 'turn_weather_0001',
+      speaker: 'narrator',
+      text: '细雨仍在，但没有建立新的天气段。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['environment', 'weather'],
+          code: 'weather_same_condition_not_extended',
+          message: '模型重复返回当前天气，本地保留原天气截止时间。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('recentConditions=cloudy,light_rain');
+    expect(diagnostic).toContain('consecutiveWetSegments=1');
+    expect(diagnostic).toContain('## 最近天气写回诊断');
+    expect(diagnostic).toContain('code=weather_same_condition_not_extended');
+    expect(diagnostic).toContain('模型重复返回当前天气，本地保留原天气截止时间');
+  });
+
+  it('exports the current player condition lifecycle and its latest review diagnostics', () => {
+    const state = createInitialRuntimeState();
+    state.player.vitals.conditionSummary = '整夜值守后明显疲惫。';
+    state.player.vitals.conditionLifecycle = {
+      persistence: 'transient',
+      establishedAt: { ...state.time, hour: 1, minute: 0 },
+      lastReviewedAt: { ...state.time, hour: 9, minute: 0 }
+    };
+    state.actors[state.player.actorId]!.vitals = state.player.vitals;
+    state.storyLog.push({
+      turnId: 'turn_vitals_0001',
+      speaker: 'narrator',
+      text: '休息之后，疲惫状态已经完成复核。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['player', 'vitals'],
+          code: 'player_vitals_lifecycle_review_applied',
+          message: '已应用玩家状态生命周期复核结果。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 当前玩家身体状态');
+    expect(diagnostic).toContain('conditionSummary=整夜值守后明显疲惫。');
+    expect(diagnostic).toContain('conditionPersistence=transient');
+    expect(diagnostic).toContain('establishedAt=');
+    expect(diagnostic).toContain('lastReviewedAt=');
+    expect(diagnostic).toContain('## 最近玩家状态复核诊断');
+    expect(diagnostic).toContain('turnId=turn_vitals_0001');
+    expect(diagnostic).toContain('code=player_vitals_lifecycle_review_applied');
   });
 });

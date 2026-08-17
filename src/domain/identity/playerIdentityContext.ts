@@ -1,4 +1,5 @@
 import { syncPlayerPoliceSalaryCashflow } from '../finance/playerSalaryCashflow';
+import { syncIdentityBoundCashflowsForTransition } from '../finance/identityBoundCashflows';
 import { createInitialPolicePanel } from '../police/policePanel';
 import type {
   ActorOrganizationRelation,
@@ -89,6 +90,49 @@ function targetStatus(kind: PlayerIdentityTransitionKind): 'active' | 'cover' {
   return kind === 'cover_enter' ? 'cover' : 'active';
 }
 
+function roleProfileForIdentity(
+  profiles: RuntimeState['actors'][string]['roleProfiles'],
+  identity: CurrentIdentity
+) {
+  if (identity === 'police') return profiles.police;
+  if (identity === 'gang_member') return profiles.triad;
+  return profiles.civilian;
+}
+
+function mergeRestoredRoleProfile<T extends PoliceRoleProfile | TriadRoleProfile | CivilianRoleProfile>(
+  stored: T | undefined,
+  proposed: T
+): T {
+  if (!stored) return proposed;
+  const merged: Record<string, unknown> = { ...stored };
+  for (const [key, value] of Object.entries(proposed)) {
+    if (key === 'status') continue;
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' && value.trim().length === 0) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    merged[key] = value;
+  }
+  return { ...merged, status: 'active' } as T;
+}
+
+function resolveTargetRoleProfile(
+  profiles: RuntimeState['actors'][string]['roleProfiles'],
+  patch: PlayerIdentityContextPatch
+): PlayerIdentityTargetRoleProfile {
+  const target = patch.targetRoleProfile;
+  const shouldMergeStoredProfile =
+    patch.kind === 'cover_exit' ||
+    (patch.kind === 'correction' && patch.fromIdentity === patch.toIdentity);
+  if (!shouldMergeStoredProfile) return target;
+  if (target.identity === 'police') {
+    return { identity: 'police', profile: mergeRestoredRoleProfile(profiles.police, target.profile) };
+  }
+  if (target.identity === 'gang_member') {
+    return { identity: 'gang_member', profile: mergeRestoredRoleProfile(profiles.triad, target.profile) };
+  }
+  return { identity: 'civilian', profile: mergeRestoredRoleProfile(profiles.civilian, target.profile) };
+}
+
 function targetOrganizationRelation(
   target: PlayerIdentityTargetRoleProfile
 ): ActorOrganizationRelation | undefined {
@@ -114,6 +158,18 @@ function targetOrganizationRelation(
       isPrimary: true
     };
   }
+  if (target.identity === 'civilian' && target.profile.employerOrganizationId) {
+    return {
+      organizationId: target.profile.employerOrganizationId,
+      relationType: target.profile.employerRelationType ?? 'employee',
+      roleTitle: target.profile.publicOccupation,
+      summary:
+        target.profile.employerRelationSummary ??
+        `玩家以“${target.profile.publicOccupation ?? '市民'}”身份与该机构保持工作关系。`,
+      visibility: 'player_known',
+      isPrimary: true
+    };
+  }
   return undefined;
 }
 
@@ -123,7 +179,7 @@ function identityOrganizationId(
 ): string | undefined {
   if (identity === 'police') return profiles.police?.agencyId ?? 'org_hk_police';
   if (identity === 'gang_member') return profiles.triad?.organizationId;
-  return undefined;
+  return profiles.civilian?.employerOrganizationId;
 }
 
 function updateOrganizationRelations(
@@ -238,6 +294,13 @@ export function applyPlayerIdentityContextPatch(
   }
   const playerActor = state.actors[state.player.actorId];
   if (!playerActor) return reject(state, `身份切换软拒绝：找不到玩家 Actor ${state.player.actorId}。`);
+  if (patch.kind === 'cover_exit') {
+    const currentCover = roleProfileForIdentity(playerActor.roleProfiles, patch.fromIdentity);
+    const storedRealRole = roleProfileForIdentity(playerActor.roleProfiles, patch.toIdentity);
+    if (currentCover?.status !== 'cover' || !storedRealRole || storedRealRole.status !== 'hidden') {
+      return reject(state, '身份切换软拒绝：cover_exit 只能从当前卧底公开身份恢复已保存的真实身份。');
+    }
+  }
   if (!patch.publicIdentity.trim()) return reject(state, '身份切换软拒绝：publicIdentity 不能为空。');
   if (!patch.reason.trim()) return reject(state, '身份切换软拒绝：reason 不能为空。');
   const suppliedPoliceNumber = normalizePoliceNumber(patch.policeNumber);
@@ -260,6 +323,7 @@ export function applyPlayerIdentityContextPatch(
       ? suppliedPoliceNumber ?? existingPoliceNumber ?? allocatedPoliceNumber
       : state.player.policeNumber;
 
+  const resolvedTargetRoleProfile = resolveTargetRoleProfile(playerActor.roleProfiles, patch);
   const nextRoleProfiles = { ...playerActor.roleProfiles };
   if (patch.fromIdentity !== patch.toIdentity) {
     const status = inactiveStatus(patch.kind);
@@ -272,15 +336,15 @@ export function applyPlayerIdentityContextPatch(
     }
   }
   const status = targetStatus(patch.kind);
-  if (patch.targetRoleProfile.identity === 'police') {
-    nextRoleProfiles.police = { ...patch.targetRoleProfile.profile, status };
-  } else if (patch.targetRoleProfile.identity === 'gang_member') {
-    nextRoleProfiles.triad = { ...patch.targetRoleProfile.profile, status };
+  if (resolvedTargetRoleProfile.identity === 'police') {
+    nextRoleProfiles.police = { ...resolvedTargetRoleProfile.profile, status };
+  } else if (resolvedTargetRoleProfile.identity === 'gang_member') {
+    nextRoleProfiles.triad = { ...resolvedTargetRoleProfile.profile, status };
   } else {
-    nextRoleProfiles.civilian = { ...patch.targetRoleProfile.profile, status };
+    nextRoleProfiles.civilian = { ...resolvedTargetRoleProfile.profile, status };
   }
 
-  const organizationProjection = updateOrganizationRelations(state, patch.fromIdentity, patch.targetRoleProfile);
+  const organizationProjection = updateOrganizationRelations(state, patch.fromIdentity, resolvedTargetRoleProfile);
   const secretFacts = applySecretFactPatches(state.secretFacts, patch.secretFactPatches, state.time);
   const touchedSecretFactIds = unique(
     (patch.secretFactPatches ?? []).map((secretPatch) =>
@@ -298,7 +362,7 @@ export function applyPlayerIdentityContextPatch(
     organizationRelations: organizationProjection.relations,
     positionSummary: patch.publicIdentity.trim()
   };
-  const lawIdentity = toLawIdentity(state.lawIdentity, patch.targetRoleProfile, nextRoleProfiles);
+  const lawIdentity = toLawIdentity(state.lawIdentity, resolvedTargetRoleProfile, nextRoleProfiles);
   const player = {
     ...state.player,
     currentIdentity: patch.toIdentity,
@@ -317,11 +381,18 @@ export function applyPlayerIdentityContextPatch(
       }
     ]
   };
-  const finance = syncPlayerPoliceSalaryCashflow({
+  const identityBoundFinance = syncIdentityBoundCashflowsForTransition({
     finance: state.finance,
+    kind: patch.kind,
+    fromIdentity: patch.fromIdentity,
+    toIdentity: patch.toIdentity
+  });
+  const finance = syncPlayerPoliceSalaryCashflow({
+    finance: identityBoundFinance,
     time: state.time,
     currentIdentity: patch.toIdentity,
-    lawIdentity
+    lawIdentity,
+    identityHistory: player.identityHistory
   });
 
   const nextState: RuntimeState = {

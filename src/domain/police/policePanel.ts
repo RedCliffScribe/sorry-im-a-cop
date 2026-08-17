@@ -7,6 +7,7 @@ import type {
   PoliceClimateEntry,
   PolicePanelState
 } from '../runtime/types';
+import { getNextPoliceRankTarget } from './policeRankCatalog';
 import { formatPoliceRank, formatPoliceTerm, formatPoliceText } from './policeTerminology';
 
 export interface PolicePanelPatch {
@@ -31,24 +32,7 @@ function normalizeRankText(rank: string | undefined): string {
 }
 
 function getNextRankTarget(rank: string | undefined): string | undefined {
-  const normalized = `${rank ?? ''} ${normalizeRankText(rank)}`.toLowerCase();
-  if (
-    (normalized.includes('constable') || normalized.includes('警员') || normalized.includes('pc')) &&
-    !normalized.includes('senior') &&
-    !normalized.includes('高级')
-  ) {
-    return '高级警员（SPC）';
-  }
-  if (normalized.includes('senior constable') || normalized.includes('spc') || normalized.includes('高级警员')) return '警长（SGT）';
-  if (normalized.includes('station sergeant') || normalized.includes('警署警长') || normalized.includes('ssgt')) return '督察';
-  if (normalized.includes('sergeant') || normalized.includes('警长') || normalized.includes('sgt')) return '警署警长（SSGT）';
-  if (normalized.includes('probationary inspector') || normalized.includes('见习督察')) return '督察';
-  if (normalized.includes('chief inspector') || normalized.includes('总督察')) return '警司';
-  if (normalized.includes('senior inspector') || normalized.includes('高级督察')) return '总督察';
-  if (normalized.includes('inspector') || normalized.includes('督察')) return '高级督察';
-  if (normalized.includes('senior superintendent') || normalized.includes('高级警司')) return '助理处长';
-  if (normalized.includes('superintendent') || normalized.includes('警司')) return '高级警司';
-  return undefined;
+  return getNextPoliceRankTarget(rank);
 }
 
 function createCareerPath(lawIdentity: LawIdentityRuntime, time: GameTime): PoliceCareerPathState {

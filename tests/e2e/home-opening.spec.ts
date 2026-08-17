@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test';
+import {
+  OPENING_LEGAL_DISCLAIMER_VERSION,
+  OPENING_LEGAL_DISCLAIMER_VERSION_LABEL
+} from '../../src/app/legal/openingLegalDisclaimer';
+import { APP_VERSION_LABEL } from '../../src/app/releaseIdentity';
 import { dismissDailyChangelog } from './fixtures';
 
 async function acceptImportantNotice(page: import('@playwright/test').Page) {
@@ -6,6 +11,16 @@ async function acceptImportantNotice(page: import('@playwright/test').Page) {
   await expect(notice).toBeVisible();
   await notice.getByRole('checkbox').check();
   await notice.getByRole('button', { name: '同意并进入开局' }).click();
+}
+
+async function enterHongKongOpening(page: import('@playwright/test').Page) {
+  await expect(page.getByRole('heading', { name: '选择世界包' })).toBeVisible();
+  await page
+    .getByRole('button', { name: '选择香港 1988世界包' })
+    .click();
+  await expect(page.getByRole('heading', { name: '剧情扩展选择' })).toBeVisible();
+  await page.getByRole('button', { name: '继续开局' }).click();
+  await expect(page.getByRole('heading', { name: '开局向导' })).toBeVisible();
 }
 
 test.describe('首页与开局向导', () => {
@@ -31,7 +46,7 @@ test.describe('首页与开局向导', () => {
     ).toBe(true);
     await expect(mainMenu.getByRole('button', { name: '开始游戏' })).toBeVisible();
     const releaseInfo = page.getByRole('group', { name: '版本、版权与法律信息' });
-    await expect(releaseInfo.getByText('v1.0.0')).toBeVisible();
+    await expect(releaseInfo.getByText(APP_VERSION_LABEL)).toBeVisible();
     await expect(releaseInfo.getByText('© 2026 RedCliffScribe · 非商业本地互动叙事游戏')).toBeVisible();
     await expect(releaseInfo.getByRole('link', { name: '源码' })).toHaveAttribute(
       'href',
@@ -53,6 +68,7 @@ test.describe('首页与开局向导', () => {
 
     await mainMenu.getByRole('button', { name: '开始游戏' }).click();
     await acceptImportantNotice(page);
+    await enterHongKongOpening(page);
     await expect(page.getByRole('heading', { name: '世界与剧本' })).toBeVisible();
 
     const steps = page.getByRole('navigation', { name: '开局步骤' });
@@ -62,6 +78,64 @@ test.describe('首页与开局向导', () => {
     await expect(page.getByRole('heading', { name: '基础档案' })).toBeVisible();
     await expect(page.getByLabel('出身与背景')).toBeVisible();
     expect(await page.locator('.opening-footer').evaluate((element) => element.clientHeight)).toBeGreaterThan(0);
+  });
+
+  test('警队开局可选择 EU，且驻点与职级岗位严格联动', async ({ page }) => {
+    await page.goto('/');
+    await dismissDailyChangelog(page);
+    await page.getByRole('button', { name: '开始游戏' }).click();
+    await acceptImportantNotice(page);
+    await enterHongKongOpening(page);
+    await page.getByRole('button', { name: /基础档案/ }).click();
+
+    await page.getByLabel('警阶').selectOption('probationary_inspector');
+    await expect(page.getByLabel('部门')).toHaveValue('uniform');
+    await expect(page.getByLabel('部门').getByRole('option')).toHaveText([
+      'Uniform Branch（军装巡逻）',
+      'Criminal Investigation Department（刑事侦缉处 CID）',
+      'Emergency Unit（冲锋队 EU）',
+      'Police Tactical Unit（机动部队 PTU）'
+    ]);
+    await expect(page.getByLabel('岗位')).toHaveValue('patrol_sub_unit_commander');
+
+    await page.getByLabel('部门').selectOption('eu');
+    await expect(page.getByLabel('驻点').getByRole('option')).toHaveText([
+      'Emergency Unit Hong Kong Island（港岛总区冲锋队）',
+      'Emergency Unit Kowloon East（东九龙总区冲锋队）',
+      'Emergency Unit Kowloon West（西九龙总区冲锋队）',
+      'Emergency Unit New Territories North（新界北总区冲锋队）',
+      'Emergency Unit New Territories South（新界南总区冲锋队）'
+    ]);
+    await expect(page.getByLabel('岗位')).toHaveValue('eu_probationary_platoon_commander');
+
+    const euPosting = await page.getByLabel('驻点').inputValue();
+    await page.getByLabel('警阶').selectOption('pc');
+    await expect(page.getByLabel('驻点')).toHaveValue(euPosting);
+    await expect(page.getByLabel('岗位').getByRole('option')).toHaveText([
+      'Emergency Vehicle Crew Officer（冲锋车车组警员）',
+      'Emergency Vehicle Driver（冲锋车司机）'
+    ]);
+    await expect(page.getByLabel('岗位')).toHaveValue('eu_vehicle_crew');
+
+    await page.getByLabel('警阶').selectOption('sergeant');
+    await expect(page.getByLabel('驻点')).toHaveValue(euPosting);
+    await expect(page.getByLabel('岗位')).toHaveValue('eu_vehicle_commander');
+
+    await page.getByLabel('警阶').selectOption('inspector');
+    await expect(page.getByLabel('驻点')).toHaveValue(euPosting);
+    await expect(page.getByLabel('岗位')).toHaveValue('eu_platoon_commander');
+
+    await page.getByLabel('警阶').selectOption('chief_inspector');
+    await expect(page.getByLabel('驻点')).toHaveValue(euPosting);
+    await expect(page.getByLabel('岗位')).toHaveValue('eu_headquarters_operations_officer');
+
+    await page.getByLabel('警阶').selectOption('probationary_inspector');
+    await page.getByLabel('部门').selectOption('ptu');
+    await expect(page.getByLabel('驻点')).toHaveValue('ptu_barracks');
+    await expect(page.getByLabel('岗位')).toHaveValue('platoon_commander');
+
+    await page.getByLabel('部门').selectOption('cid');
+    await expect(page.getByLabel('岗位')).toHaveValue('team_investigator');
   });
 
   test('移动端开局页没有横向溢出', async ({ page }) => {
@@ -84,6 +158,7 @@ test.describe('首页与开局向导', () => {
     });
     await page.getByRole('button', { name: '开始游戏' }).click();
     await acceptImportantNotice(page);
+    await enterHongKongOpening(page);
     await page.getByRole('button', { name: /基础档案/ }).click();
 
     await expect(page.getByRole('heading', { name: '基础档案' })).toBeVisible();
@@ -115,10 +190,10 @@ test.describe('首页与开局向导', () => {
     await dialog.getByRole('checkbox').check();
     await dialog.getByRole('button', { name: '同意并进入开局' }).click();
 
-    await expect(page.getByRole('heading', { name: '开局向导' })).toBeVisible();
+    await enterHongKongOpening(page);
     expect(
       await page.evaluate(() => JSON.parse(localStorage.getItem('sorry-im-a-cop-v2-opening-legal-acceptance') ?? '{}').version)
-    ).toBe('2026-07-20.1');
+    ).toBe(OPENING_LEGAL_DISCLAIMER_VERSION);
     await page.evaluate(() => localStorage.removeItem('sorry-im-a-cop-v2-opening-legal-acceptance'));
     await page.getByRole('button', { name: /确认生成/ }).click();
     await page.getByRole('button', { name: '生成开局' }).click();
@@ -126,7 +201,7 @@ test.describe('首页与开局向导', () => {
     dialog = page.getByRole('dialog', { name: '《对唔住，我系差人》' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("Sorry, I'm a Cop", { exact: true })).toBeVisible();
-    await expect(dialog.getByText('版本日期：2026年7月20日')).toBeVisible();
+    await expect(dialog.getByText(`版本日期：${OPENING_LEGAL_DISCLAIMER_VERSION_LABEL}`)).toBeVisible();
     await expect(dialog.getByText('kale014@gmail.com')).toBeAttached();
     await expect(dialog.getByText(/待配置/)).toHaveCount(0);
     const acceptButton = dialog.getByRole('button', { name: '同意并生成开局' });

@@ -24,7 +24,7 @@ export async function onRequestGet(context) {
   const [summary, todayMetrics, daily, regions, languages, devices, versions, referrers] = await Promise.all([
     env.ANALYTICS_DB.prepare(`
       SELECT
-        (SELECT COUNT(*) FROM analytics_sessions WHERE last_seen_at >= ?1) AS current_online,
+        (SELECT COUNT(*) FROM analytics_visitors WHERE last_seen_at >= ?1) AS current_online,
         (SELECT COUNT(*) FROM analytics_visitors) AS total_visitors,
         (SELECT COUNT(*) FROM analytics_sessions) AS total_sessions,
         (SELECT COUNT(*) FROM analytics_visitors WHERE first_day < last_day) AS returning_visitors,
@@ -32,7 +32,7 @@ export async function onRequestGet(context) {
         (SELECT COUNT(DISTINCT visitor_hash) FROM analytics_daily_visitors WHERE day >= ?3) AS active_30d,
         (SELECT COALESCE(AVG((julianday(last_seen_at) - julianday(started_at)) * 1440.0), 0)
           FROM analytics_sessions WHERE last_seen_at >= ?4) AS average_session_minutes,
-        (SELECT MAX(last_seen_at) FROM analytics_sessions) AS last_event_at
+        (SELECT MAX(last_seen_at) FROM analytics_visitors) AS last_event_at
     `).bind(onlineSince, sevenDayStart, thirtyDayStart, new Date(now.getTime() - 30 * 86_400_000).toISOString()).first(),
     env.ANALYTICS_DB.prepare(`
       SELECT day, page_views, sessions_started, unique_visitors, heartbeat_count, peak_online, updated_at
@@ -72,14 +72,30 @@ export async function onRequestGet(context) {
     `).bind(thirtyDayStart).all()
   ]);
 
+  const currentOnline = Number(summary?.current_online ?? 0);
+  const recordedPeakOnline = Number(todayMetrics?.peak_online ?? 0);
+  const observedPeakOnline = Math.max(currentOnline, recordedPeakOnline);
+  if (observedPeakOnline > recordedPeakOnline) {
+    await env.ANALYTICS_DB.prepare(`
+      INSERT INTO analytics_daily_metrics (
+        day, page_views, sessions_started, unique_visitors, heartbeat_count, peak_online, updated_at
+      ) VALUES (?1, 0, 0, 0, 0, ?2, ?3)
+      ON CONFLICT(day) DO UPDATE SET
+        peak_online = MAX(analytics_daily_metrics.peak_online, excluded.peak_online),
+        updated_at = excluded.updated_at
+    `).bind(today, observedPeakOnline, now.toISOString()).run();
+  }
+
   return jsonResponse({
     ok: true,
     generatedAt: now.toISOString(),
     timezone,
     onlineWindowSeconds: ONLINE_WINDOW_SECONDS,
+    onlineDedupe: 'anonymous_visitor',
+    peakSampling: 'admin_refresh',
     summary: {
-      currentOnline: Number(summary?.current_online ?? 0),
-      todayPeakOnline: Number(todayMetrics?.peak_online ?? 0),
+      currentOnline,
+      todayPeakOnline: observedPeakOnline,
       todayUniqueVisitors: Number(todayMetrics?.unique_visitors ?? 0),
       todayPageViews: Number(todayMetrics?.page_views ?? 0),
       todaySessions: Number(todayMetrics?.sessions_started ?? 0),

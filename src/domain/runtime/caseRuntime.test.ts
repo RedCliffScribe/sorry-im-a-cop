@@ -12,6 +12,7 @@ describe('case runtime state', () => {
     expect(state.backgroundEvolution).toEqual({
       npcTracks: {},
       organizationTracks: {},
+      npcReviewCooldownUntil: {},
       recentOutcomes: [],
       chronicle: [],
       lastAppliedAt: undefined,
@@ -78,11 +79,45 @@ describe('case runtime state', () => {
     expect(normalized.backgroundEvolution).toEqual({
       npcTracks: {},
       organizationTracks: {},
+      npcReviewCooldownUntil: {},
       recentOutcomes: [],
       chronicle: [],
       lastAppliedAt: undefined,
       lastOrganizationReviewAt: undefined
     });
     expect(normalized.cases).toEqual(state.cases);
+  });
+
+  it('repairs legacy lead cases that did not persist the player as lead actor', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    state.actors[state.player.actorId].name = '陈厚生';
+    state.cases.case_legacy_lead = {
+      caseId: 'case_legacy_lead',
+      title: '旧存档主办案件',
+      caseType: 'organized_financial_crime',
+      status: 'investigating',
+      playerRole: 'lead',
+      summary: '玩家已经获授权主办。',
+      currentFocus: '追查资金流向。',
+      playerVisibleProgress: '玩家已成为主办者。',
+      internalProgressSummary: '等待下一步行动。',
+      relatedActorIds: [state.player.actorId],
+      relatedPlaceIds: [],
+      relatedOrganizationIds: [],
+      evidenceIds: [],
+      activityLog: [],
+      unreadActivityCount: 0,
+      visibility: 'player_known',
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+
+    const normalized = withRuntimeDefaults(state);
+
+    expect(normalized.cases.case_legacy_lead).toMatchObject({
+      playerRole: 'lead',
+      leadActorId: state.player.actorId,
+      leadActorName: '陈厚生'
+    });
   });
 });

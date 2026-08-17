@@ -28,6 +28,8 @@ interface AnalyticsResponse {
   generatedAt: string;
   timezone: string;
   onlineWindowSeconds: number;
+  onlineDedupe: 'anonymous_visitor';
+  peakSampling: 'admin_refresh';
   summary: AnalyticsSummary;
   daily: DailyMetric[];
   regions: Array<{ country_code: string; region: string; city: string; visitors: number }>;
@@ -36,6 +38,8 @@ interface AnalyticsResponse {
   versions: Array<{ app_version: string; visitors: number }>;
   referrers: Array<{ referrer_host: string; sessions: number }>;
 }
+
+export const ADMIN_ANALYTICS_REFRESH_INTERVAL_MS = 10 * 60_000;
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('zh-CN').format(Number(value) || 0);
@@ -83,6 +87,7 @@ export function AdminAnalyticsScreen() {
   const [token, setToken] = useState('');
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadAnalytics = useCallback(async (activeToken = token) => {
@@ -110,10 +115,13 @@ export function AdminAnalyticsScreen() {
   }, [token]);
 
   useEffect(() => {
-    if (!data || !token.trim()) return;
-    const intervalId = window.setInterval(() => void loadAnalytics(token), 30_000);
+    if (!autoRefreshEnabled || !data || !token.trim()) return;
+    const intervalId = window.setInterval(
+      () => void loadAnalytics(token),
+      ADMIN_ANALYTICS_REFRESH_INTERVAL_MS
+    );
     return () => window.clearInterval(intervalId);
-  }, [data, token, loadAnalytics]);
+  }, [autoRefreshEnabled, data, token, loadAnalytics]);
 
   const returningRate = data && data.summary.totalVisitors > 0
     ? `${((data.summary.returningVisitors / data.summary.totalVisitors) * 100).toFixed(1)}%`
@@ -122,6 +130,7 @@ export function AdminAnalyticsScreen() {
     () => Math.max(1, ...(data?.daily.map((row) => Number(row.unique_visitors)) ?? [])),
     [data]
   );
+  const onlineWindowMinutes = data ? Math.round(data.onlineWindowSeconds / 60) : 0;
 
   return (
     <main className="admin-analytics-screen">
@@ -159,8 +168,16 @@ export function AdminAnalyticsScreen() {
         <div className="admin-analytics-content">
           <section className="admin-status-strip">
             <span>统计时区：{data.timezone}</span>
-            <span>在线窗口：{data.onlineWindowSeconds} 秒</span>
+            <span>活跃窗口：最近 {onlineWindowMinutes} 分钟</span>
             <span>最近刷新：{new Date(data.generatedAt).toLocaleString('zh-CN')}</span>
+            <label className="admin-auto-refresh-toggle">
+              <input
+                type="checkbox"
+                checked={autoRefreshEnabled}
+                onChange={(event) => setAutoRefreshEnabled(event.target.checked)}
+              />
+              每 10 分钟自动刷新
+            </label>
             <button type="button" disabled={isLoading} onClick={() => void loadAnalytics()}>
               {isLoading ? '刷新中…' : '立即刷新'}
             </button>
@@ -168,8 +185,8 @@ export function AdminAnalyticsScreen() {
           {error ? <p className="admin-error" role="alert">{error}</p> : null}
 
           <section className="admin-metric-grid" aria-label="核心统计">
-            <MetricCard label="同时在线" value={formatNumber(data.summary.currentOnline)} note="最近两分钟仍有心跳的会话" />
-            <MetricCard label="今日峰值在线" value={formatNumber(data.summary.todayPeakOnline)} note="按同一在线口径计算" />
+            <MetricCard label="最近活跃" value={formatNumber(data.summary.currentOnline)} note={`最近 ${onlineWindowMinutes} 分钟有可见页心跳的匿名浏览器`} />
+            <MetricCard label="今日采样峰值" value={formatNumber(data.summary.todayPeakOnline)} note="按后台刷新时刻采样，不代表逐秒峰值" />
             <MetricCard label="今日独立访客" value={formatNumber(data.summary.todayUniqueVisitors)} note={`${formatNumber(data.summary.todayPageViews)} 次页面访问`} />
             <MetricCard label="累计独立访客" value={formatNumber(data.summary.totalVisitors)} note="匿名浏览器标识去重" />
             <MetricCard label="累计会话" value={formatNumber(data.summary.totalSessions)} note={`今日 ${formatNumber(data.summary.todaySessions)} 次`} />
@@ -181,7 +198,7 @@ export function AdminAnalyticsScreen() {
           <section className="admin-dashboard-grid">
             <article className="admin-dashboard-panel admin-dashboard-panel--wide">
               <header>
-                <div><h2>近 30 日趋势</h2><p>独立访客、访问次数与峰值在线</p></div>
+                <div><h2>近 30 日趋势</h2><p>独立访客、访问次数与采样峰值</p></div>
               </header>
               <div className="admin-daily-chart">
                 {data.daily.length ? data.daily.map((row) => (

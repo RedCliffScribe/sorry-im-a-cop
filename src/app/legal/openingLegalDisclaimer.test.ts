@@ -54,4 +54,17 @@ describe('opening legal disclaimer acceptance', () => {
     expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('随机访客与会话标识在服务端经过带密钥的加盐散列');
     expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('统计接口不保存用户的原始 IP 地址');
   });
+
+  it('discloses the limited third-party screen-character use and preserves a case-specific fair-use boundary', () => {
+    const importantNotice = OPENING_LEGAL_IMPORTANT_NOTICE_PARAGRAPHS.join('\n');
+    expect(importantNotice).toContain('第三方影视作品名称、虚构角色姓名');
+    expect(importantNotice).toContain('不是官方授权、重制、续作或剧情复演');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('三、第三方影视作品与虚构角色');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('不直接复制影视剧本、字幕、大段剧情简介');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('不会把当前游戏日期之后的原作剧情自动视为本地存档事实');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('合理使用须结合具体使用方式及法定因素逐案判断');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).toContain('不构成对侵权、故意侵权或责任范围的承认');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).not.toContain('适用州法：');
+    expect(OPENING_LEGAL_DISCLAIMER_TEXT).not.toContain('待配置');
+  });
 });

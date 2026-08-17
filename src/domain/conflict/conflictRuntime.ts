@@ -7,6 +7,11 @@ import type {
   RuntimeState,
   TurnId
 } from '../runtime/types';
+import {
+  LOCAL_JUDGEMENT_RULESET_VERSION,
+  resolveLocalJudgementIntent,
+  type LocalJudgementIntent
+} from './localJudgement';
 
 export interface ConflictRuntimeStores {
   judgementChecks: Record<JudgementCheckId, JudgementCheck>;
@@ -20,7 +25,11 @@ export function createInitialConflictStores(): ConflictRuntimeStores {
   };
 }
 
-export type JudgementCheckPatch = Omit<JudgementCheck, 'margin'> & { margin?: number };
+export type JudgementCheckPatch = Omit<JudgementCheck, 'margin' | 'difficulty' | 'score'> & {
+  margin?: number;
+  difficulty?: number;
+  score?: number;
+};
 export type CombatEventPatch = CombatEvent;
 
 function clamp(value: number, min: number, max: number): number {
@@ -32,6 +41,31 @@ function cloneGameTime(time: GameTime): GameTime {
 }
 
 export function applyJudgementCheckPatch(state: RuntimeState, patch: JudgementCheckPatch): JudgementCheck {
+  if (patch.rulesetVersion === LOCAL_JUDGEMENT_RULESET_VERSION) {
+    const resolution = resolveLocalJudgementIntent({
+      state,
+      intent: patch as LocalJudgementIntent,
+      expectedRoll: patch.presetRoll ?? patch.score ?? 50
+    });
+    if (!resolution.check || resolution.issues.length > 0) {
+      throw new Error(`本地判定写回不一致：${resolution.issues.join('；')}`);
+    }
+    const check: JudgementCheck = {
+      ...resolution.check,
+      gameTime: cloneGameTime(patch.gameTime),
+      relatedActorIds: [...(patch.relatedActorIds ?? [])],
+      relatedPlaceIds: [...(patch.relatedPlaceIds ?? [])],
+      relatedCaseIds: [...(patch.relatedCaseIds ?? [])],
+      factors: [...resolution.check.factors],
+      visibility: patch.visibility ?? 'player_known'
+    };
+    state.judgementChecks[check.checkId] = check;
+    return check;
+  }
+
+  if (patch.difficulty === undefined || patch.score === undefined) {
+    throw new Error('旧版判定写回缺少 difficulty 或 score。');
+  }
   const difficulty = clamp(Math.round(patch.difficulty), 0, 100);
   const score = clamp(Math.round(patch.score), 0, 100);
   const check: JudgementCheck = {

@@ -1,0 +1,181 @@
+{
+  "format": "sorry-im-a-cop-v2-workshop-package",
+  "schemaVersion": 1,
+  "kind": "image-generation-preset",
+  "manifest": {
+    "title": "港风人物与场景组合",
+    "summary": "包含 NovelAI 人物与 ComfyUI 叙事场景变体、被引用风格、方言和结构化资源提示。",
+    "contentRating": "mature",
+    "language": "zh-Hant-HK",
+    "tags": ["香港", "人物", "场景", "半写实"],
+    "minAppVersion": "1.7.49"
+  },
+  "compatibility": {
+    "providerTypes": ["novelai-image", "comfyui-workflow"],
+    "modelHints": ["nai-diffusion-4-5-full", "Illustrious-compatible"],
+    "requiredFeatures": ["negative-prompt", "custom-dimensions", "comfy-style-recipe"]
+  },
+  "content": {
+    "variants": [
+      {
+        "variantRef": "character-half-body",
+        "purpose": "half-body-medium",
+        "name": "半身人物",
+        "providerType": "novelai-image",
+        "modelHint": "nai-diffusion-4-5-full",
+        "dialectRef": "dialect-novelai",
+        "styleRefs": ["style-hong-kong-character"],
+        "targetAspectRatio": "3:4"
+      },
+      {
+        "variantRef": "narrative-scene",
+        "purpose": "narrative-scene",
+        "name": "叙事场景",
+        "providerType": "comfyui-workflow",
+        "modelHint": "Illustrious-compatible",
+        "dialectRef": "dialect-illustrious",
+        "styleRefs": ["style-hong-kong-scene"],
+        "comfyStyleRecipeRef": "recipe-hong-kong-scene",
+        "targetAspectRatio": "16:9"
+      }
+    ],
+    "stylePresets": [
+      {
+        "styleRef": "style-hong-kong-character",
+        "name": "港风半写实人物",
+        "description": "强调真实皮肤、可信体态和现代香港人物气质。",
+        "modifiers": {
+          "global": {
+            "positive": "modern Hong Kong crime-drama illustration, restrained cinematic realism",
+            "negative": "ancient costume, fantasy armor"
+          },
+          "character": {
+            "positive": "natural skin texture, believable anatomy, expressive eyes",
+            "negative": "plastic skin, doll face, distorted anatomy"
+          },
+          "narrativeScene": {
+            "positive": "grounded urban environment, coherent spatial storytelling",
+            "negative": "empty background, theatrical stage"
+          }
+        }
+      },
+      {
+        "styleRef": "style-hong-kong-scene",
+        "name": "港产片叙事场景",
+        "description": "适合现代城市警匪剧情的现实空间和克制光影。",
+        "modifiers": {
+          "global": {
+            "positive": "1980s Hong Kong urban crime drama, realistic materials",
+            "negative": "fantasy city, futuristic skyline"
+          },
+          "character": {
+            "positive": "period-correct modern clothing, natural posture",
+            "negative": "ancient robe, exaggerated pose"
+          },
+          "narrativeScene": {
+            "positive": "cinematic wide scene, readable geography, environmental storytelling",
+            "negative": "portrait crop, blank backdrop"
+          }
+        }
+      }
+    ],
+    "dialectPresets": [
+      {
+        "dialectRef": "dialect-novelai",
+        "name": "NovelAI 标签方言",
+        "description": "使用逗号分隔的标签式提示词。",
+        "family": "novelai",
+        "renderingInstruction": "Keep supported artist and quality tags literal and comma-separated.",
+        "positivePrefix": "masterpiece, best quality",
+        "positiveSuffix": "sharp focus",
+        "negativePrefix": "lowres, bad anatomy",
+        "negativeSuffix": "text, watermark"
+      },
+      {
+        "dialectRef": "dialect-illustrious",
+        "name": "Illustrious 标签方言",
+        "description": "面向 Illustrious 兼容模型的结构化标签表达。",
+        "family": "illustrious",
+        "renderingInstruction": "Render concise Illustrious-compatible English tags without adding identities.",
+        "positivePrefix": "masterpiece, high quality",
+        "positiveSuffix": "detailed environment",
+        "negativePrefix": "worst quality, malformed anatomy",
+        "negativeSuffix": "signature, watermark"
+      }
+    ],
+    "comfyStyleRecipes": [
+      {
+        "recipeRef": "recipe-hong-kong-scene",
+        "name": "港风场景资源提示",
+        "description": "只描述兼容资源家族，不携带文件、路径或原始工作流。",
+        "compatiblePurposes": ["narrative-scene"],
+        "companionStyleRef": "style-hong-kong-scene",
+        "dialectRef": "dialect-illustrious",
+        "resourceHints": [
+          {
+            "resourceRef": "checkpoint-family",
+            "kind": "checkpoint-family",
+            "label": "Illustrious 兼容底模",
+            "familyHint": "Illustrious XL realistic illustration family",
+            "required": true
+          },
+          {
+            "resourceRef": "cinematic-lora-family",
+            "kind": "lora-family",
+            "label": "可选电影叙事 LoRA 家族",
+            "familyHint": "cinematic urban storytelling LoRA family",
+            "required": false,
+            "triggerWords": "cinematic urban storytelling",
+            "recommendedModelStrength": 0.55,
+            "recommendedClipStrength": 0.55
+          }
+        ],
+        "recommendedParameters": {
+          "steps": 28,
+          "cfg": 5.5,
+          "sampler": "dpmpp_2m_sde",
+          "scheduler": "karras"
+        }
+      }
+    ],
+    "styleSelection": {
+      "globalStyleRef": "style-hong-kong-character",
+      "characterStyleRef": "style-hong-kong-character",
+      "narrativeSceneStyleRef": "style-hong-kong-scene",
+      "characterStyleMode": "replace-global",
+      "narrativeSceneStyleMode": "replace-global"
+    },
+    "safeGenerationParameters": [
+      {
+        "variantRef": "character-half-body",
+        "parameters": {
+          "providerType": "novelai-image",
+          "requestedImageCount": 1,
+          "width": 832,
+          "height": 1216,
+          "sampler": "k_euler_ancestral",
+          "steps": 28,
+          "guidanceScale": 5,
+          "cfgRescale": 0,
+          "noiseSchedule": "karras",
+          "qualityToggle": true,
+          "undesiredContentPreset": 0,
+          "smea": false,
+          "smeaDynamic": false
+        }
+      },
+      {
+        "variantRef": "narrative-scene",
+        "parameters": {
+          "providerType": "comfyui-workflow",
+          "width": 1344,
+          "height": 768,
+          "steps": 28,
+          "cfg": 5.5,
+          "sampler": "dpmpp_2m_sde",
+          "scheduler": "karras"
+        }
+      }
+    ]
+  }
+}

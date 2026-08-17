@@ -2,6 +2,7 @@ import type { NarratorClient } from '../narrator/NarratorClient';
 import { resolvePromptText } from '../prompts/promptRegistry';
 import type { GameTime, MemoryId, MemoryItem, RuntimeState, StoryDiagnosticIssue } from '../runtime/types';
 import type { PromptSettings } from '../settings/types';
+import { mergeMemoryTemporalReferences } from '../time/memoryTemporal';
 import {
   NPC_MEMORY_ACTIVE_LIMITS,
   NPC_MEMORY_COMPRESSION_BATCH_SIZES,
@@ -103,6 +104,11 @@ function buildNpcSummaryPrompt(
         relatedTurnId: memory.relatedTurnId,
         periodStart: memoryStart(memory),
         periodEnd: memoryEnd(memory),
+        temporalReferences: memory.temporalReferences?.map((reference) => ({
+          resolvedStart: reference.resolvedStart,
+          resolvedEnd: reference.resolvedEnd,
+          precision: reference.precision
+        })),
         certainty: memory.certainty
       })),
       null,
@@ -163,7 +169,8 @@ function createNpcSummaryMemory(
     importance: 50,
     visibility: mergeVisibility(operation.sourceMemories),
     certainty: summary.certainty ?? 'fact',
-    embeddingText: summary.text
+    embeddingText: summary.text,
+    temporalReferences: mergeMemoryTemporalReferences(operation.sourceMemories)
   };
 }
 

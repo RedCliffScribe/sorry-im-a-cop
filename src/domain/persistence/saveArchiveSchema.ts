@@ -1,5 +1,16 @@
 import { z } from 'zod';
+import { runtimeCustomContentStateSchema } from '../customContent/saveSchema';
 import type { RuntimeSaveRecord } from './SaveRepository';
+import { normalizeNarrativeArcs } from '../drama/narrativeArc';
+import { storyBlockSchema } from '../runtime/storyBlocks';
+
+const saveDlcBindingSchema = z.object({
+  dlcId: z.string().min(1),
+  version: z.string().min(1),
+  status: z.enum(['active', 'paused', 'completed']),
+  planningEnabled: z.boolean().optional(),
+  activatedAt: z.string().min(1).optional()
+});
 
 export interface SaveArchive {
   version: 1;
@@ -30,9 +41,33 @@ const storyEntrySchema = z
     turnId: z.string().min(1),
     speaker: z.enum(['player', 'narrator']),
     text: z.string(),
-    gameTime: gameTimeSchema
+    gameTime: gameTimeSchema,
+    blocks: z.array(storyBlockSchema).optional()
   })
   .passthrough();
+
+const narrativeArcInstanceSchema = z
+  .object({
+    arcInstanceId: z.string().min(1),
+    sourceRef: z
+      .object({
+        providerId: z.string().min(1),
+        sourceType: z.string().min(1),
+        sourceId: z.string().min(1),
+        dlcId: z.string().min(1).optional()
+      })
+      .strict(),
+    arcType: z.enum(['official_dlc', 'custom_content', 'storypack', 'dynamic_event']),
+    status: z.enum(['active', 'paused', 'completed', 'abandoned']),
+    currentStageId: z.string().min(1).optional(),
+    previousStageId: z.string().min(1).optional(),
+    usedNodeIds: z.array(z.string().min(1)),
+    createdTurn: z.number().int().nonnegative(),
+    lastProgressTurn: z.number().int().nonnegative(),
+    writebackRefs: z.array(z.object({ kind: z.string().min(1), id: z.string().min(1) }).strict()),
+    lastSummary: z.string().optional()
+  })
+  .strict();
 
 const runtimeStateSchema = z
   .object({
@@ -41,13 +76,18 @@ const runtimeStateSchema = z
       .object({
         worldpackId: z.string().min(1),
         storypackInfluence: z.enum(['off', 'low', 'medium', 'high']),
-        openingPressure: z.enum(['relaxed', 'routine', 'standard', 'tense', 'high'])
+        openingPressure: z.enum(['relaxed', 'routine', 'standard', 'tense', 'high']),
+        screenCharacterSeedsEnabled: z.boolean().optional(),
+        dramaticOpeningId: z.string().optional(),
+        officialDlcBindings: z.array(saveDlcBindingSchema).optional()
       })
       .passthrough(),
     time: gameTimeSchema,
     player: playerSchema,
     storyLog: z.array(storyEntrySchema),
-    turnCounter: z.number().int().nonnegative()
+    turnCounter: z.number().int().nonnegative(),
+    narrativeArcs: z.array(narrativeArcInstanceSchema).optional(),
+    customContent: runtimeCustomContentStateSchema.optional()
   })
   .passthrough();
 
@@ -76,9 +116,26 @@ const saveArchiveSchema = z
   .passthrough();
 
 export function parseSaveArchive(value: unknown): SaveArchive {
-  return saveArchiveSchema.parse(value) as unknown as SaveArchive;
+  const parsed = saveArchiveSchema.parse(value) as unknown as SaveArchive;
+  return {
+    ...parsed,
+    saves: parsed.saves.map((save) => ({
+      ...save,
+      runtimeState: {
+        ...save.runtimeState,
+        narrativeArcs: normalizeNarrativeArcs(save.runtimeState.narrativeArcs)
+      }
+    }))
+  };
 }
 
 export function parseRuntimeSaveRecord(value: unknown): RuntimeSaveRecord {
-  return runtimeSaveRecordSchema.parse(value) as unknown as RuntimeSaveRecord;
+  const parsed = runtimeSaveRecordSchema.parse(value) as unknown as RuntimeSaveRecord;
+  return {
+    ...parsed,
+    runtimeState: {
+      ...parsed.runtimeState,
+      narrativeArcs: normalizeNarrativeArcs(parsed.runtimeState.narrativeArcs)
+    }
+  };
 }

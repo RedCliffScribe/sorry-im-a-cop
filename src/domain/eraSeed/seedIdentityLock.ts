@@ -90,6 +90,15 @@ export function findSeedIdentityMatch(
   return undefined;
 }
 
+export function findSeedIdentityByCanonicalId(
+  canonicalSeedId: string | undefined,
+  cards: EraSeedFigureCard[] = hkLateColonialEraSeedFigures
+): SeedIdentityMatch | undefined {
+  if (!canonicalSeedId?.trim()) return undefined;
+  const card = cards.find((item) => seedCanonicalId(item) === canonicalSeedId.trim());
+  return card ? makeMatch(card, 'displayName', card.displayName) : undefined;
+}
+
 export function findSeedIdentityMatchInText(
   value: string | undefined,
   cards: EraSeedFigureCard[] = hkLateColonialEraSeedFigures
@@ -148,7 +157,5 @@ export function seedMatchFromStoredActor(actor: Actor): SeedIdentityMatch | unde
 export function actorMatchesSeedIdentity(actor: Actor, match: SeedIdentityMatch): boolean {
   const stored = seedMatchFromStoredActor(actor);
   if (stored?.canonicalSeedId === match.canonicalSeedId) return true;
-
-  const values = [actor.name, actor.callName, actor.englishName, ...actor.aliases];
-  return values.some((value) => findSeedIdentityMatch(value)?.canonicalSeedId === match.canonicalSeedId);
+  return actor.actorId === match.runtimeActorId;
 }

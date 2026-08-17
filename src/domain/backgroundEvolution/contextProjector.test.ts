@@ -183,6 +183,29 @@ describe('background evolution context projector', () => {
     expect(prompt).toContain('组织的低频后台行动事实');
   });
 
+  it('keeps the current public triad organization ahead of unrelated organization actions', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'gang_member', playerName: '陈启明' });
+    const organizationId = state.actors.player.roleProfiles.triad?.organizationId;
+    expect(organizationId).toBeTruthy();
+
+    ['org_tvb', 'org_ming_pao', 'org_hsbc'].forEach((candidateId, index) => {
+      state.backgroundEvolution.organizationTracks[`organization_track_unrelated_${index}`] = createOrganizationTrack(
+        candidateId,
+        index
+      );
+    });
+    state.backgroundEvolution.organizationTracks.organization_track_player = createOrganizationTrack(
+      organizationId!,
+      9,
+      { objective: '维持所属地区的内部协调' }
+    );
+
+    const projection = projectBackgroundEvolutionContext(state, '先看看今晚街面有没有异常');
+
+    expect(projection.activeOrganizationActions[0]?.organizationId).toBe(organizationId);
+    expect(projection.activeOrganizationActions[0]?.objective).toBe('维持所属地区的内部协调');
+  });
+
   it('omits foreground-interrupted NPC actions from the main prompt projection', () => {
     const state = createInitialRuntimeState();
     state.actors.npc_remote_1 = createActorDefaults({

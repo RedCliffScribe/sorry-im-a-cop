@@ -13,6 +13,7 @@ describe('PolicePanelModal', () => {
         assignmentSummary: 'Beat Constable（街面巡逻警）'
       }
     });
+    state.time = { year: 1988, month: 9, day: 12, hour: 22, minute: 13 };
     state.policePanel.actionHints = ['Ask the duty sergeant how promotion recommendations work.'];
     const onDraftPlayerAction = vi.fn();
     const onClose = vi.fn();
@@ -27,6 +28,11 @@ describe('PolicePanelModal', () => {
     expect(dialog).toHaveTextContent('旺角警署');
     expect(dialog).toHaveTextContent('军装巡逻');
     expect(dialog).toHaveTextContent('街面巡逻警');
+    expect(dialog).toHaveTextContent('值班安排');
+    expect(dialog).toHaveTextContent('当前值班 临近交班 · 晚更');
+    expect(dialog).toHaveTextContent('14:00–22:45');
+    expect(dialog).toHaveTextContent('1988年9月13日 星期二 晚更 14:00–22:45');
+    expect(dialog).toHaveTextContent('4天晚更 → 2天轮休');
     expect(dialog).toHaveTextContent('当前可见晋升路径');
     expect(dialog).toHaveTextContent('年资');
     expect(dialog).not.toHaveTextContent('Royal Hong Kong Police');

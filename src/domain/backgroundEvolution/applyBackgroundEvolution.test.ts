@@ -134,6 +134,47 @@ function createOrganizationTrackPatch(state: ReturnType<typeof createInitialRunt
   };
 }
 
+function addRemoteRelationshipContact(state: ReturnType<typeof createInitialRuntimeState>): void {
+  state.actors.actor_contact = {
+    ...state.actors.player,
+    actorId: 'actor_contact',
+    name: '陈琪',
+    aliases: [],
+    presence: 'absent',
+    currentSceneId: undefined,
+    visibility: 'player_known'
+  } as Actor;
+  state.relationshipThreads.thread_contact = {
+    threadId: 'thread_contact',
+    kind: 'network',
+    title: '旧识联络',
+    summary: '陈琪与玩家偶尔交换近况。',
+    relatedActorIds: ['actor_contact'],
+    primaryActorId: 'actor_contact',
+    relationshipRole: '旧识',
+    status: 'active',
+    currentPull: '陈琪正在确认一次普通联络。',
+    milestones: [],
+    visibility: 'player_known',
+    importance: 55,
+    createdAt: state.time,
+    updatedAt: state.time
+  };
+}
+
+function relationshipSourceRefs(actorId = 'actor_contact', threadId = 'thread_contact') {
+  return {
+    actorIds: [actorId],
+    caseIds: [],
+    placeIds: [],
+    organizationIds: [],
+    relationshipThreadIds: [threadId],
+    cityTrackIds: [],
+    deferredEventIds: [],
+    outcomeIds: []
+  };
+}
+
 describe('applyBackgroundEvolution', () => {
   it('creates one formal case action, one deterministic NPC memory, and one case activity', () => {
     const state = createInitialRuntimeState();
@@ -313,7 +354,7 @@ describe('applyBackgroundEvolution', () => {
     expect(result.diagnostics.some((issue) => issue.code === 'invalid_actor_patch')).toBe(true);
   });
 
-  it('writes exactly one deterministic memory for a meaningful terminal non-case action', () => {
+  it('auto-projects exactly one deterministic memory for a meaningful terminal relationship action', () => {
     const state = createInitialRuntimeState();
     state.actors.actor_liu = {
       ...state.actors.player,
@@ -384,7 +425,6 @@ describe('applyBackgroundEvolution', () => {
       outcomeKind: 'progress' as const,
       outcomeSummary: '刘启确认可通过夜更值日台安全转达紧急消息。',
       consequence: '之后遇到突发情况时，他会优先使用这条联络渠道。',
-      persistToMemory: true,
       reviewKey: settleSelection.npcCandidates[0].reviewKey,
       reason: '结果会持续改变刘启未来的联络行为。',
       sourceRefs: refs
@@ -402,6 +442,7 @@ describe('applyBackgroundEvolution', () => {
     expect(memories).toHaveLength(1);
     expect(memories[0].text).toContain(settlePatch.outcomeSummary);
     expect(memories[0].text).toContain(settlePatch.consequence);
+    expect(memories[0].visibility).toBe('player_known');
     expect(settled.state.backgroundEvolution.recentOutcomes.at(-1)?.sourceRefs).toEqual(refs);
 
     const retried = applyBackgroundEvolution({
@@ -411,6 +452,204 @@ describe('applyBackgroundEvolution', () => {
       foregroundTurnId: 'turn_non_case_2'
     });
     expect(Object.values(retried.state.memories).filter((memory) => memory.memoryId.includes('npc_track_liu_contact_settled'))).toHaveLength(1);
+  });
+
+  it('does not turn a terminal relationship no-result into diary noise', () => {
+    const state = createInitialRuntimeState();
+    addRemoteRelationshipContact(state);
+    const createSelection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_contact_1' });
+    const createReviewKey = createSelection.npcCandidates.find((item) => item.actorId === 'actor_contact')!.reviewKey;
+    const refs = relationshipSourceRefs();
+    const created = applyBackgroundEvolution({
+      state,
+      selection: createSelection,
+      writeback: writebackWith({
+        operation: 'create',
+        trackId: 'npc_track_contact_routine',
+        actorId: 'actor_contact',
+        status: 'active',
+        actionKind: 'relationship',
+        objective: '完成一次普通近况联络',
+        currentAction: '致电旧识询问近况',
+        currentStatus: '等待接通',
+        nextReviewAt: addGameHours(state.time, 6),
+        relatedRelationshipThreadIds: ['thread_contact'],
+        visibility: 'player_known',
+        reviewKey: createReviewKey,
+        reason: '已有关系支持一次克制的日常联络。',
+        sourceRefs: refs
+      }),
+      foregroundTurnId: 'turn_contact_1'
+    }).state;
+    created.time = addGameHours(created.time, 6);
+    const settleSelection = selectBackgroundEvolutionCandidates({ state: created, foregroundTurnId: 'turn_contact_2' });
+    const settleReviewKey = settleSelection.npcCandidates.find((item) => item.actorId === 'actor_contact')!.reviewKey;
+    const result = applyBackgroundEvolution({
+      state: created,
+      selection: settleSelection,
+      writeback: writebackWith({
+        operation: 'settle',
+        trackId: 'npc_track_contact_routine',
+        actorId: 'actor_contact',
+        outcomeKind: 'no_result',
+        outcomeSummary: '电话没有接通，本次联络没有形成任何后续变化。',
+        reviewKey: settleReviewKey,
+        reason: '复核时间已到，但没有产生持续结果。',
+        sourceRefs: refs
+      }),
+      foregroundTurnId: 'turn_contact_2'
+    });
+
+    expect(
+      Object.values(result.state.memories).filter((memory) => memory.memoryId.includes('npc_track_contact_routine'))
+    ).toEqual([]);
+    expect(result.state.backgroundEvolution.recentOutcomes.at(-1)?.summary).toContain('没有形成任何后续变化');
+  });
+
+  it('projects a durable relationship milestone into visible NPC memory', () => {
+    const state = createInitialRuntimeState();
+    state.actors.actor_liu = {
+      ...state.actors.player,
+      actorId: 'actor_liu',
+      name: '刘启',
+      aliases: [],
+      presence: 'absent',
+      currentSceneId: undefined,
+      visibility: 'player_known'
+    } as Actor;
+    state.relationshipThreads.thread_liu = {
+      threadId: 'thread_liu',
+      kind: 'fate',
+      title: '彼此信任',
+      summary: '刘启与玩家已经建立持续联系。',
+      relatedActorIds: ['actor_liu'],
+      primaryActorId: 'actor_liu',
+      relationshipRole: '亲密友人',
+      status: 'active',
+      currentPull: '刘启正准备确认一个长期约定。',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 75,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+    const selection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_relationship_memory' });
+    const candidate = selection.npcCandidates.find((item) => item.actorId === 'actor_liu')!;
+    const refs = {
+      actorIds: ['actor_liu'],
+      caseIds: [],
+      placeIds: [],
+      organizationIds: [],
+      relationshipThreadIds: ['thread_liu'],
+      cityTrackIds: [],
+      deferredEventIds: [],
+      outcomeIds: []
+    };
+    const parsed = parseBackgroundEvolutionWriteback({
+      backgroundRelationshipPatches: [
+        {
+          threadId: 'thread_liu',
+          actorId: 'actor_liu',
+          summary: '刘启与玩家已经确认长期互助和夜班联络关系。',
+          intimacySummary: '彼此熟悉，愿意主动照应对方。',
+          trustSummary: '刘启已经把玩家视为可靠的长期联系人。',
+          promiseSummary: '刘启答应在1988年9月20日前替玩家确认夜班联络渠道。',
+          milestoneUpdates: [
+            {
+              milestoneId: 'milestone_liu_night_contact',
+              summary: '双方建立了可持续使用的夜班联络约定。',
+              importance: 78,
+              relatedActorIds: ['actor_liu'],
+              visibility: 'player_known'
+            }
+          ],
+          visibility: 'player_known',
+          reviewKey: candidate.reviewKey,
+          reason: '已有关系形成了明确且会持续承接的约定。',
+          sourceRefs: refs
+        }
+      ]
+    });
+
+    const result = applyBackgroundEvolution({
+      state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_relationship_memory'
+    });
+    const memories = Object.values(result.state.memories).filter(
+      (memory) => memory.kind === 'actor' && memory.relatedActorIds.includes('actor_liu')
+    );
+
+    expect(result.state.relationshipThreads.thread_liu.milestones).toContainEqual(
+      expect.objectContaining({ milestoneId: 'milestone_liu_night_contact' })
+    );
+    expect(memories).toHaveLength(1);
+    expect(memories[0]).toMatchObject({ visibility: 'player_known', certainty: 'fact' });
+    expect(memories[0].text).toContain('双方建立了可持续使用的夜班联络约定');
+    expect(result.state.actors.actor_liu.recentInteractionMemory).toBe(memories[0].text);
+    expect(result.state.actors.actor_liu).toMatchObject({
+      relationshipSummary: '刘启与玩家已经确认长期互助和夜班联络关系。',
+      attitudeTowardPlayer: '彼此熟悉，愿意主动照应对方。',
+      trustTendency: '刘启已经把玩家视为可靠的长期联系人。'
+    });
+    expect(result.state.actors.actor_liu.entanglementSummary).toContain(
+      '承诺：刘启答应在1988年9月20日前替玩家确认夜班联络渠道。'
+    );
+
+    const retried = applyBackgroundEvolution({
+      state: result.state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_relationship_memory'
+    });
+    expect(
+      Object.values(retried.state.memories).filter(
+        (memory) => memory.kind === 'actor' && memory.relatedActorIds.includes('actor_liu')
+      )
+    ).toHaveLength(1);
+  });
+
+  it('keeps a projected private relationship milestone out of player-visible NPC memory', () => {
+    const state = createInitialRuntimeState();
+    addRemoteRelationshipContact(state);
+    const selection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_hidden_relationship_memory' });
+    const candidate = selection.npcCandidates.find((item) => item.actorId === 'actor_contact')!;
+    const parsed = parseBackgroundEvolutionWriteback({
+      backgroundRelationshipPatches: [
+        {
+          threadId: 'thread_contact',
+          actorId: 'actor_contact',
+          milestoneUpdates: [
+            {
+              milestoneId: 'milestone_contact_private_doubt',
+              summary: '陈琪私下开始怀疑这段关系中的一个说法。',
+              importance: 70,
+              relatedActorIds: ['actor_contact'],
+              visibility: 'hidden'
+            }
+          ],
+          reviewKey: candidate.reviewKey,
+          reason: '该变化会持续影响人物判断，但尚不属于玩家已知事实。',
+          sourceRefs: relationshipSourceRefs()
+        }
+      ]
+    });
+
+    const result = applyBackgroundEvolution({
+      state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_hidden_relationship_memory'
+    });
+    const memory = Object.values(result.state.memories).find(
+      (item) => item.kind === 'actor' && item.relatedActorIds.includes('actor_contact')
+    );
+
+    expect(memory).toMatchObject({ visibility: 'hidden', certainty: 'fact' });
+    expect(result.state.actors.actor_contact.recentInteractionMemory).toBe(memory?.text);
+    expect(result.state.actors.actor_contact.relationshipSummary).toBe('陈琪与玩家偶尔交换近况。');
+    expect(result.state.actors.actor_contact.relationshipSummary).not.toContain('私下开始怀疑');
   });
 
   it('activates and later settles one organization heartbeat without creating a second organization profile', () => {
@@ -511,7 +750,9 @@ describe('applyBackgroundEvolution', () => {
   });
 
   it('writes at most one affected NPC memory from an accepted organization transition', () => {
-    const state = createInitialRuntimeState();
+    const state = createInitialRuntimeState({
+      startTime: { year: 1988, month: 9, day: 12, hour: 10, minute: 0 }
+    });
     addPlayerOrganizationLink(state);
     state.actors.actor_editor = {
       ...state.actors.player,
@@ -535,7 +776,7 @@ describe('applyBackgroundEvolution', () => {
     };
     const memoryPatch = {
       actorId: 'actor_editor',
-      text: '陈编辑开始协调晚间新闻采访档期，等待采访对象确认。',
+      text: '陈编辑约定下周协调晚间新闻采访档期，等待采访对象确认。',
       importance: 60,
       visibility: 'hidden' as const,
       certainty: 'fact' as const,
@@ -559,8 +800,137 @@ describe('applyBackgroundEvolution', () => {
       memory.relatedOrganizationIds.includes('org_tvb') && memory.relatedActorIds.includes('actor_editor')
     );
     expect(organizationMemories).toHaveLength(1);
-    expect(organizationMemories[0].text).toContain('协调晚间新闻采访档期');
+    expect(organizationMemories[0].text).toContain('1988年9月19日至1988年9月25日协调晚间新闻采访档期');
+    expect(organizationMemories[0].text).not.toContain('下周');
+    expect(organizationMemories[0].temporalReferences?.[0]).toMatchObject({
+      sourcePhrase: '下周',
+      precision: 'week'
+    });
+    expect(result.state.actors.actor_editor.recentInteractionMemory).toBe(organizationMemories[0].text);
     expect(result.diagnostics.some((issue) => issue.code === 'rejected_actor_memory')).toBe(true);
+  });
+
+  it('evolves a known society area and writes the responsible NPC activity to memory', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'gang_member',
+      triadSocietyId: 'org_sun_yee_on',
+      triadTerritoryPlaceId: 'place_portland_street'
+    });
+    state.actors.actor_syo_coordinator = {
+      ...state.actors.player,
+      actorId: 'actor_syo_coordinator',
+      name: '林志明',
+      aliases: [],
+      presence: 'absent',
+      currentPlaceId: 'place_portland_street',
+      organizationIds: ['org_sun_yee_on'],
+      organizationRelations: [
+        {
+          organizationId: 'org_sun_yee_on',
+          relationType: 'member',
+          roleTitle: '旺角线联络人',
+          summary: '负责夜场线日常交代。',
+          visibility: 'player_known'
+        }
+      ],
+      visibility: 'player_known'
+    } as Actor;
+    state.organizations.org_sun_yee_on.relatedActorIds.push('actor_syo_coordinator');
+    const selection = selectBackgroundEvolutionCandidates({ state, foregroundTurnId: 'turn_syo_heartbeat' });
+    const candidate = selection.organizationCandidates.find((item) => item.organizationId === 'org_sun_yee_on');
+    expect(candidate?.relatedActorIds).toContain('actor_syo_coordinator');
+    if (!candidate) return;
+    const refs = {
+      actorIds: ['actor_syo_coordinator'],
+      caseIds: [],
+      placeIds: ['place_portland_street'],
+      organizationIds: ['org_sun_yee_on'],
+      relationshipThreadIds: [],
+      cityTrackIds: [],
+      deferredEventIds: [],
+      outcomeIds: []
+    };
+    const parsed = parseBackgroundEvolutionWriteback({
+      organizationEvolutionPatches: [
+        {
+          operation: 'activate',
+          trackId: 'organization_track_syo_mong_kok',
+          organizationId: 'org_sun_yee_on',
+          status: 'active',
+          objective: '在警方巡查期间维持旺角夜场线联络',
+          currentAction: '由林志明逐一通知夜场联络人暂缓街面冲突',
+          currentStatus: '正在分批传话',
+          startedAt: state.time,
+          expectedEndAt: addGameHours(state.time, 72),
+          nextReviewAt: addGameHours(state.time, 24),
+          relatedActorIds: ['actor_syo_coordinator'],
+          relatedPlaceIds: ['place_portland_street'],
+          relatedCaseIds: [],
+          relatedCityTrackIds: [],
+          visibility: 'player_known',
+          currentState: '旺角夜场线正在收紧日常联络。',
+          pressureSummary: '警方巡查增加，地区线避免无授权冲突。',
+          triadState: {
+            leadership: {
+              phase: 'consultation',
+              visibleSummary: '核心主事层正在协调旺角线的人事与做法。',
+              nextMilestone: '三日后根据巡查压力再议。',
+              knownCandidateActorIds: ['actor_syo_coordinator'],
+              confidence: 'medium'
+            },
+            activityAreas: [
+              {
+                placeId: 'place_portland_street',
+                statusSummary: '林志明正维持夜场线日常交代，暂缓扩大人手。',
+                pressureSummary: '警方近期巡查增加。',
+                confidence: 'medium'
+              }
+            ]
+          },
+          reviewKey: candidate.reviewKey,
+          reason: '已知地区线与负责人物面临持续三日的警方压力。',
+          sourceRefs: refs
+        }
+      ],
+      actorMemories: [
+        {
+          actorId: 'actor_syo_coordinator',
+          text: '林志明开始逐一通知旺角夜场联络人暂缓街面冲突，并负责维持三日内的日常交代。',
+          importance: 65,
+          visibility: 'player_known',
+          certainty: 'fact',
+          relatedOrganizationIds: ['org_sun_yee_on'],
+          reviewKey: candidate.reviewKey,
+          reason: '该职责会持续影响林志明未来数日的行为和去向。',
+          sourceRefs: refs
+        }
+      ]
+    });
+
+    const result = applyBackgroundEvolution({
+      state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_syo_heartbeat'
+    });
+
+    expect(result.state.organizations.org_sun_yee_on.triadState?.leadership).toMatchObject({
+      phase: 'consultation',
+      knownCandidateActorIds: ['actor_syo_coordinator']
+    });
+    expect(result.state.organizations.org_sun_yee_on.triadState?.activityAreas).toContainEqual(
+      expect.objectContaining({
+        placeId: 'place_portland_street',
+        statusSummary: '林志明正维持夜场线日常交代，暂缓扩大人手。'
+      })
+    );
+    const actorMemories = Object.values(result.state.memories).filter(
+      (memory) =>
+        memory.relatedActorIds.includes('actor_syo_coordinator') &&
+        memory.relatedOrganizationIds.includes('org_sun_yee_on')
+    );
+    expect(actorMemories).toHaveLength(1);
+    expect(actorMemories[0].text).toContain('逐一通知旺角夜场联络人');
   });
 
   it('allows a settled organization outcome to advance one explicitly paired city track', () => {
@@ -644,5 +1014,148 @@ describe('applyBackgroundEvolution', () => {
       pressureLevel: 3,
       currentBeat: '编辑台已经取得第一轮可播材料，准备安排晚间播出。'
     });
+  });
+
+  it('inherits a visible relationship candidate visibility when creating its movement track', () => {
+    const state = createInitialRuntimeState();
+    state.actors.actor_contact = {
+      ...state.actors.player,
+      actorId: 'actor_contact',
+      name: '钟美玲',
+      aliases: [],
+      presence: 'absent',
+      currentSceneId: undefined,
+      visibility: 'player_known',
+      importance: 70
+    } as Actor;
+    state.relationshipThreads.thread_contact = {
+      threadId: 'thread_contact',
+      kind: 'fate',
+      title: '旧识',
+      summary: '钟美玲与玩家仍保持联系。',
+      relatedActorIds: ['player', 'actor_contact'],
+      // Older/model-written data can incorrectly use the player as primary; the related NPC must still evolve.
+      primaryActorId: 'player',
+      relationshipRole: '旧识',
+      status: 'active',
+      currentPull: '她答应有消息时再联络。',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 70,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_visible_relationship'
+    });
+    const candidate = selection.npcCandidates.find(
+      (item) => item.actorId === 'actor_contact'
+    )!;
+    const refs = {
+      actorIds: ['actor_contact'],
+      caseIds: [],
+      placeIds: [],
+      organizationIds: [],
+      relationshipThreadIds: ['thread_contact'],
+      cityTrackIds: [],
+      deferredEventIds: [],
+      outcomeIds: []
+    };
+    const parsed = parseBackgroundEvolutionWriteback({
+      npcTrackPatches: [
+        {
+          operation: 'create',
+          trackId: 'npc_track_contact_daily',
+          actorId: 'actor_contact',
+          status: 'planned',
+          actionKind: 'relationship',
+          objective: '整理近期收到的消息',
+          currentAction: '先核对消息来源，再决定是否联络玩家',
+          currentStatus: '尚在核对',
+          nextReviewAt: addGameHours(state.time, 12),
+          relatedRelationshipThreadIds: ['thread_contact'],
+          reviewKey: candidate.reviewKey,
+          reason: '既有关系与承诺足以支持一个克制的远场计划。',
+          sourceRefs: refs
+        }
+      ]
+    });
+
+    const result = applyBackgroundEvolution({
+      state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_visible_relationship'
+    });
+
+    expect(result.state.backgroundEvolution.npcTracks.npc_track_contact_daily.visibility).toBe(
+      'player_known'
+    );
+  });
+
+  it('turns a validated material city transition into a structured outcome and visible wind signal', () => {
+    const state = createInitialRuntimeState();
+    const track =
+      state.citySituationTracks.track_1988_mong_kok_nightlife_society_pressure;
+    track.nextReviewAt = { ...state.time };
+    track.visibility = 'rumor';
+    const selection = selectBackgroundEvolutionCandidates({
+      state,
+      foregroundTurnId: 'turn_city_wind'
+    });
+    const candidate = selection.cityCandidates.find(
+      (item) => item.trackId === track.trackId
+    )!;
+    const refs = {
+      actorIds: [],
+      caseIds: [],
+      placeIds: [...track.relatedPlaceIds],
+      organizationIds: [...track.relatedOrganizationIds],
+      relationshipThreadIds: [],
+      cityTrackIds: [track.trackId],
+      deferredEventIds: [],
+      outcomeIds: []
+    };
+    const parsed = parseBackgroundEvolutionWriteback({
+      citySituationTrackPatches: [
+        {
+          operation: 'update',
+          trackId: track.trackId,
+          pressureLevel: track.pressureLevel + 1,
+          currentBeat: '几间夜场开始调整看场人手，街面联络比上周频密。',
+          reviewKey: candidate.reviewKey,
+          reason: '到期城市轨道形成了有限且可见的阶段变化。',
+          sourceRefs: refs
+        }
+      ]
+    });
+
+    const result = applyBackgroundEvolution({
+      state,
+      selection,
+      writeback: parsed.writeback,
+      foregroundTurnId: 'turn_city_wind'
+    });
+
+    expect(result.state.backgroundEvolution.recentOutcomes).toContainEqual(
+      expect.objectContaining({
+        sourceKind: 'city',
+        sourceId: track.trackId,
+        sourceReviewKey: candidate.reviewKey,
+        summary: '几间夜场开始调整看场人手，街面联络比上周频密。'
+      })
+    );
+    expect(Object.values(result.state.dynamicEvents.signals)).toContainEqual(
+      expect.objectContaining({
+        title: expect.stringContaining('传出新动向'),
+        summary: expect.stringContaining('几间夜场开始调整看场人手'),
+        status: 'active',
+        visibility: 'known'
+      })
+    );
+    expect(result.state.citySituationTracks[track.trackId].nextReviewAt).toEqual(
+      addGameHours(state.time, (track.cadenceDays ?? 14) * 24)
+    );
   });
 });

@@ -10,7 +10,13 @@ tmp/
 *api-settings*.json
 *api-config*.json
 .codex-thorium-profile-*/
+.codex-remote-attachments/
 test-results/
+
+# Public source snapshots omit private development notes and external art packs.
+docs/
+avg_art_production/
+art-production/
 
 # Cloudflare deployment secrets and local development state.
 .env

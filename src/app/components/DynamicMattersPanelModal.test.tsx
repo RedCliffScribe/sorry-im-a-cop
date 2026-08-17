@@ -216,6 +216,51 @@ describe('DynamicMattersPanelModal', () => {
     expect(dialog).toHaveTextContent('Resolved market whisper');
   });
 
+  it('moves stale and locally expired wind signals behind the archived filter', () => {
+    const state = withDynamicFixtures();
+    state.dynamicEvents.signals.signal_stale = {
+      ...state.dynamicEvents.signals.signal_street_rumor,
+      id: 'signal_stale',
+      title: '已经过时的码头风声',
+      status: 'stale'
+    };
+    state.dynamicEvents.signals.signal_expired = {
+      ...state.dynamicEvents.signals.signal_street_rumor,
+      id: 'signal_expired',
+      title: '两周前的旧街坊风声',
+      updatedAt: { ...state.time, day: state.time.day - 14 }
+    };
+
+    renderPanel(state);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).not.toHaveTextContent('已经过时的码头风声');
+    expect(dialog).not.toHaveTextContent('两周前的旧街坊风声');
+
+    fireEvent.click(screen.getByRole('button', { name: /已归档/ }));
+    expect(dialog).toHaveTextContent('已经过时的码头风声');
+    expect(dialog).toHaveTextContent('已过时');
+    expect(dialog).toHaveTextContent('两周前的旧街坊风声');
+    expect(dialog).toHaveTextContent('已归档');
+  });
+
+  it('offers manual archive actions for current matters and wind signals', () => {
+    const onArchiveEntry = vi.fn();
+    render(
+      <DynamicMattersPanelModal
+        state={withDynamicFixtures()}
+        onClose={vi.fn()}
+        onArchiveEntry={onArchiveEntry}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '归档风声 Street says a manager is paying protection money' }));
+    fireEvent.click(screen.getByRole('button', { name: '归档事项 Media pressure around Mong Kok' }));
+
+    expect(onArchiveEntry).toHaveBeenNthCalledWith(1, 'signal', 'signal_street_rumor');
+    expect(onArchiveEntry).toHaveBeenNthCalledWith(2, 'matter', 'matter_media_pressure');
+  });
+
   it('treats dormant matters with terminal outcomes as archived entries', () => {
     const state = withDynamicFixtures();
     state.dynamicEvents.currentMatters.matter_dormant_done = {

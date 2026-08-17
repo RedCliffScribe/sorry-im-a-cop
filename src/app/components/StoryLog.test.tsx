@@ -245,6 +245,7 @@ describe('StoryLog', () => {
   it('applies separate display settings to narration and dialogue text', () => {
     const displaySettings: DisplaySettings = {
       uiTheme: 'dark',
+      avgPlayerPortraitMode: 'hidden',
       interfaceFontFamily: 'readable',
       narrationFontFamily: 'serif',
       dialogueFontFamily: 'mono',
@@ -304,6 +305,42 @@ describe('StoryLog', () => {
     );
 
     expect(screen.getByText('正文约 5 字')).toBeInTheDocument();
+  });
+
+  it('shows the experience award and level-up result under the matching narrative', () => {
+    render(
+      <StoryLog
+        entries={[
+          createEntry({
+            turnId: 'turn_1',
+            speaker: 'narrator',
+            text: '你在雨中认出了可疑车辆。',
+            experienceAward: {
+              awardId: 'xp:turn_1',
+              turnId: 'turn_1',
+              total: 10,
+              sources: [
+                {
+                  kind: 'judgement',
+                  sourceId: 'judgement:check_1',
+                  amount: 10,
+                  reason: '困难辨认可疑车辆判定成功'
+                }
+              ],
+              capped: false,
+              levelsGained: 1,
+              attributePointsGained: 5,
+              levelAfter: 2
+            }
+          })
+        ]}
+      />
+    );
+
+    expect(screen.getByLabelText('本回合经验')).toHaveTextContent(
+      '本回合 +10 经验 · 困难辨认可疑车辆判定成功'
+    );
+    expect(screen.getByText('升至 2 级，获得 5 点可分配属性。')).toBeInTheDocument();
   });
 
   it('renders turn token and response metrics in the turn header', () => {
@@ -369,15 +406,112 @@ describe('StoryLog', () => {
     );
 
     expect(screen.getByText('追截巷口逃跑男子')).toBeInTheDocument();
-    expect(screen.getByText('结果 成功')).toBeInTheDocument();
+    expect(screen.getByText('追捕')).toBeInTheDocument();
+    expect(screen.getByText('成功')).toBeInTheDocument();
     expect(screen.queryByText('难度 58')).not.toBeInTheDocument();
+    const narrativeEntry = screen
+      .getByText('你追进巷口，雨水从招牌边缘滴落。')
+      .closest('article');
+    const judgementRecord = screen.getByRole('article', {
+      name: '追截巷口逃跑男子判定记录'
+    });
+    expect(narrativeEntry).not.toContainElement(judgementRecord);
 
-    fireEvent.click(screen.getByRole('button', { name: '展开判定详情' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '展开“追截巷口逃跑男子”判定详情'
+      })
+    );
 
-    expect(screen.getByText('难度 58')).toBeInTheDocument();
-    expect(screen.getByText('判定值 66')).toBeInTheDocument();
-    expect(screen.getByText('差额 +8')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '旧版判定数值' })).toHaveTextContent(
+      '难度58判定值66差额+8'
+    );
+    expect(screen.getByText(/这是旧版判定记录/)).toBeInTheDocument();
     expect(screen.getByText('行动 +8')).toBeInTheDocument();
     expect(screen.getByText('玩家行动属性较高，短距离追逐有优势。')).toBeInTheDocument();
+  });
+
+  it('renders the local d100 formula instead of legacy difficulty and score labels', () => {
+    const check: JudgementCheck = {
+      rulesetVersion: 'v1.1-local-d100',
+      checkId: 'check_local',
+      turnId: 'turn_1',
+      gameTime,
+      title: '辨认口供矛盾',
+      category: 'thinking',
+      relatedActorIds: [],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      difficulty: 61,
+      score: 50,
+      margin: 7,
+      outcome: 'success',
+      shortSummary: '玩家辨认出两份口供的时间矛盾。',
+      factors: [
+        {
+          sourceType: 'preparation',
+          label: '记录完整',
+          value: 4,
+          reason: '两份原始记录都在手边。'
+        }
+      ],
+      primaryAttribute: 'perception',
+      primaryAttributeValue: 70,
+      secondaryAttribute: 'thinking',
+      secondaryAttributeValue: 60,
+      secondaryModifier: 2,
+      difficultyTier: 'hard',
+      difficultyModifier: -15,
+      gameDifficulty: 'standard',
+      gameDifficultyModifier: 0,
+      contextModifierTotal: 4,
+      effectiveTarget: 61,
+      presetRoll: 50,
+      visibility: 'player_known'
+    };
+
+    render(
+      <StoryLog
+        entries={[
+          createEntry({
+            turnId: 'turn_1',
+            speaker: 'narrator',
+            text: '你逐行核对两份口供。',
+            judgementCheckIds: ['check_local']
+          })
+        ]}
+        judgementChecks={{ check_local: check }}
+      />
+    );
+    expect(screen.getByText('思考')).toBeInTheDocument();
+    expect(screen.getByText('d100 50 / 目标 61')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '展开“辨认口供矛盾”判定详情'
+      })
+    );
+
+    expect(
+      screen.getByLabelText('本地 d100 50，目标值 61，结果成功')
+    ).toBeInTheDocument();
+    expect(screen.getByText('余量 +7')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '判定详情' })).toBeInTheDocument();
+    expect(screen.getByText('能力与现场修正')).toBeInTheDocument();
+    expect(screen.queryByText('目标值怎样算出')).not.toBeInTheDocument();
+    expect(screen.getByText('主属性 · 观察')).toBeInTheDocument();
+    expect(screen.getByText('副属性 · 思考')).toBeInTheDocument();
+    expect(screen.getByText('场景 · 困难')).toBeInTheDocument();
+    expect(screen.getByText('本局 · 标准')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '70（主属性 · 观察） +2（副属性 · 思考） -15（场景 · 困难） +0（本局 · 标准） +4（情境合计） = 61，最终目标值 61'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('d100 50 ≤ 目标值 61，判定成功。')
+    ).toBeInTheDocument();
+    expect(screen.getByText('准备')).toBeInTheDocument();
+    expect(screen.getByText('两份原始记录都在手边。')).toBeInTheDocument();
+    expect(screen.queryByText('判定值 50')).not.toBeInTheDocument();
   });
 });

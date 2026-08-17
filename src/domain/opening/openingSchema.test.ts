@@ -46,6 +46,111 @@ function createOpeningActorSeed(overrides: Record<string, unknown> = {}) {
 }
 
 describe('opening narrator schema', () => {
+  it('keeps presentation hints optional and normalizes unknown emotions locally', () => {
+    const withoutHints = validateOpeningNarratorResponse({
+      narrativeText: 'Opening scene.',
+      suggestedActions: [],
+      playerPatch: {}
+    });
+    expect(withoutHints.presentationHints).toBeUndefined();
+
+    const withInvalidHint = validateOpeningNarratorResponse({
+      narrativeText: '【值日警长】收队。',
+      presentationHints: { dialogueEmotions: ['furious'] },
+      suggestedActions: [],
+      playerPatch: {}
+    });
+    expect(withInvalidHint.presentationHints).toEqual({ dialogueEmotions: ['neutral'] });
+  });
+
+  it('accepts exact opening balances in the tens-of-billions range', () => {
+    const parsed = validateOpeningNarratorResponse({
+      narrativeText: 'Opening scene.',
+      suggestedActions: ['Check the account book.'],
+      playerPatch: {
+        economy: {
+          cashOnHand: 50_000,
+          bankBalance: 50_000_000_000,
+          financeSummary: '家族资产充裕，但日常现金仍按本地账本管理。'
+        }
+      }
+    });
+
+    expect(parsed.playerPatch?.economy).toMatchObject({
+      cashOnHand: 50_000,
+      bankBalance: 50_000_000_000
+    });
+    expect(parsed.validationWarnings).toBeUndefined();
+  });
+
+  it('drops only an overflowing opening balance while preserving neighboring player fields', () => {
+    const parsed = validateOpeningNarratorResponse({
+      narrativeText: 'Opening scene.',
+      suggestedActions: ['Leave home.'],
+      playerPatch: {
+        name: '林家俊',
+        clothing: '剪裁合身的深灰西装。',
+        equipment: ['皮夹', '钢笔'],
+        economy: {
+          cashOnHand: 50_000,
+          bankBalance: 100_000_000_000,
+          monthlyPressure: 12,
+          financeSummary: '家族提供稳定支持。'
+        }
+      }
+    });
+
+    expect(parsed.playerPatch).toMatchObject({
+      name: '林家俊',
+      clothing: '剪裁合身的深灰西装。',
+      equipment: ['皮夹', '钢笔'],
+      economy: {
+        cashOnHand: 50_000,
+        monthlyPressure: 12,
+        financeSummary: '家族提供稳定支持。'
+      }
+    });
+    expect(parsed.playerPatch?.economy?.bankBalance).toBeUndefined();
+    expect(parsed.validationWarnings).toContainEqual(
+      expect.objectContaining({
+        path: ['playerPatch', 'economy', 'bankBalance']
+      })
+    );
+  });
+
+  it('accepts an opening triad responsibility through the existing current matter contract', () => {
+    const parsed = validateOpeningNarratorResponse({
+      narrativeText: '阿成把玩家叫到一旁，交代先弄清庙街摊档争执的来龙去脉。',
+      suggestedActions: ['先找摊档老板了解情况。'],
+      currentMatterPatches: [
+        {
+          id: 'matter_opening_triad_responsibility',
+          title: '弄清摊档争执',
+          summary: '阿成希望玩家先了解争执原因，不要公开借用社团名义。',
+          status: 'active',
+          priority: 70,
+          visibility: 'known',
+          source: 'triad_responsibility',
+          matterKind: 'social',
+          pressureLevel: 2,
+          responseWindow: 'today',
+          relatedActorIds: ['actor_opening_triad_patron'],
+          relatedPlaceIds: ['place_temple_street'],
+          relatedOrganizationIds: ['org_wo_shing_wo']
+        }
+      ]
+    });
+
+    expect(parsed.currentMatterPatches).toEqual([
+      expect.objectContaining({
+        id: 'matter_opening_triad_responsibility',
+        source: 'triad_responsibility',
+        matterKind: 'social',
+        relatedActorIds: ['actor_opening_triad_patron']
+      })
+    ]);
+  });
+
   it('omits opening NPC seeds without required basic identity fields and records diagnostics', () => {
     const parsed = validateOpeningNarratorResponse({
       narrativeText: 'Opening scene.',
@@ -90,7 +195,7 @@ describe('opening narrator schema', () => {
       narrativeText: 'Opening scene.',
       suggestedActions: ['Ask the duty officer what happened.'],
       playerPatch: {},
-      initialActors: [createOpeningActorSeed()],
+      initialActors: [createOpeningActorSeed({ playerRoleRelation: 'police_supervisor' })],
       memories: [],
       pressureSeeds: [],
       grayLedger: []
@@ -104,6 +209,7 @@ describe('opening narrator schema', () => {
     expect(actor.bodyConditionSummary).toContain('Tired');
     expect(actor.keyMemories[0]?.text).toContain('report for duty');
     expect(actor.roleProfiles.police?.rank).toBe('Sergeant');
+    expect(actor.playerRoleRelation).toBe('police_supervisor');
     expect(actor.worldpackActorData.hk1988).toEqual({ stationGenerationSource: 'opening' });
   });
 

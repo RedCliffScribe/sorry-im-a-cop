@@ -1,3 +1,6 @@
+import type { StableIdentityRef } from '../avgResourcePack/types';
+import type { StoryBlock } from './storyBlocks';
+
 export type ActorId = string;
 export type AreaId = string;
 export type CaseId = string;
@@ -203,6 +206,7 @@ export interface WeatherState {
 
 export interface RuntimeEnvironmentState {
   weather: WeatherState;
+  recentConditions?: WeatherCondition[];
 }
 
 export interface LastMapMovement {
@@ -229,12 +233,25 @@ export interface AttributeBlock {
   will: number;
 }
 
+export type AttributeKey = keyof AttributeBlock;
+
+export type GameDifficultyLevel = 'story' | 'easy' | 'standard' | 'hard' | 'brutal';
+
+export type VitalsConditionPersistence = 'stable' | 'transient' | 'persistent' | 'unknown';
+
+export interface VitalsConditionLifecycle {
+  persistence: VitalsConditionPersistence;
+  establishedAt: GameTime;
+  lastReviewedAt: GameTime;
+}
+
 export interface Vitals {
   health: number;
   maxHealth: number;
   stamina: number;
   maxStamina: number;
   conditionSummary: string;
+  conditionLifecycle?: VitalsConditionLifecycle;
 }
 
 export type ReputationCircle =
@@ -270,6 +287,7 @@ export interface PlayerReputationLogEntry {
 export interface PlayerReputationState {
   notoriety: number;
   overallReputation: number;
+  overallReputationBaseline?: number;
   summary: string;
   circles: ReputationByCircle;
   logs: PlayerReputationLogEntry[];
@@ -286,6 +304,33 @@ export interface PlayerProgression {
   level: number;
   experience: number;
   unspentAttributePoints: number;
+}
+
+export type ExperienceAwardSourceKind =
+  | 'judgement'
+  | 'combat'
+  | 'case_progress'
+  | 'matter_resolved'
+  | 'relationship_milestone'
+  | 'model_proposal';
+
+export interface ExperienceAwardSource {
+  kind: ExperienceAwardSourceKind;
+  sourceId?: string;
+  amount: number;
+  reason: string;
+}
+
+export interface TurnExperienceAward {
+  awardId: string;
+  turnId: TurnId;
+  total: number;
+  sources: ExperienceAwardSource[];
+  modelSuggestedGain?: number;
+  capped: boolean;
+  levelsGained: number;
+  attributePointsGained: number;
+  levelAfter: number;
 }
 
 export type FinanceCashflowKind =
@@ -308,6 +353,7 @@ export interface FinanceCashflowItem {
   title: string;
   amount: number;
   account: FinanceAccount;
+  identityBinding?: CurrentIdentity;
   summary: string;
   activeFromMonth: string;
   activeToMonth?: string;
@@ -331,7 +377,7 @@ export interface FinanceLedgerEntry {
   relatedAssetItemIds: AssetItemId[];
   relatedActorIds: ActorId[];
   relatedPlaceIds: PlaceId[];
-  source: 'writeback' | 'monthly_settlement' | 'manual' | 'legacy_economy_patch';
+  source: 'writeback' | 'monthly_settlement' | 'manual' | 'legacy_economy_patch' | 'local_recovery';
   visibility: Visibility;
 }
 
@@ -549,8 +595,22 @@ export interface TriadRoleProfile {
 
 export interface CivilianRoleProfile {
   status: RoleProfileStatus;
+  civilianProfileId?: string;
+  occupationGroupId?: string;
+  employmentStatusId?: string;
   publicOccupation?: string;
   workplacePlaceId?: PlaceId;
+  employerOrganizationId?: OrganizationId;
+  employerRelationType?: ActorOrganizationRelationType | string;
+  employerRelationSummary?: string;
+  workUnitSummary?: string;
+  positionSummary?: string;
+  dutySummary?: string;
+  decisionScopeSummary?: string;
+  accessSummary?: string;
+  sectorIds: string[];
+  roleTags: string[];
+  livelihoodActorIds: ActorId[];
   communitySummary: string;
   familyEconomicSummary: string;
   legalStatusSummary: string;
@@ -575,6 +635,9 @@ export interface ActorAdultPrivateWombRecord {
   date?: string;
   description: string;
   pregnancyCheckDate?: string;
+  pregnancyId?: string;
+  pregnancyCheckResult?: PregnancyCheckResult;
+  paternityCandidates?: ActorPregnancyPaternityCandidate[];
 }
 
 export type PregnancyRiskType = 'unprotected' | 'tryingToConceive' | 'reducedRisk';
@@ -625,13 +688,16 @@ export interface ActorPregnancyHistoryRecord {
   summary: string;
   childActorId?: ActorId;
   fatherActorId?: ActorId;
+  paternityCandidates?: ActorPregnancyPaternityCandidate[];
 }
 
 export interface ActorAdultPrivateWombProfile {
   status: string;
   cervixStatus: string;
+  cervixStatusUpdatedAt?: GameTime;
   records: ActorAdultPrivateWombRecord[];
   pregnancy?: ActorPregnancyState;
+  pendingPregnancyChecks?: ActorPregnancyState[];
   lastPregnancyCheck?: ActorPregnancyCheckRecord;
   pregnancyHistory?: ActorPregnancyHistoryRecord[];
 }
@@ -677,6 +743,35 @@ export interface ActorFemaleProfile {
   adultPrivateProfile?: ActorAdultPrivateProfile;
   updatedAt?: GameTime;
   source?: 'opening' | 'writeback' | 'manual' | 'imported';
+}
+
+export type ActorManualProfileField =
+  | 'name'
+  | 'englishName'
+  | 'aliases'
+  | 'callName'
+  | 'gender'
+  | 'birthDate'
+  | 'publicIdentity'
+  | 'actualIdentitySummary'
+  | 'positionSummary'
+  | 'profileSummary'
+  | 'appearance'
+  | 'clothing'
+  | 'equipment'
+  | 'personality'
+  | 'speechStyle'
+  | 'motivation'
+  | 'longTermGoal'
+  | 'values'
+  | 'relationshipSummary'
+  | 'attitudeTowardPlayer'
+  | 'trustTendency'
+  | 'entanglementSummary';
+
+export interface ActorManualProfileOverride {
+  lockedFields: ActorManualProfileField[];
+  updatedAt: GameTime;
 }
 
 export interface Actor {
@@ -730,6 +825,9 @@ export interface Actor {
   childActorIds?: ActorId[];
   visibility: Visibility;
   importance: number;
+  manualProfileOverride?: ActorManualProfileOverride;
+  /** Stable cross-save identity for official/custom fixed characters. */
+  stableIdentityRef?: StableIdentityRef;
   worldpackActorData?: Record<string, unknown>;
 }
 
@@ -925,6 +1023,7 @@ export type CurrentMatterStatus = 'active' | 'dormant' | 'resolved' | 'archived'
 export type CurrentMatterKind =
   | 'personal'
   | 'police_work'
+  | 'livelihood'
   | 'relationship'
   | 'family'
   | 'social'
@@ -1108,6 +1207,7 @@ export interface BackgroundEvolutionRunRecord {
 export interface BackgroundEvolutionState {
   npcTracks: Record<string, NpcEvolutionTrack>;
   organizationTracks: Record<string, OrganizationEvolutionTrack>;
+  npcReviewCooldownUntil?: Record<ActorId, GameTime>;
   recentOutcomes: EvolutionOutcomeRecord[];
   chronicle: EvolutionChronicleEntry[];
   lastAppliedAt?: GameTime;
@@ -1413,6 +1513,7 @@ export interface PressureHook {
 export interface Organization {
   organizationId: OrganizationId;
   name: string;
+  aliases?: string[];
   type: OrganizationType | string;
   summary: string;
   publicKnowledge: string;
@@ -1420,11 +1521,53 @@ export interface Organization {
   stanceTowardPlayer: string;
   pressureSummary: string;
   structureTree?: OrganizationStructureNode[];
+  triadProfile?: TriadOrganizationProfile;
+  triadState?: TriadOrganizationState;
   relatedActorIds: ActorId[];
   relatedPlaceIds: PlaceId[];
   relatedCaseIds: CaseId[];
   visibility: Visibility;
   importance: number;
+}
+
+export type TriadLeadershipPhase = 'stable' | 'consultation' | 'contested' | 'transition';
+
+export interface TriadActivityAreaProfile {
+  placeId: PlaceId;
+  label: string;
+  activitySummary: string;
+  localPressureSummary: string;
+}
+
+export interface TriadOrganizationProfile {
+  organizationStyle: string;
+  decisionCulture: string;
+  leadershipSelection: string;
+  operatingLines: string[];
+  customaryRules: string[];
+  internalFaultLines: string[];
+  activityAreas: TriadActivityAreaProfile[];
+}
+
+export interface TriadLeadershipState {
+  phase: TriadLeadershipPhase;
+  visibleSummary: string;
+  nextMilestone?: string;
+  currentLeaderActorId?: ActorId;
+  knownCandidateActorIds: ActorId[];
+  confidence: GrayNetworkConfidence | 'unknown';
+}
+
+export interface TriadActivityAreaState {
+  placeId: PlaceId;
+  statusSummary: string;
+  pressureSummary: string;
+  confidence: GrayNetworkConfidence | 'unknown';
+}
+
+export interface TriadOrganizationState {
+  leadership: TriadLeadershipState;
+  activityAreas: TriadActivityAreaState[];
 }
 
 export interface OrganizationStructureNode {
@@ -1506,6 +1649,14 @@ export interface MemoryItem {
   compressedAtTurnId?: TurnId;
   periodStart?: GameTime;
   periodEnd?: GameTime;
+  temporalReferences?: MemoryTemporalReference[];
+}
+
+export interface MemoryTemporalReference {
+  sourcePhrase: string;
+  resolvedStart: GameTime;
+  resolvedEnd?: GameTime;
+  precision: 'day' | 'day_part' | 'week';
 }
 
 export interface StoryDiagnosticIssue {
@@ -1534,13 +1685,33 @@ export type JudgementOutcome =
   | 'failure'
   | 'critical_failure';
 
+export type JudgementRulesetVersion = 'v1' | 'v1.1-local-d100';
+
+export type JudgementDifficultyTier = 'easy' | 'standard' | 'hard' | 'dangerous' | 'extreme';
+
+export type JudgementFactorSourceType =
+  | 'trait'
+  | 'equipment'
+  | 'status'
+  | 'environment'
+  | 'preparation'
+  | 'other';
+
 export interface JudgementFactor {
+  /**
+   * Optional on persisted records so old saves remain readable and new narrator candidates
+   * can be normalized locally before only verified factors enter the canonical check.
+   */
+  sourceType?: JudgementFactorSourceType;
+  /** Stable trait/item id. Required for new trait and equipment factors. */
+  sourceId?: string;
   label: string;
   value: number;
   reason: string;
 }
 
 export interface JudgementCheck {
+  rulesetVersion?: JudgementRulesetVersion;
   checkId: JudgementCheckId;
   turnId: TurnId;
   gameTime: GameTime;
@@ -1557,6 +1728,18 @@ export interface JudgementCheck {
   shortSummary: string;
   consequenceSummary?: string;
   factors: JudgementFactor[];
+  primaryAttribute?: AttributeKey;
+  primaryAttributeValue?: number;
+  secondaryAttribute?: AttributeKey;
+  secondaryAttributeValue?: number;
+  secondaryModifier?: number;
+  difficultyTier?: JudgementDifficultyTier;
+  difficultyModifier?: number;
+  gameDifficulty?: GameDifficultyLevel;
+  gameDifficultyModifier?: number;
+  contextModifierTotal?: number;
+  effectiveTarget?: number;
+  presetRoll?: number;
   relatedCombatEventId?: CombatEventId;
   visibility: Visibility;
 }
@@ -1565,6 +1748,7 @@ export type CombatEventType = 'chase' | 'melee' | 'armed' | 'firearm' | 'crowd' 
 
 export type CombatEventOutcome =
   | 'player_advantage'
+  | 'opponent_advantage'
   | 'player_wounded'
   | 'opponent_subdued'
   | 'opponent_escaped'
@@ -1634,6 +1818,7 @@ export interface StoryEntry {
   speaker: 'player' | 'narrator';
   text: string;
   gameTime: GameTime;
+  experienceAward?: TurnExperienceAward;
   summaryText?: string;
   embeddingText?: string;
   embeddingVector?: number[];
@@ -1645,6 +1830,26 @@ export interface StoryEntry {
   turnMetrics?: StoryTurnMetrics;
   judgementCheckIds?: JudgementCheckId[];
   combatEventIds?: CombatEventId[];
+  visualContext?: StoryVisualContextSnapshot;
+  dialogueSpeakerActorIds?: Record<string, ActorId>;
+  blocks?: StoryBlock[];
+}
+
+export interface StoryVisualContextSnapshot {
+  timeDescription: string;
+  locationDescription: string;
+  weatherDescription?: string;
+  presentActorIds: ActorId[];
+  /**
+   * Optional frozen world facts for presentation consumers. Older saves only
+   * have the human-readable descriptions above and remain valid.
+   */
+  structuredEnvironment?: {
+    weatherCondition: WeatherCondition;
+    weatherIntensity: number;
+    placeId: PlaceId;
+    sceneId?: SceneId;
+  };
 }
 
 export interface PendingActorWritebackRecovery {
@@ -1654,6 +1859,48 @@ export interface PendingActorWritebackRecovery {
   actorId: ActorId;
   writebackJson: string;
   attemptCount: number;
+  lastAttemptTurn?: number;
+  nextRetryTurn?: number;
+  consecutiveFailureCount?: number;
+  lastFailureKind?: 'network' | 'protocol' | 'deferred';
+  lastRouteMode?: 'custom' | 'follow-main' | 'main-default' | 'main-fallback';
+}
+
+export type ActorProfileEnrichmentField =
+  | 'publicIdentity'
+  | 'actualIdentitySummary'
+  | 'roleProfiles'
+  | 'positionSummary'
+  | 'profileSummary'
+  | 'appearance'
+  | 'clothing'
+  | 'personality'
+  | 'speechStyle'
+  | 'motivation'
+  | 'longTermGoal'
+  | 'values'
+  | 'attributes'
+  | 'relationshipSummary'
+  | 'attitudeTowardPlayer'
+  | 'interactionScore'
+  | 'trustTendency'
+  | 'entanglementSummary'
+  | 'statusSummary'
+  | 'bodyConditionSummary'
+  | 'longTermMemorySummary'
+  | 'recentInteractionMemory'
+  | 'femaleProfile';
+
+export interface PendingActorProfileEnrichment {
+  actorId: ActorId;
+  sourceTurnId: TurnId;
+  missingFields: ActorProfileEnrichmentField[];
+  attemptCount: number;
+  lastAttemptTurn?: number;
+  nextRetryTurn?: number;
+  consecutiveFailureCount?: number;
+  lastFailureKind?: 'network' | 'protocol';
+  lastRouteMode?: 'custom' | 'follow-main' | 'main-default' | 'main-fallback';
 }
 
 export interface RuntimeState {
@@ -1662,6 +1909,10 @@ export interface RuntimeState {
     worldpackId: string;
     storypackInfluence: 'off' | 'low' | 'medium' | 'high';
     openingPressure: 'relaxed' | 'routine' | 'standard' | 'tense' | 'high';
+    gameDifficulty: GameDifficultyLevel;
+    screenCharacterSeedsEnabled?: boolean;
+    dramaticOpeningId?: string;
+    officialDlcBindings?: import('../dlc/types').SaveDlcBinding[];
   };
   time: GameTime;
   environment: RuntimeEnvironmentState;
@@ -1675,8 +1926,20 @@ export interface RuntimeState {
     currentSceneId?: SceneId;
   };
   actors: Record<ActorId, Actor>;
+  /**
+   * Authoritative aliases created when a temporary or duplicate actor identity is
+   * merged into a canonical actor. Consumers outside RuntimeState (for example
+   * the visual repository) use this compatibility map instead of guessing by
+   * display name.
+   */
+  actorIdAliases?: Record<ActorId, ActorId>;
   secretFacts: Record<SecretFactId, SecretFact>;
   pendingActorWritebackRecoveries: PendingActorWritebackRecovery[];
+  pendingActorProfileEnrichments?: PendingActorProfileEnrichment[];
+    dramaticContent?: import('../drama/types').DramaticContentRuntimeState;
+    /** Generic long-form narrative organization state; world facts stay in their existing stores. */
+    narrativeArcs?: import('../drama/types').NarrativeArcInstance[];
+    customContent?: import('../customContent/saveTypes').RuntimeCustomContentState;
   organizations: Record<OrganizationId, Organization>;
   dynamicEvents: DynamicEventsState;
   citySituationTracks: Record<CitySituationTrackId, CitySituationTrack>;

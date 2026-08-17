@@ -26,7 +26,11 @@ export interface CityPowerInstitutionPlayerContext {
 }
 
 function isInstitutionPanelType(type: string): boolean {
-  return type !== 'triad';
+  return type !== 'triad' && type !== 'police' && type !== 'police_force';
+}
+
+function isActiveInYear(anchor: CityOrganizationAnchor, year?: number): boolean {
+  return year === undefined || (anchor.activeYears.from <= year && year <= anchor.activeYears.to);
 }
 
 function anchorVisibility(anchor: CityOrganizationAnchor, identity: CurrentIdentity): CityPowerVisibility {
@@ -105,7 +109,8 @@ export function createCityPowerInstitutionView(
   organizations: Record<string, Organization>,
   identity: CurrentIdentity,
   anchors: CityOrganizationAnchor[] = hkLateColonialOrganizations,
-  playerContext?: CityPowerInstitutionPlayerContext
+  playerContext?: CityPowerInstitutionPlayerContext,
+  year?: number
 ): CityPowerInstitutionViewRecord[] {
   const records = new Map<string, CityPowerInstitutionViewRecord>();
   const runtimeOrganizationIds = new Set(Object.keys(organizations));
@@ -117,6 +122,7 @@ export function createCityPowerInstitutionView(
   anchors
     .filter((anchor) => !runtimeOrganizationIds.has(anchor.organizationId))
     .filter((anchor) => isInstitutionPanelType(anchor.organizationType))
+    .filter((anchor) => isActiveInYear(anchor, year))
     .filter((anchor) => isAnchorVisible(anchor, identity))
     .forEach((anchor) => records.set(anchor.organizationId, fromAnchor(anchor, identity)));
   return [...records.values()].sort((left, right) => right.importance - left.importance || left.name.localeCompare(right.name));

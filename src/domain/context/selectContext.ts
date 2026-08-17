@@ -9,6 +9,10 @@ import { formatNotorietyLevel, formatReputationTone } from '../reputation/reputa
 import { projectReputationContext, type ReputationProjection } from '../reputation/reputationContextProjector';
 import { projectGrayNetworkContext, type GrayNetworkProjection } from '../grayNetwork/grayNetworkContextProjector';
 import { projectInstitutionContext, type InstitutionContextProjection } from '../institution/institutionContextProjector';
+import {
+  projectLivelihoodContext,
+  type LivelihoodPanelProjection
+} from '../livelihood/livelihoodProjector';
 import { projectRelationshipContext, type RelationshipContextProjection } from '../relationship/relationshipContextProjector';
 import { projectDynamicContext, type DynamicContextProjection } from '../dynamic/dynamicContextProjector';
 import { projectConflictContext, type ConflictContextProjection } from '../conflict/conflictContextProjector';
@@ -17,8 +21,11 @@ import { projectStorypackContext } from '../storypack/storypackProjector';
 import type { StorypackProjection } from '../storypack/storypackTypes';
 import { projectEraSeedFigureContext } from '../eraSeed/eraSeedFigureProjector';
 import type { EraSeedFigureProjection } from '../eraSeed/eraSeedFigureTypes';
+import { projectScreenCharacterSeedContext } from '../screenCharacterSeed/screenCharacterSeedProjector';
+import type { ScreenCharacterSeedProjection } from '../screenCharacterSeed/screenCharacterSeedTypes';
 import { projectPoliceDutyContext, type PoliceDutyContextProjection } from '../police/policeDutyContext';
 import { describeGameTimeRelativeTo, formatGameTimeWithWeekday } from '../time/gameTime';
+import { projectMemoryTemporalContext } from '../time/memoryTemporal';
 import { projectCityPowerContext } from '../cityPower/cityPowerProjector';
 import type { CityPowerProjection } from '../cityPower/cityPowerTypes';
 import { estimateNarrativeTokens } from '../narrator/estimateNarrativeTokens';
@@ -67,6 +74,12 @@ import type {
   Scene,
   StoryEntry
 } from '../runtime/types';
+import { deriveActorAgeAt } from '../runtime/actorAge';
+import {
+  projectCustomContentContext,
+  type CustomContentProjection
+} from '../customContent/runtimeProjection';
+import type { SaveDlcBinding } from '../dlc/types';
 
 export const MAX_MEMORIES = 6;
 export const MAX_RECENT_STORY_RAW_ENTRIES = 12;
@@ -138,9 +151,38 @@ export interface ActorContextPacket {
   detailLevel: 'full' | 'summary';
 }
 
+export interface ExplicitActorReference {
+  actorId: string;
+  name: string;
+  englishName?: string;
+  aliases: string[];
+  callName?: string;
+  publicIdentity?: string;
+  actualIdentitySummary?: string;
+  profileSummary: string;
+  positionSummary: string;
+  statusSummary: string;
+  relationshipSummary: string;
+  presence: Actor['presence'];
+  currentPlaceId?: string;
+  matchedValues: string[];
+  ambiguous: boolean;
+}
+
+export interface ExplicitActorReferenceProjection {
+  actors: ExplicitActorReference[];
+  diagnostics: {
+    matchedActorIds: string[];
+    ambiguousMatchValues: string[];
+  };
+}
+
 export interface PromptContext {
   worldpackId: string;
+  /** Optional for legacy/test contexts; active DLC filtering treats missing as no active DLC. */
+  officialDlcBindings?: SaveDlcBinding[];
   openingPressure: RuntimeState['world']['openingPressure'];
+  cantoneseFlavor: RuntimeState['player']['cantoneseFlavor'];
   turnCounter: number;
   currentTime: RuntimeState['time'];
   timeLabel: string;
@@ -151,6 +193,7 @@ export interface PromptContext {
   currentScene?: Scene;
   presentActors: Actor[];
   actorPackets: ActorContextPacket[];
+  explicitActorReferenceProjection: ExplicitActorReferenceProjection;
   relevantCases: CaseFile[];
   caseProjection: CaseProjection;
   deferredProjection: DeferredProjection;
@@ -171,15 +214,18 @@ export interface PromptContext {
   reputationProjection: ReputationProjection;
   grayNetworkProjection: GrayNetworkProjection;
   institutionProjection: InstitutionContextProjection;
+  livelihoodProjection: LivelihoodPanelProjection;
   relationshipProjection: RelationshipContextProjection;
   dynamicProjection: DynamicContextProjection;
   eraSeedFigureProjection: EraSeedFigureProjection;
+  screenCharacterSeedProjection: ScreenCharacterSeedProjection;
   storypackProjection: StorypackProjection;
   cityPowerProjection: CityPowerProjection;
   citySituationTrackProjection: CitySituationTrackProjection;
   presentActorReactionProjection: PresentActorReactionProjection;
   remoteNpcPresenceProjection: RemoteNpcPresenceProjection;
   backgroundEvolutionProjection: BackgroundEvolutionContextProjection;
+  customContentProjection: CustomContentProjection;
   conflictProjection: ConflictContextProjection;
 }
 
@@ -233,6 +279,7 @@ export interface NpcMemoryProjectionEntry {
   relativeLabel: string;
   tier: NpcMemoryTier;
   certainty: MemoryItem['certainty'];
+  temporalReferences: NonNullable<MemoryItem['temporalReferences']>;
   score: number;
   reasons: NpcMemoryProjectionReason[];
   vectorScore?: number;
@@ -818,6 +865,170 @@ function inputMentionsActor(actor: Actor, playerInput: string): boolean {
   });
 }
 
+function normalizedActorReferenceValue(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase();
+}
+
+function selectExplicitActorReferences(
+  state: RuntimeState,
+  presentActors: Actor[],
+  playerInput: string
+): ExplicitActorReferenceProjection {
+  const normalizedInput = normalizedActorReferenceValue(playerInput);
+  if (!normalizedInput) {
+    return {
+      actors: [],
+      diagnostics: { matchedActorIds: [], ambiguousMatchValues: [] }
+    };
+  }
+
+  const presentActorIds = new Set(presentActors.map((actor) => actor.actorId));
+  const matches = Object.values(state.actors)
+    .filter(
+      (actor) =>
+        actor.actorId !== state.player.actorId &&
+        actor.visibility !== 'hidden' &&
+        !presentActorIds.has(actor.actorId)
+    )
+    .map((actor) => {
+      const matchedValues = uniqueNonEmptyStrings(actorSearchValues(actor)).filter(
+        (value) => {
+          const normalized = normalizedActorReferenceValue(value);
+          return normalized.length >= 2 && normalizedInput.includes(normalized);
+        }
+      );
+      return { actor, matchedValues };
+    })
+    .filter((item) => item.matchedValues.length > 0)
+    .sort(
+      (left, right) =>
+        right.actor.importance - left.actor.importance ||
+        left.actor.actorId.localeCompare(right.actor.actorId)
+    )
+    .slice(0, 6);
+
+  const matchedValueCounts = new Map<string, number>();
+  for (const match of matches) {
+    for (const value of match.matchedValues) {
+      const normalized = normalizedActorReferenceValue(value);
+      matchedValueCounts.set(normalized, (matchedValueCounts.get(normalized) ?? 0) + 1);
+    }
+  }
+  const ambiguousMatchValues = [...matchedValueCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([value]) => value)
+    .sort();
+  const ambiguousValues = new Set(ambiguousMatchValues);
+  const actors = matches.map(({ actor, matchedValues }) => ({
+    actorId: actor.actorId,
+    name: actor.name,
+    englishName: actor.englishName,
+    aliases: [...actor.aliases],
+    callName: actor.callName,
+    publicIdentity: actor.publicIdentity,
+    actualIdentitySummary: projectActorActualIdentitySummary(state, actor),
+    profileSummary: actor.profileSummary,
+    positionSummary: actor.positionSummary,
+    statusSummary: actor.statusSummary,
+    relationshipSummary: actor.relationshipSummary,
+    presence: actor.presence,
+    currentPlaceId: actor.currentPlaceId ?? actor.lastSeenPlaceId,
+    matchedValues,
+    ambiguous: matchedValues.some((value) =>
+      ambiguousValues.has(normalizedActorReferenceValue(value))
+    )
+  }));
+
+  return {
+    actors,
+    diagnostics: {
+      matchedActorIds: actors.map((actor) => actor.actorId),
+      ambiguousMatchValues
+    }
+  };
+}
+
+const MAX_STRUCTURED_ROLE_CONTACTS = 3;
+
+function normalizeStructuredRoleLabel(value: string | undefined): string {
+  return (value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function structuredRoleLabelsOverlap(left: string | undefined, right: string | undefined): boolean {
+  const normalizedLeft = normalizeStructuredRoleLabel(left);
+  const normalizedRight = normalizeStructuredRoleLabel(right);
+  if (normalizedLeft.length < 4 || normalizedRight.length < 4) return false;
+  return normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft);
+}
+
+function selectStructuredRoleContactActorIds(state: RuntimeState): string[] {
+  const playerActor = state.actors[state.player.actorId];
+
+  if (state.player.currentIdentity === 'gang_member') {
+    const playerTriadProfile = playerActor?.roleProfiles.triad;
+    if (
+      !playerTriadProfile ||
+      (playerTriadProfile.status !== 'active' && playerTriadProfile.status !== 'cover')
+    ) {
+      return [];
+    }
+
+    return uniqueNonEmptyStrings([
+      ...(playerTriadProfile.patronActorIds ?? []),
+      ...(playerTriadProfile.peerActorIds ?? [])
+    ])
+      .filter((actorId) => Boolean(state.actors[actorId]))
+      .slice(0, MAX_STRUCTURED_ROLE_CONTACTS);
+  }
+
+  if (state.player.currentIdentity !== 'police') return [];
+
+  const playerPoliceProfile = playerActor?.roleProfiles.police;
+  const explicitIds = uniqueNonEmptyStrings([
+    ...(state.lawIdentity.supervisorActorIds ?? []),
+    ...(playerPoliceProfile?.supervisorActorIds ?? []),
+    ...(state.lawIdentity.peerActorIds ?? []),
+    ...(playerPoliceProfile?.peerActorIds ?? [])
+  ]).filter((actorId) => Boolean(state.actors[actorId]));
+
+  const stationOrPost = playerPoliceProfile?.stationOrPost ?? state.lawIdentity.stationOrPost;
+  if (!stationOrPost) return explicitIds.slice(0, MAX_STRUCTURED_ROLE_CONTACTS);
+
+  const agencyId = playerPoliceProfile?.agencyId ?? state.lawIdentity.agencyId;
+  const department = playerPoliceProfile?.department ?? state.lawIdentity.department;
+  const explicitIdSet = new Set(explicitIds);
+  const inferredSamePostContacts = Object.values(state.actors)
+    .filter((actor) => actor.actorId !== state.player.actorId)
+    .filter((actor) => actor.visibility !== 'hidden')
+    .filter((actor) => !explicitIdSet.has(actor.actorId))
+    .filter((actor) => {
+      const policeProfile = actor.roleProfiles.police;
+      if (!policeProfile || policeProfile.status === 'none' || policeProfile.status === 'retired') return false;
+      const sameAgency =
+        !agencyId || policeProfile.agencyId === agencyId || actor.organizationIds.includes(agencyId);
+      return sameAgency && structuredRoleLabelsOverlap(stationOrPost, policeProfile.stationOrPost);
+    })
+    .sort((left, right) => {
+      const leftDepartmentMatch = structuredRoleLabelsOverlap(department, left.roleProfiles.police?.department) ? 1 : 0;
+      const rightDepartmentMatch = structuredRoleLabelsOverlap(department, right.roleProfiles.police?.department) ? 1 : 0;
+      return (
+        rightDepartmentMatch - leftDepartmentMatch ||
+        right.interactionScore - left.interactionScore ||
+        right.importance - left.importance ||
+        left.actorId.localeCompare(right.actorId)
+      );
+    })
+    .map((actor) => actor.actorId);
+
+  return uniqueNonEmptyStrings([...explicitIds, ...inferredSamePostContacts]).slice(
+    0,
+    MAX_STRUCTURED_ROLE_CONTACTS
+  );
+}
+
 function cosineSimilarity(left: MemoryVector, right: MemoryVector): number | undefined {
   if (left.length === 0 || left.length !== right.length) return undefined;
 
@@ -1197,6 +1408,7 @@ function scoreNpcMemory(
   recencyRank: number,
   latestAnchor: boolean
 ): ScoredNpcMemoryProjectionEntry {
+  const temporalProjection = projectMemoryTemporalContext(memory);
   const reasons: NpcMemoryProjectionReason[] = [routeReason(routeActor.route), tier];
   const tierBaseScore = tier === 'short_term' ? 30 : tier === 'mid_term' ? 20 : 10;
   let score = npcMemoryRouteBaseScore[routeActor.route] + tierBaseScore + Math.max(0, 120 - recencyRank * 12);
@@ -1224,8 +1436,9 @@ function scoreNpcMemory(
     route: routeActor.route,
     coreActor: routeActor.coreActor,
     memoryId: memory.memoryId,
-    text: normalizePromptText(memory.text, MAX_NPC_MEMORY_ENTRY_TEXT_CHARS),
+    text: normalizePromptText(temporalProjection.text, MAX_NPC_MEMORY_ENTRY_TEXT_CHARS),
     gameTime: { ...memory.gameTime },
+    temporalReferences: temporalProjection.temporalReferences,
     tier,
     certainty: memory.certainty,
     score,
@@ -1441,7 +1654,7 @@ function createActorContextPacket(
     aliases: [...actor.aliases],
     callName: actor.callName,
     gender: actor.gender,
-    computedAge: actor.computedAge,
+    computedAge: deriveActorAgeAt(actor, currentTime),
     visualAgeAnchor: actor.visualAgeAnchor,
     currentIdentity: actor.currentIdentity,
     publicIdentity: actor.publicIdentity,
@@ -1485,11 +1698,21 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
   const currentScene = getCurrentScene(state);
   const presentActors = selectPresentActorsForContext(state, currentScene);
   const presentNpcMemoryActors = selectPresentNpcActorsForMemory(state, currentScene);
+  const structuredRoleContactActorIds = selectStructuredRoleContactActorIds(state);
   const actorPackets = presentActors.map((actor) =>
     createActorContextPacket(state, actor, state.time, actor.actorId === state.player.actorId ? 'summary' : 'full')
   );
+  const explicitActorReferenceProjection = selectExplicitActorReferences(
+    state,
+    presentActors,
+    playerInput
+  );
   const identityProjection = projectPlayerIdentityContext(state, {
-    relevantActorIds: presentActors.map((actor) => actor.actorId)
+    relevantActorIds: uniqueNonEmptyStrings([
+      ...presentActors.map((actor) => actor.actorId),
+      ...structuredRoleContactActorIds,
+      ...explicitActorReferenceProjection.actors.map((actor) => actor.actorId)
+    ])
   });
   const signals: SelectionSignals = {
     currentPlaceId: state.location.currentPlaceId,
@@ -1553,6 +1776,10 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
   const storypackProjection = projectStorypackContext(state, playerInput, {
     relatedPlaceIds: mapProjection.places.map((place) => place.placeId)
   });
+  const screenCharacterSeedProjection = projectScreenCharacterSeedContext(state, playerInput, {
+    relatedPlaceIds: mapProjection.places.map((place) => place.placeId),
+    sectorHints: storypackProjection.cards.flatMap((card) => card.relatedSectors)
+  });
   const cityPowerProjection = shouldExpandCityPowerProjection(playerInput)
     ? projectCityPowerContext(state, playerInput, {
         relatedPlaceIds: mapProjection.places.map((place) => place.placeId),
@@ -1576,6 +1803,7 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
   const reputationProjection = projectReputationContext(state, playerInput);
   const grayNetworkProjection = projectGrayNetworkContext(state);
   const institutionProjection = projectInstitutionContext(state);
+  const livelihoodProjection = projectLivelihoodContext(state);
   const relationshipProjection = projectRelationshipContext(state, {
     presentActorIds: presentActors.map((actor) => actor.actorId)
   });
@@ -1586,9 +1814,11 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
     currentSceneSummary: currentScene?.summary ?? currentPlace?.summary
   });
   const remoteNpcPresenceProjection = projectRemoteNpcPresence(state, relationshipProjection, dynamicProjection, {
-    playerInput
+    playerInput,
+    roleContactActorIds: structuredRoleContactActorIds
   });
   const backgroundEvolutionProjection = projectBackgroundEvolutionContext(state, playerInput);
+  const customContentProjection = projectCustomContentContext(state);
   const npcMemoryProjection = selectNpcMemoryProjection(
     state,
     presentNpcMemoryActors,
@@ -1629,7 +1859,9 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
 
   return {
     worldpackId: state.world.worldpackId,
+    officialDlcBindings: (state.world.officialDlcBindings ?? []).map((binding) => ({ ...binding })),
     openingPressure: state.world.openingPressure ?? 'relaxed',
+    cantoneseFlavor: state.player.cantoneseFlavor,
     turnCounter: state.turnCounter,
     currentTime: { ...state.time },
     timeLabel: formatTime(state),
@@ -1643,6 +1875,7 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
     currentScene,
     presentActors,
     actorPackets,
+    explicitActorReferenceProjection,
     relevantCases,
     caseProjection,
     deferredProjection,
@@ -1663,15 +1896,18 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
     reputationProjection,
     grayNetworkProjection,
     institutionProjection,
+    livelihoodProjection,
     relationshipProjection,
     dynamicProjection,
     eraSeedFigureProjection,
+    screenCharacterSeedProjection,
     storypackProjection,
     cityPowerProjection,
     citySituationTrackProjection,
     presentActorReactionProjection,
     remoteNpcPresenceProjection,
     backgroundEvolutionProjection,
+    customContentProjection,
     conflictProjection
   };
 }

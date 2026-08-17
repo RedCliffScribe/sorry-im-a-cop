@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import type { Actor, RuntimeState } from '../../domain/runtime/types';
@@ -149,6 +149,33 @@ describe('RelationshipNetworkPanelModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('requires a second confirmation before deleting a network relationship', async () => {
+    const onDeleteThread = vi.fn(async () => undefined);
+    render(
+      <RelationshipNetworkPanelModal
+        state={createStateWithThreads()}
+        onClose={vi.fn()}
+        onDeleteThread={onDeleteThread}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '删除人脉：旺角旧街坊' }));
+    const confirmation = screen.getByRole('alertdialog', { name: '确认删除人脉' });
+    expect(confirmation).toHaveTextContent('不会移除人物、过往正文或已写入记忆');
+
+    fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }));
+    expect(onDeleteThread).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '删除人脉：旺角旧街坊' }));
+    fireEvent.click(
+      within(screen.getByRole('alertdialog', { name: '确认删除人脉' })).getByRole('button', {
+        name: '确认删除'
+      })
+    );
+
+    await waitFor(() => expect(onDeleteThread).toHaveBeenCalledWith('thread_lam_network'));
+  });
+
   it('uses the left list as tabs and only renders the selected thread detail', () => {
     const state = createStateWithThreads();
     addSecondVisibleNetworkThread(state);
@@ -169,6 +196,24 @@ describe('RelationshipNetworkPanelModal', () => {
     expect(dialog).toHaveTextContent('何家荣曾经帮玩家确认一则小报传闻没有登版');
     expect(dialog).not.toHaveTextContent('林志明 / Jimmy Lam');
     expect(dialog).not.toHaveTextContent('玩家替他挡过一次无理盘查');
+  });
+
+  it('keeps dormant and ended contacts discoverable in an explicit history filter', () => {
+    const state = createStateWithThreads();
+    state.relationshipThreads.thread_lam_network.status = 'dormant';
+    addSecondVisibleNetworkThread(state);
+    state.relationshipThreads.thread_ho_network.status = 'active';
+
+    render(<RelationshipNetworkPanelModal state={state} onClose={vi.fn()} />);
+
+    const dialog = screen.getByRole('dialog', { name: '人脉' });
+    expect(within(dialog).getByLabelText('人脉统计')).toHaveTextContent('已知 2');
+    expect(within(dialog).getByLabelText('人脉统计')).toHaveTextContent('过往 1');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '沉寂与结束（1）' }));
+
+    expect(within(dialog).getByRole('button', { name: /旺角旧街坊/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /报馆消息线/ })).not.toBeInTheDocument();
   });
 
   it('shows a related NPC current action and known outcome without engineering scores', () => {

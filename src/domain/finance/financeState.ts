@@ -8,6 +8,7 @@ import type {
   PlayerProfile,
   RuntimeFinanceState
 } from '../runtime/types';
+import { normalizeLegacyMoneyAmount } from './moneyAmount';
 
 type LegacyPlayerEconomy = Partial<PlayerEconomy> & { money?: number };
 type LegacyFinanceState = Partial<RuntimeFinanceState> & { moneyHKD?: number };
@@ -21,21 +22,18 @@ type LegacyMonthlyReport = Partial<MonthlyFinanceReport> & {
   endingMoneyHKD?: number;
 };
 
-const clampMoney = (value: unknown, fallback = 0): number => {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.min(100_000_000, Math.trunc(parsed)));
-};
-
 const normalizeAccount = (value: unknown, fallback: FinanceAccount): FinanceAccount =>
   value === 'cash' || value === 'bank' ? value : fallback;
+
+const normalizeIdentityBinding = (value: unknown): FinanceCashflowItem['identityBinding'] =>
+  value === 'civilian' || value === 'gang_member' || value === 'police' ? value : undefined;
 
 export const formatMonthKey = (time: GameTime): string =>
   `${String(time.year).padStart(4, '0')}-${String(time.month).padStart(2, '0')}`;
 
 export const createInitialFinanceState = (time: GameTime, economy: PlayerEconomy): RuntimeFinanceState => ({
-  cashOnHand: clampMoney(economy.cashOnHand),
-  bankBalance: clampMoney(economy.bankBalance),
+  cashOnHand: normalizeLegacyMoneyAmount(economy.cashOnHand),
+  bankBalance: normalizeLegacyMoneyAmount(economy.bankBalance),
   cashflows: {},
   ledger: [],
   reports: [],
@@ -54,8 +52,9 @@ function normalizeCashflows(raw: LegacyFinanceState['cashflows']): Record<string
         direction: item.direction === 'expense' ? 'expense' : 'income',
         kind: item.kind ?? 'other',
         title: item.title || '未命名定期收支',
-        amount: clampMoney(item.amount ?? item.amountHKD),
+        amount: normalizeLegacyMoneyAmount(item.amount ?? item.amountHKD),
         account: normalizeAccount(item.account, 'bank'),
+        identityBinding: normalizeIdentityBinding(item.identityBinding),
         summary: item.summary || '',
         activeFromMonth: item.activeFromMonth || '',
         activeToMonth: item.activeToMonth,
@@ -80,7 +79,7 @@ function normalizeLedger(raw: LegacyFinanceState['ledger']): FinanceLedgerEntry[
       entryId: entry.entryId || `finance_ledger_${String(index + 1).padStart(4, '0')}`,
       gameTime: { ...entry.gameTime },
       direction: entry.direction ?? 'adjustment',
-      amount: clampMoney(entry.amount ?? entry.amountHKD),
+      amount: normalizeLegacyMoneyAmount(entry.amount ?? entry.amountHKD),
       account: normalizeAccount(entry.account, 'cash'),
       title: entry.title || '财务调整',
       summary: entry.summary || '',
@@ -100,19 +99,19 @@ function normalizeReports(raw: LegacyFinanceState['reports']): MonthlyFinanceRep
     if (!rawReport || typeof rawReport !== 'object') return [];
     const report = rawReport as LegacyMonthlyReport;
     if (!report.generatedAt) return [];
-    const startingCashOnHand = clampMoney(report.startingCashOnHand);
-    const endingCashOnHand = clampMoney(report.endingCashOnHand);
+    const startingCashOnHand = normalizeLegacyMoneyAmount(report.startingCashOnHand);
+    const endingCashOnHand = normalizeLegacyMoneyAmount(report.endingCashOnHand);
     return [{
       reportId: report.reportId || `finance_report_legacy_${index + 1}`,
       monthKey: report.monthKey || formatMonthKey(report.generatedAt),
       generatedAt: { ...report.generatedAt },
-      income: clampMoney(report.income ?? report.incomeHKD),
-      expense: clampMoney(report.expense ?? report.expenseHKD),
+      income: normalizeLegacyMoneyAmount(report.income ?? report.incomeHKD),
+      expense: normalizeLegacyMoneyAmount(report.expense ?? report.expenseHKD),
       net: Math.trunc(report.net ?? report.netHKD ?? 0),
       startingCashOnHand,
-      startingBankBalance: clampMoney(report.startingBankBalance ?? report.startingMoneyHKD),
+      startingBankBalance: normalizeLegacyMoneyAmount(report.startingBankBalance ?? report.startingMoneyHKD),
       endingCashOnHand,
-      endingBankBalance: clampMoney(report.endingBankBalance ?? report.endingMoneyHKD),
+      endingBankBalance: normalizeLegacyMoneyAmount(report.endingBankBalance ?? report.endingMoneyHKD),
       itemSummaries: Array.isArray(report.itemSummaries) ? [...report.itemSummaries] : [],
       read: Boolean(report.read),
       archived: Boolean(report.archived)
@@ -138,13 +137,13 @@ export const normalizeFinanceState = (
     Number.isFinite(legacyFinance.bankBalance) ||
     Number.isFinite(legacyEconomy.cashOnHand) ||
     Number.isFinite(legacyEconomy.bankBalance);
-  const legacyTotal = clampMoney(legacyFinance.moneyHKD ?? legacyEconomy.money);
+  const legacyTotal = normalizeLegacyMoneyAmount(legacyFinance.moneyHKD ?? legacyEconomy.money);
   const shouldMigrateLegacyWallet = shouldMigrateLegacyEconomyMoney || shouldMigrateLegacyFinanceMoney;
   const cashOnHand = !shouldMigrateLegacyWallet && hasCanonicalBalances
-    ? clampMoney(legacyFinance.cashOnHand ?? legacyEconomy.cashOnHand)
+    ? normalizeLegacyMoneyAmount(legacyFinance.cashOnHand ?? legacyEconomy.cashOnHand)
     : 0;
   const bankBalance = !shouldMigrateLegacyWallet && hasCanonicalBalances
-    ? clampMoney(legacyFinance.bankBalance ?? legacyEconomy.bankBalance)
+    ? normalizeLegacyMoneyAmount(legacyFinance.bankBalance ?? legacyEconomy.bankBalance)
     : legacyTotal;
 
   return {

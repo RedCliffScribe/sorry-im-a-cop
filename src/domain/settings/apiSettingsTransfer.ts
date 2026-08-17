@@ -7,8 +7,10 @@ import {
 } from './apiCapabilities';
 import type {
   AiSettings,
+  ApiCapabilitySupport,
   ApiInterfaceType,
   ApiProfile,
+  ApiProfileCapabilities,
   FeatureModelRoute,
   FeatureRouteId,
   MainNarratorRoute
@@ -53,6 +55,26 @@ function readModels(value: unknown): string[] {
     : [];
 }
 
+function readCapabilitySupport(value: unknown): ApiCapabilitySupport {
+  return value === 'supported' || value === 'unsupported' ? value : 'auto';
+}
+
+function normalizeApiProfileCapabilities(
+  value: unknown
+): ApiProfileCapabilities {
+  const record = isRecord(value) ? value : {};
+  const maxOutputTokens = readNumber(record.maxOutputTokens);
+  return {
+    jsonObjectResponseFormat: readCapabilitySupport(
+      record.jsonObjectResponseFormat
+    ),
+    ...(maxOutputTokens !== undefined && maxOutputTokens > 0
+      ? { maxOutputTokens: Math.floor(maxOutputTokens) }
+      : {}),
+    streamingJson: readCapabilitySupport(record.streamingJson)
+  };
+}
+
 function normalizeInterfaceType(value: unknown): ApiInterfaceType {
   return typeof value === 'string' && apiInterfaceTypes.includes(value as ApiInterfaceType)
     ? (value as ApiInterfaceType)
@@ -84,6 +106,11 @@ function normalizeApiProfile(value: unknown): ApiProfile {
     models: readModels(value.models),
     defaultMaxTokens: readNumber(value.defaultMaxTokens),
     defaultTemperature: readNumber(value.defaultTemperature),
+    ...(isRecord(value.capabilities)
+      ? {
+          capabilities: normalizeApiProfileCapabilities(value.capabilities)
+        }
+      : {}),
     createdAt: readString(value.createdAt) || now,
     updatedAt: readString(value.updatedAt) || now
   };
@@ -107,6 +134,12 @@ function normalizeMainNarrator(
   return {
     apiProfileId,
     model,
+    maxTokensMode:
+      value.maxTokensMode === 'inherit' || value.maxTokensMode === 'custom'
+        ? value.maxTokensMode
+        : readNumber(value.maxTokens) === undefined
+          ? 'inherit'
+          : 'custom',
     maxTokens: readNumber(value.maxTokens),
     temperature: readNumber(value.temperature)
   };

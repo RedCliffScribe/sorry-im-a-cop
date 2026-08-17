@@ -4,9 +4,14 @@ import { RelationshipThreadPanelModal } from './RelationshipThreadPanelModal';
 interface RelationshipNetworkPanelModalProps {
   state: RuntimeState;
   onClose: () => void;
+  onDeleteThread?: (threadId: string) => void | Promise<void>;
 }
 
-export function RelationshipNetworkPanelModal({ state, onClose }: RelationshipNetworkPanelModalProps) {
+export function RelationshipNetworkPanelModal({
+  state,
+  onClose,
+  onDeleteThread
+}: RelationshipNetworkPanelModalProps) {
   return (
     <RelationshipThreadPanelModal
       state={state}
@@ -15,6 +20,7 @@ export function RelationshipNetworkPanelModal({ state, onClose }: RelationshipNe
       subtitle="Network"
       emptyText="暂无已知人脉"
       onClose={onClose}
+      onDeleteThread={onDeleteThread}
     />
   );
 }

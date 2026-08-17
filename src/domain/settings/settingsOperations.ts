@@ -95,7 +95,10 @@ export function setMainNarratorRoute(settings: AiSettings, route: MainNarratorRo
     ...settings,
     mainNarrator: {
       ...route,
-      model: route.model.trim()
+      model: route.model.trim(),
+      maxTokensMode:
+        route.maxTokensMode ?? (route.maxTokens === undefined ? 'inherit' : 'custom'),
+      ...(route.maxTokensMode === 'inherit' ? { maxTokens: undefined } : {})
     }
   };
 }

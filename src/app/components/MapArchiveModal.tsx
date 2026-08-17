@@ -2,6 +2,7 @@ import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent }
 import { useMemo, useState } from 'react';
 import { createMapViewModel, type MapPoint } from '../../domain/map/mapViewModel';
 import type { Place, RuntimeState } from '../../domain/runtime/types';
+import { useChineseSearchNormalizer } from '../localization/useChineseSearchNormalizer';
 
 interface MapArchiveModalProps {
   state: RuntimeState;
@@ -247,6 +248,7 @@ function pointByPlaceId(points: MapPoint[], placeId: string | undefined): MapPoi
 
 export function MapArchiveModal({ state, onClose, onDraftPlayerAction }: MapArchiveModalProps) {
   const [search, setSearch] = useState('');
+  const normalizeSearchText = useChineseSearchNormalizer(Boolean(search.trim()));
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const mapModel = useMemo(() => createMapViewModel(state, { selectedPlaceId }), [state, selectedPlaceId]);
   const [view, setView] = useState<MapViewState>(() => focusedView(mapModel.currentPoint));
@@ -261,10 +263,10 @@ export function MapArchiveModal({ state, onClose, onDraftPlayerAction }: MapArch
   );
 
   const filteredPlaces = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = normalizeSearchText(search);
     if (!query) return places;
-    return places.filter((place) => placeSearchText(place).includes(query));
-  }, [places, search]);
+    return places.filter((place) => normalizeSearchText(placeSearchText(place)).includes(query));
+  }, [normalizeSearchText, places, search]);
 
   const selectedPlace =
     filteredPlaces.find((place) => place.placeId === selectedPlaceId) ??

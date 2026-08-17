@@ -271,7 +271,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['造型师发现血迹', '杂志访问听到假供词', '女星被合约困住'],
     eraTags: ['女演员', '选美', '杂志', '片场'],
     contactPolicy: 'contactable_seed',
-    importance: 88
+    importance: 94
   }),
   seed({
     id: 'fig_red_chung_glamour_star',
@@ -288,7 +288,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['广告拍摄被勒索', '司机失踪', '记者会收到奇怪花篮'],
     eraTags: ['电影女星', '广告', '记者会'],
     contactPolicy: 'contactable_seed',
-    importance: 84
+    importance: 96
   }),
   seed({
     id: 'fig_blue_lam_cloud_swordswoman',
@@ -305,7 +305,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['武侠造型照外泄', '跨地宣传被人盯梢', '片方争夺档期'],
     eraTags: ['武侠片', '女星', '造型', '宣传'],
     contactPolicy: 'contactable_seed',
-    importance: 86
+    importance: 95
   }),
   seed({
     id: 'fig_sally_yip_power_vocal',
@@ -628,7 +628,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['派对后有人失联', '记者底片被抢', '女星收到恐吓电话'],
     eraTags: ['女演员', '派对', '记者'],
     contactPolicy: 'contactable_seed',
-    importance: 74
+    importance: 92
   }),
   seed({
     id: 'fig_rosamund_kwan_beauty_icon',
@@ -645,7 +645,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['珠宝赞助失窃', '广告棚有人冒充助理', '杂志访问夹带暗示'],
     eraTags: ['广告', '珠宝', '女星'],
     contactPolicy: 'contactable_seed',
-    importance: 74
+    importance: 95
   }),
   seed({
     id: 'fig_michelle_yeo_action_queen',
@@ -662,7 +662,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['女动作星受伤被压下', '保险调查牵出假合同', '武师班轻视她反被识破'],
     eraTags: ['打女', '动作片', '保险', '选美'],
     contactPolicy: 'contactable_seed',
-    importance: 82
+    importance: 92
   }),
   seed({
     id: 'fig_moon_lee_fighting_girl',
@@ -679,7 +679,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['戏服间藏着恐吓信', '急症室不敢报真实伤因', '低预算片场出事'],
     eraTags: ['打女', '片场工伤', '低预算'],
     contactPolicy: 'contactable_seed',
-    importance: 68
+    importance: 92
   }),
   seed({
     id: 'fig_action_policewoman_star',
@@ -696,7 +696,7 @@ const hkLateColonialCoreEraSeedFigures: EraSeedFigureCard[] = [
     promptSafeHooks: ['道具枪被换', '制服流入街头', '片场警察顾问发现漏洞'],
     eraTags: ['警匪片', '打女', '道具枪'],
     contactPolicy: 'contactable_seed',
-    importance: 68
+    importance: 92
   }),
   seed({
     id: 'fig_sammo_hung_action_big_brother',

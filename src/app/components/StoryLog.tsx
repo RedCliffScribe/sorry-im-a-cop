@@ -1,9 +1,25 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import type { GameTime, JudgementCheck, JudgementCheckId, JudgementOutcome, StoryEntry } from '../../domain/runtime/types';
+import { Fragment, type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  GameTime,
+  JudgementCategory,
+  JudgementCheck,
+  JudgementCheckId,
+  JudgementOutcome,
+  StoryEntry
+} from '../../domain/runtime/types';
 import type { DisplaySettings } from '../../domain/settings/types';
 import { getDisplayFontStack } from '../displayFonts';
 import { DiagnosticExportModal } from './DiagnosticExportModal';
 import { NarrativeWaitingPanel } from './NarrativeWaitingPanel';
+import { StoryEntryBody } from './StoryEntryBody';
+import { StorySceneTurn, type StorySceneVisualsConfiguration } from './StorySceneTurn';
+import { findActorDialogueAvatarAsset } from './storyDialogueAvatar';
+import {
+  judgementAttributeLabels,
+  judgementDifficultyLabels,
+  judgementFactorSourceLabels
+} from '../../domain/conflict/localJudgement';
+import { getGameDifficultyProfile } from '../../domain/settings/gameDifficulty';
 
 function clampStoryFontSize(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 16;
@@ -81,11 +97,30 @@ function createEntryDiagnostic(entry: StoryEntry): string {
         `输出 token：${formatMetricNumber(entry.turnMetrics.outputTokens)}`
       ]
     : [];
+  const experience = entry.experienceAward
+    ? [
+        '',
+        '## 经验结算',
+        `awardId：${entry.experienceAward.awardId}`,
+        `total：${entry.experienceAward.total}`,
+        `sources：${entry.experienceAward.sources
+          .map(
+            (source) =>
+              `${source.sourceId ?? source.kind}(${source.amount}) ${source.reason}`
+          )
+          .join(' / ')}`,
+        `modelSuggestedGain：${entry.experienceAward.modelSuggestedGain ?? 0}`,
+        `capped：${entry.experienceAward.capped ? 'true' : 'false'}`,
+        `levelsGained：${entry.experienceAward.levelsGained}`,
+        `attributePointsGained：${entry.experienceAward.attributePointsGained}`
+      ]
+    : [];
   return [
     `# ${label} 原始记录`,
     `turnId：${entry.turnId}`,
     `时间：${formatGameTime(entry.gameTime)}`,
     ...metrics,
+    ...experience,
     '',
     '## 原始返回记录',
     entry.rawNarratorResponse?.trim() || '- 当前回合没有保存原始返回，只能显示前端正文。',
@@ -95,6 +130,12 @@ function createEntryDiagnostic(entry: StoryEntry): string {
     '',
     `建议行动：${suggestions}`
   ].join('\n');
+}
+
+function formatExperienceReason(entry: StoryEntry): string {
+  const reasons = entry.experienceAward?.sources.map((source) => source.reason) ?? [];
+  if (reasons.length <= 2) return reasons.join(' · ');
+  return `${reasons.slice(0, 2).join(' · ')}等 ${reasons.length} 项`;
 }
 
 function countNarrativeCharacters(text: string): number {
@@ -118,52 +159,6 @@ function hasTurnMetrics(entry: StoryEntry): boolean {
   return Boolean(metrics && (metrics.inputTokens !== undefined || metrics.outputTokens !== undefined || metrics.responseMs !== undefined));
 }
 
-type StorySegment =
-  | { type: 'narration' | 'plain'; text: string }
-  | { type: 'dialogue'; speaker: string; text: string };
-
-function parseStorySegments(text: string): StorySegment[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) return [{ type: 'plain', text }];
-
-  return lines.map((line) => {
-    const match = /^【([^】]+)】\s*(.*)$/.exec(line);
-    if (!match) return { type: 'plain', text: line };
-    const [, speaker, body] = match;
-    if (speaker === '旁白') return { type: 'narration', text: body || line };
-    return { type: 'dialogue', speaker, text: body || line };
-  });
-}
-
-function StoryEntryBody({ entry }: { entry: StoryEntry }) {
-  if (entry.speaker !== 'narrator') return <p>{entry.text}</p>;
-  const segments = parseStorySegments(entry.text);
-
-  return (
-    <div className="story-segments">
-      {segments.map((segment, index) => {
-        const key = `${segment.type}-${index}`;
-        if (segment.type === 'dialogue') {
-          return (
-            <div className="story-segment story-segment-dialogue" key={key}>
-              <span className="story-dialogue-speaker">{segment.speaker}</span>
-              <p>{segment.text}</p>
-            </div>
-          );
-        }
-        return (
-          <p className={`story-segment story-segment-${segment.type}`} key={key}>
-            {segment.text}
-          </p>
-        );
-      })}
-    </div>
-  );
-}
-
 const judgementOutcomeLabels: Record<JudgementOutcome, string> = {
   critical_success: '大成功',
   success: '成功',
@@ -172,8 +167,104 @@ const judgementOutcomeLabels: Record<JudgementOutcome, string> = {
   critical_failure: '大失败'
 };
 
+const judgementCategoryLabels: Record<JudgementCategory, string> = {
+  observation: '观察',
+  chase: '追捕',
+  melee: '格斗',
+  armed: '持械',
+  firearm: '枪械',
+  crowd: '人群',
+  negotiation: '交涉',
+  endurance: '体魄',
+  will: '意志',
+  thinking: '思考',
+  other: '综合'
+};
+
 function formatSigned(value: number): string {
   return value > 0 ? `+${value}` : String(value);
+}
+
+function getLocalJudgementFormula(check: JudgementCheck) {
+  if (
+    check.rulesetVersion !== 'v1.1-local-d100' ||
+    !check.primaryAttribute ||
+    typeof check.primaryAttributeValue !== 'number' ||
+    !check.difficultyTier ||
+    typeof check.difficultyModifier !== 'number' ||
+    typeof check.gameDifficultyModifier !== 'number' ||
+    typeof check.contextModifierTotal !== 'number' ||
+    typeof check.effectiveTarget !== 'number' ||
+    typeof check.presetRoll !== 'number'
+  ) {
+    return undefined;
+  }
+
+  const terms = [
+    {
+      label: `主属性 · ${judgementAttributeLabels[check.primaryAttribute]}`,
+      value: check.primaryAttributeValue,
+      detail: `属性值 ${check.primaryAttributeValue}`
+    },
+    ...(check.secondaryAttribute
+      ? [
+          {
+            label: `副属性 · ${judgementAttributeLabels[check.secondaryAttribute]}`,
+            value: check.secondaryModifier ?? 0,
+            detail: `属性值 ${check.secondaryAttributeValue ?? '—'} 换算`
+          }
+        ]
+      : []),
+    {
+      label: `场景 · ${judgementDifficultyLabels[check.difficultyTier]}`,
+      value: check.difficultyModifier,
+      detail: '场景难度修正'
+    },
+    {
+      label: `本局 · ${getGameDifficultyProfile(check.gameDifficulty).label}`,
+      value: check.gameDifficultyModifier,
+      detail: '当前存档难度'
+    },
+    {
+      label: '情境合计',
+      value: check.contextModifierTotal,
+      detail: check.factors.length ? `${check.factors.length} 项现场因素` : '没有额外现场因素'
+    }
+  ];
+  const rawTarget = terms.reduce((total, term) => total + term.value, 0);
+  const expression = terms
+    .map(
+      (term, index) =>
+        `${index === 0 ? term.value : term.value >= 0 ? `+${term.value}` : term.value}（${term.label}）`
+    )
+    .join(' ');
+
+  return {
+    terms,
+    rawTarget,
+    effectiveTarget: check.effectiveTarget,
+    presetRoll: check.presetRoll,
+    expression: `${expression} = ${rawTarget}`,
+    wasClamped: rawTarget !== check.effectiveTarget
+  };
+}
+
+function getLocalJudgementComparison(check: JudgementCheck): string {
+  const roll = check.presetRoll ?? check.score;
+  const target = check.effectiveTarget ?? check.difficulty;
+  if (check.outcome === 'critical_success') {
+    return `d100 ${roll} 落在 1–5，触发天然大成功。`;
+  }
+  if (check.outcome === 'critical_failure') {
+    return `d100 ${roll} 落在 96–100，触发天然大失败。`;
+  }
+  if (check.outcome === 'success') {
+    return `d100 ${roll} ≤ 目标值 ${target}，判定成功。`;
+  }
+  if (check.outcome === 'partial_success') {
+    return `目标值 ${target} < d100 ${roll} ≤ ${Math.min(100, target + 10)}，进入有限成功窗口。`;
+  }
+  return `d100 ${roll} > 有限成功上限 ${Math.min(100, target + 10)}，判定失败。`;
 }
 
 function getEntryJudgementChecks(
@@ -201,44 +292,166 @@ function JudgementCheckCards({
     <div className="story-judgement-list" aria-label="本回合判定">
       {checks.map((check) => {
         const isExpanded = Boolean(expandedCheckIds[check.checkId]);
+        const formula = getLocalJudgementFormula(check);
+        const isLocalD100 = Boolean(formula);
+        const target = check.effectiveTarget ?? check.difficulty;
+        const roll = check.presetRoll ?? check.score;
         return (
-          <article className="story-judgement-card" key={check.checkId}>
+          <article
+            className={`story-judgement-record story-judgement-record-${check.outcome}`}
+            key={check.checkId}
+            aria-label={`${check.title}判定记录`}
+          >
             <button
               className="story-judgement-summary"
               type="button"
               aria-expanded={isExpanded}
-              aria-label={isExpanded ? '收起判定详情' : '展开判定详情'}
+              aria-label={`${isExpanded ? '收起' : '展开'}“${check.title}”判定详情`}
               onClick={() => onToggle(check.checkId)}
             >
-              <span className="story-judgement-category">{check.category}</span>
-              <strong>{check.title}</strong>
+              <span className="story-judgement-icon" aria-hidden="true">⚄</span>
+              <span className="story-judgement-category">{judgementCategoryLabels[check.category]}</span>
+              <span className="story-judgement-title">{check.title}</span>
+              <span className="story-judgement-quick-math">
+                {isLocalD100 ? `d100 ${roll} / 目标 ${target}` : `判定 ${check.score} / 难度 ${check.difficulty}`}
+              </span>
               <span className={`story-judgement-outcome story-judgement-outcome-${check.outcome}`}>
-                结果 {judgementOutcomeLabels[check.outcome]}
+                {judgementOutcomeLabels[check.outcome]}
               </span>
               <span className="story-judgement-toggle">{isExpanded ? '收起' : '展开'}</span>
             </button>
             {isExpanded ? (
-              <div className="story-judgement-detail">
-                {check.targetSummary ? <p>{check.targetSummary}</p> : null}
-                <div className="story-judgement-score-row">
-                  <span>难度 {check.difficulty}</span>
-                  <span>判定值 {check.score}</span>
-                  <span>差额 {formatSigned(check.margin)}</span>
-                </div>
-                <p>{check.shortSummary}</p>
-                {check.consequenceSummary ? <p>{check.consequenceSummary}</p> : null}
-                {check.factors.length ? (
-                  <div className="story-judgement-factors" aria-label="判定因素">
-                    {check.factors.map((factor, index) => (
-                      <div className="story-judgement-factor" key={`${check.checkId}-${factor.label}-${index}`}>
-                        <strong>
-                          {factor.label} {formatSigned(factor.value)}
-                        </strong>
-                        <span>{factor.reason}</span>
-                      </div>
-                    ))}
-                  </div>
+              <div
+                className="story-judgement-detail"
+                role="region"
+                aria-label={`${check.title}判定详情`}
+              >
+                {check.targetSummary ? (
+                  <p className="story-judgement-target">
+                    <span>判定对象</span>
+                    {check.targetSummary}
+                  </p>
                 ) : null}
+
+                {formula ? (
+                  <>
+                    <div
+                      className="story-judgement-resolution"
+                      aria-label={`本地 d100 ${formula.presetRoll}，目标值 ${formula.effectiveTarget}，结果${judgementOutcomeLabels[check.outcome]}`}
+                    >
+                      <div>
+                        <span>本地 d100</span>
+                        <strong>{formula.presetRoll}</strong>
+                      </div>
+                      <span className="story-judgement-resolution-divider">对比</span>
+                      <div>
+                        <span>成功目标</span>
+                        <strong>{formula.effectiveTarget}</strong>
+                      </div>
+                      <div className={`story-judgement-resolution-outcome story-judgement-outcome-${check.outcome}`}>
+                        <span>判定结果</span>
+                        <strong>{judgementOutcomeLabels[check.outcome]}</strong>
+                        <small>余量 {formatSigned(check.margin)}</small>
+                      </div>
+                    </div>
+
+                    <section className="story-judgement-calculation" aria-label="判定计算详情">
+                      <div className="story-judgement-detail-heading">
+                        <h4>判定详情</h4>
+                        <span>能力与现场修正</span>
+                      </div>
+                      <div className="story-judgement-formula-terms">
+                        {formula.terms.map((term) => (
+                          <div
+                            className={`story-judgement-formula-term ${
+                              term.value > 0
+                                ? 'is-positive'
+                                : term.value < 0
+                                  ? 'is-negative'
+                                  : 'is-neutral'
+                            }`}
+                            key={term.label}
+                          >
+                            <span>{term.label}</span>
+                            <strong>{formatSigned(term.value)}</strong>
+                            <small>{term.detail}</small>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="story-judgement-formula-expression">
+                        {formula.expression}
+                        {formula.wasClamped
+                          ? `；按 5–95 边界取目标值 ${formula.effectiveTarget}`
+                          : `，最终目标值 ${formula.effectiveTarget}`}
+                      </p>
+                      <p className="story-judgement-comparison">
+                        {getLocalJudgementComparison(check)}
+                      </p>
+                    </section>
+                  </>
+                ) : (
+                  <section className="story-judgement-legacy" aria-label="旧版判定数值">
+                    <div>
+                      <span>难度</span>
+                      <strong>{check.difficulty}</strong>
+                    </div>
+                    <div>
+                      <span>判定值</span>
+                      <strong>{check.score}</strong>
+                    </div>
+                    <div>
+                      <span>差额</span>
+                      <strong>{formatSigned(check.margin)}</strong>
+                    </div>
+                    <p>这是旧版判定记录，当时未保存 V1.1 的逐项目标值公式。</p>
+                  </section>
+                )}
+
+                {check.factors.length ? (
+                  <section className="story-judgement-factor-section" aria-label="情境修正来源">
+                    <div className="story-judgement-detail-heading">
+                      <h4>情境修正来源</h4>
+                      <span>合计 {formatSigned(check.contextModifierTotal ?? check.factors.reduce((sum, factor) => sum + factor.value, 0))}</span>
+                    </div>
+                    <div className="story-judgement-factors">
+                      {check.factors.map((factor, index) => (
+                        <div
+                          className={`story-judgement-factor ${
+                            factor.value > 0
+                              ? 'is-positive'
+                              : factor.value < 0
+                                ? 'is-negative'
+                                : 'is-neutral'
+                          }`}
+                          key={`${check.checkId}-${factor.label}-${index}`}
+                        >
+                          {factor.sourceType ? (
+                            <small className="story-judgement-factor-source">
+                              {judgementFactorSourceLabels[factor.sourceType]}
+                            </small>
+                          ) : null}
+                          <strong>
+                            {factor.label} {formatSigned(factor.value)}
+                          </strong>
+                          <span>{factor.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                <section className="story-judgement-conclusion" aria-label="判定结论">
+                  <div>
+                    <span>判定结论</span>
+                    <p>{check.shortSummary}</p>
+                  </div>
+                  {check.consequenceSummary ? (
+                    <div>
+                      <span>局面后果</span>
+                      <p>{check.consequenceSummary}</p>
+                    </div>
+                  ) : null}
+                </section>
               </div>
             ) : null}
           </article>
@@ -257,6 +470,7 @@ export function StoryLog({
   isWaitingForNarrative = false,
   renderLimit = 30,
   displaySettings,
+  sceneVisuals,
   rollbackAvailableTurnNumbers = [],
   onRegeneratePlayerAction
 }: {
@@ -268,6 +482,7 @@ export function StoryLog({
   isWaitingForNarrative?: boolean;
   renderLimit?: number;
   displaySettings?: DisplaySettings;
+  sceneVisuals?: StorySceneVisualsConfiguration;
   rollbackAvailableTurnNumbers?: number[];
   onRegeneratePlayerAction?: (turnNumber: number, actionText: string) => void | Promise<void>;
 }) {
@@ -275,6 +490,12 @@ export function StoryLog({
   const [expandedCheckIds, setExpandedCheckIds] = useState<Record<string, boolean>>({});
   const [editingPlayerTurnNumber, setEditingPlayerTurnNumber] = useState<number | null>(null);
   const [editingPlayerActionText, setEditingPlayerActionText] = useState('');
+  const [dialogueAvatars, setDialogueAvatars] = useState<Map<string, { url: string; alt: string }>>(new Map());
+  const dialogueVisualActors = sceneVisuals?.actors;
+  const dialogueVisualActorIdAliases = sceneVisuals?.actorIdAliases;
+  const dialogueVisualRepository = sceneVisuals?.repository;
+  const dialogueVisualRevision = sceneVisuals?.revision;
+  const dialogueVisualSaveId = sceneVisuals?.saveId;
   const storyListRef = useRef<HTMLDivElement | null>(null);
   const rollbackAvailableTurnSet = useMemo(
     () => new Set(rollbackAvailableTurnNumbers),
@@ -299,6 +520,32 @@ export function StoryLog({
     storyList.scrollTop = storyList.scrollHeight;
   }, [scrollAnchor, shouldShowWaitingPanel]);
 
+  useEffect(() => {
+    let active = true;
+    const urls: string[] = [];
+    if (!dialogueVisualActors || !dialogueVisualRepository || !dialogueVisualSaveId || typeof URL.createObjectURL !== 'function') {
+      setDialogueAvatars(new Map());
+      return () => undefined;
+    }
+    void dialogueVisualRepository.loadSnapshot(dialogueVisualSaveId).then(async (snapshot) => {
+      const next = new Map<string, { url: string; alt: string }>();
+      for (const actor of Object.values(dialogueVisualActors)) {
+        const asset = findActorDialogueAvatarAsset(snapshot, actor.actorId, dialogueVisualActorIdAliases);
+        if (!asset) continue;
+        const blob = await dialogueVisualRepository.getBlob(asset.blobKey);
+        if (!blob || !active) continue;
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        next.set(actor.actorId, { url, alt: `${actor.name} 对话头像` });
+      }
+      if (active) setDialogueAvatars(next);
+    }, () => active && setDialogueAvatars(new Map()));
+    return () => {
+      active = false;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [dialogueVisualActorIdAliases, dialogueVisualActors, dialogueVisualRepository, dialogueVisualRevision, dialogueVisualSaveId]);
+
   function toggleJudgementCheck(checkId: JudgementCheckId) {
     setExpandedCheckIds((current) => ({ ...current, [checkId]: !current[checkId] }));
   }
@@ -308,10 +555,10 @@ export function StoryLog({
       <h2>剧情正文</h2>
       <div className="story-list" ref={storyListRef} style={createStoryDisplayStyle(displaySettings)} data-testid="story-list">
         {renderedEntries.map((entry) => (
-          <article
-            key={`${entry.turnId}:${entry.speaker}`}
-            className={`story-entry story-entry-${entry.speaker}${entry.turnId === 'streaming_narrator' ? ' story-entry-streaming' : ''}${entry.turnId.startsWith('pending_player_') ? ' story-entry-pending-player' : ''}`}
-          >
+          <Fragment key={`${entry.turnId}:${entry.speaker}`}>
+            <article
+              className={`story-entry story-entry-${entry.speaker}${entry.turnId === 'streaming_narrator' ? ' story-entry-streaming' : ''}${entry.turnId.startsWith('pending_player_') ? ' story-entry-pending-player' : ''}`}
+            >
             {entry.speaker === 'narrator' ? (
               <div className="story-turn-header">
                 <span className="story-turn-label">{getTurnLabel(entry)}</span>
@@ -400,11 +647,37 @@ export function StoryLog({
             {entry.speaker === 'player' &&
             getPlayerTurnNumber(entry) !== null &&
             editingPlayerTurnNumber === getPlayerTurnNumber(entry) ? null : (
-              <StoryEntryBody entry={entry} />
+              entry.speaker === 'narrator' && sceneVisuals && entry.turnId !== 'streaming_narrator' ? (
+                <StorySceneTurn entry={entry} configuration={sceneVisuals} dialogueAvatars={dialogueAvatars} />
+              ) : (
+                <StoryEntryBody
+                  entry={entry}
+                  actors={sceneVisuals?.actors}
+                  actorIdAliases={sceneVisuals?.actorIdAliases}
+                  dialogueAvatars={dialogueAvatars}
+                />
+              )
             )}
+            {entry.speaker === 'narrator' && entry.experienceAward ? (
+              <aside className="story-experience-award" aria-label="本回合经验">
+                <div>
+                  <strong>本回合 +{entry.experienceAward.total} 经验</strong>
+                  {formatExperienceReason(entry) ? (
+                    <span> · {formatExperienceReason(entry)}</span>
+                  ) : null}
+                </div>
+                {entry.experienceAward.levelsGained > 0 ? (
+                  <div className="story-experience-level-up">
+                    升至 {entry.experienceAward.levelAfter} 级，获得{' '}
+                    {entry.experienceAward.attributePointsGained} 点可分配属性。
+                  </div>
+                ) : null}
+              </aside>
+            ) : null}
             {entry.speaker === 'narrator' ? (
               <div className="story-entry-word-count">正文约 {countNarrativeCharacters(entry.text)} 字</div>
             ) : null}
+            </article>
             {entry.speaker === 'narrator' ? (
               <JudgementCheckCards
                 checks={getEntryJudgementChecks(entry, judgementChecks)}
@@ -412,7 +685,7 @@ export function StoryLog({
                 onToggle={toggleJudgementCheck}
               />
             ) : null}
-          </article>
+          </Fragment>
         ))}
         {shouldShowWaitingPanel ? <NarrativeWaitingPanel /> : null}
       </div>

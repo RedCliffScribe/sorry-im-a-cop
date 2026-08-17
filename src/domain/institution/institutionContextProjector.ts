@@ -5,12 +5,15 @@ import type {
   Organization,
   OrganizationId,
   OrganizationStructureNode,
-  RuntimeState
+  RuntimeState,
+  TriadOrganizationProfile,
+  TriadOrganizationState
 } from '../runtime/types';
 
 export interface ProjectedInstitution {
   organizationId: string;
   name: string;
+  aliases: string[];
   type: string;
   summary: string;
   publicKnowledge: string;
@@ -18,6 +21,8 @@ export interface ProjectedInstitution {
   stanceTowardPlayer: string;
   pressureSummary: string;
   structureTree?: OrganizationStructureNode[];
+  triadProfile?: TriadOrganizationProfile;
+  triadState?: TriadOrganizationState;
   relatedActorIds: string[];
   relatedPlaceIds: string[];
   relatedCaseIds: string[];
@@ -109,6 +114,7 @@ function projectOrganization(organization: Organization, reasons: string[]): Pro
   return {
     organizationId: organization.organizationId,
     name: organization.name,
+    aliases: [...(organization.aliases ?? [])],
     type: organization.type,
     summary: organization.summary,
     publicKnowledge: organization.publicKnowledge,
@@ -116,6 +122,24 @@ function projectOrganization(organization: Organization, reasons: string[]): Pro
     stanceTowardPlayer: organization.stanceTowardPlayer,
     pressureSummary: organization.pressureSummary,
     structureTree: organization.structureTree,
+    triadProfile: organization.triadProfile
+      ? {
+          ...organization.triadProfile,
+          operatingLines: [...organization.triadProfile.operatingLines],
+          customaryRules: [...organization.triadProfile.customaryRules],
+          internalFaultLines: [...organization.triadProfile.internalFaultLines],
+          activityAreas: organization.triadProfile.activityAreas.map((area) => ({ ...area }))
+        }
+      : undefined,
+    triadState: organization.triadState
+      ? {
+          leadership: {
+            ...organization.triadState.leadership,
+            knownCandidateActorIds: [...organization.triadState.leadership.knownCandidateActorIds]
+          },
+          activityAreas: organization.triadState.activityAreas.map((area) => ({ ...area }))
+        }
+      : undefined,
     relatedActorIds: [...organization.relatedActorIds],
     relatedPlaceIds: [...organization.relatedPlaceIds],
     relatedCaseIds: [...organization.relatedCaseIds],

@@ -1,13 +1,13 @@
 import { appendLedgerEntry, removeCashflow, upsertCashflow } from './financeState';
+import { addMoneyAmount, isMoneyAmount } from './moneyAmount';
 import type {
+  FinanceAccount,
   FinanceCashflowItem,
   FinanceLedgerEntry,
   GameTime,
   GrayLedgerEntry,
   RuntimeFinanceState
 } from '../runtime/types';
-
-const clampMoney = (value: number): number => Math.max(0, Math.min(100_000_000, Math.trunc(value)));
 
 const cloneGameTime = (time: GameTime): GameTime => ({ ...time });
 
@@ -67,6 +67,101 @@ export interface GrayLedgerPatchInput {
   entries?: GrayLedgerEntryPatchInput[];
 }
 
+const signedLedgerAmount = (entry: FinanceLedgerEntryPatchInput): number => {
+  if (entry.direction === 'income') return entry.amount;
+  if (entry.direction === 'expense') return -entry.amount;
+  return 0;
+};
+
+function createRecoveredLedgerEntry(
+  account: FinanceAccount,
+  delta: number,
+  summary: string | undefined,
+  template?: FinanceLedgerEntryPatchInput
+): FinanceLedgerEntryPatchInput {
+  if (template) {
+    return {
+      ...template,
+      amount: Math.abs(delta),
+      source: 'local_recovery'
+    };
+  }
+
+  const accountLabel = account === 'cash' ? '现金' : '银行账户';
+  const directionLabel = delta < 0 ? '支出' : '收入';
+  return {
+    direction: delta < 0 ? 'expense' : 'income',
+    amount: Math.abs(delta),
+    account,
+    title: `${accountLabel}${directionLabel}补记`,
+    summary: summary?.trim() || '本地根据本回合实际余额变化补齐明细。',
+    relatedAssetItemIds: [],
+    relatedActorIds: [],
+    relatedPlaceIds: [],
+    source: 'local_recovery',
+    visibility: 'player_known'
+  };
+}
+
+/**
+ * Keeps applied balance deltas and player-visible ledger entries consistent.
+ * Model-authored details remain intact when they add up to the actual balance
+ * change. Missing, partially missing, or contradictory entries are repaired
+ * locally without asking the model to regenerate the turn.
+ */
+export function reconcileFinanceLedgerEntries(
+  entries: FinanceLedgerEntryPatchInput[],
+  appliedDeltas: Partial<Record<FinanceAccount, number>>,
+  summary?: string
+): FinanceLedgerEntryPatchInput[] {
+  let reconciled = entries.map((entry) => ({
+    ...entry,
+    relatedAssetItemIds: [...entry.relatedAssetItemIds],
+    relatedActorIds: [...entry.relatedActorIds],
+    relatedPlaceIds: [...entry.relatedPlaceIds]
+  }));
+
+  for (const account of ['cash', 'bank'] as const) {
+    const delta = appliedDeltas[account];
+    if (delta === undefined || delta === 0) continue;
+
+    const transactionEntries = reconciled.filter(
+      (entry) => entry.account === account && entry.direction !== 'adjustment'
+    );
+    const recordedDelta = transactionEntries.reduce(
+      (total, entry) => total + signedLedgerAmount(entry),
+      0
+    );
+    if (recordedDelta === delta) continue;
+
+    if (
+      transactionEntries.length === 1 &&
+      Math.sign(signedLedgerAmount(transactionEntries[0])) === Math.sign(delta)
+    ) {
+      const target = transactionEntries[0];
+      reconciled = reconciled.map((entry) =>
+        entry === target ? createRecoveredLedgerEntry(account, delta, summary, target) : entry
+      );
+      continue;
+    }
+
+    const canPreservePartialEntries =
+      recordedDelta === 0 ||
+      (Math.sign(recordedDelta) === Math.sign(delta) && Math.abs(recordedDelta) < Math.abs(delta));
+    if (canPreservePartialEntries) {
+      reconciled.push(createRecoveredLedgerEntry(account, delta - recordedDelta, summary));
+      continue;
+    }
+
+    reconciled = reconciled.filter(
+      (entry) => entry.account !== account || entry.direction === 'adjustment'
+    );
+    reconciled.push(createRecoveredLedgerEntry(account, delta, summary));
+  }
+
+  return reconciled;
+}
+
 export function applyFinancePatch(finance: RuntimeFinanceState, patch: FinancePatchInput | undefined, time: GameTime): RuntimeFinanceState {
   if (!patch) return finance;
 
@@ -77,15 +172,30 @@ export function applyFinancePatch(finance: RuntimeFinanceState, patch: FinancePa
     reports: [...finance.reports]
   };
 
+  const appliedDeltas: Partial<Record<FinanceAccount, number>> = {};
   if (patch.cashSet !== undefined) {
-    next = { ...next, cashOnHand: clampMoney(patch.cashSet) };
+    if (isMoneyAmount(patch.cashSet)) {
+      next = { ...next, cashOnHand: patch.cashSet };
+    }
   } else if (patch.cashDelta !== undefined) {
-    next = { ...next, cashOnHand: clampMoney(next.cashOnHand + patch.cashDelta) };
+    const before = next.cashOnHand;
+    const result = addMoneyAmount(next.cashOnHand, patch.cashDelta);
+    if (result.applied) {
+      next = { ...next, cashOnHand: result.value };
+      appliedDeltas.cash = result.value - before;
+    }
   }
   if (patch.bankSet !== undefined) {
-    next = { ...next, bankBalance: clampMoney(patch.bankSet) };
+    if (isMoneyAmount(patch.bankSet)) {
+      next = { ...next, bankBalance: patch.bankSet };
+    }
   } else if (patch.bankDelta !== undefined) {
-    next = { ...next, bankBalance: clampMoney(next.bankBalance + patch.bankDelta) };
+    const before = next.bankBalance;
+    const result = addMoneyAmount(next.bankBalance, patch.bankDelta);
+    if (result.applied) {
+      next = { ...next, bankBalance: result.value };
+      appliedDeltas.bank = result.value - before;
+    }
   }
   if (patch.summary !== undefined) {
     next = { ...next, summary: patch.summary };
@@ -102,7 +212,12 @@ export function applyFinancePatch(finance: RuntimeFinanceState, patch: FinancePa
   for (const itemId of patch.removeCashflowItemIds ?? []) {
     next = removeCashflow(next, itemId);
   }
-  for (const entry of patch.ledgerEntries ?? []) {
+  const ledgerEntries = reconcileFinanceLedgerEntries(
+    patch.ledgerEntries ?? [],
+    appliedDeltas,
+    patch.summary
+  );
+  for (const entry of ledgerEntries) {
     next = appendLedgerEntry(next, {
       ...entry,
       entryId: entry.entryId ?? nextFinanceLedgerId(next.ledger),
@@ -126,7 +241,12 @@ export function applyLegacyEconomyPatchToFinance(
   if (!patch) return finance;
 
   const before = finance.bankBalance;
-  const nextMoney = patch.moneySet !== undefined ? clampMoney(patch.moneySet) : clampMoney(before + (patch.moneyDelta ?? 0));
+  const setValue = patch.moneySet;
+  const deltaResult = addMoneyAmount(before, patch.moneyDelta ?? 0);
+  const nextMoney =
+    setValue !== undefined
+      ? (isMoneyAmount(setValue) ? setValue : before)
+      : (deltaResult.applied ? deltaResult.value : before);
   const delta = nextMoney - before;
   let next: RuntimeFinanceState = {
     ...finance,

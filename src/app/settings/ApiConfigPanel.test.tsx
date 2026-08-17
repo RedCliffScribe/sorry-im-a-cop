@@ -18,6 +18,28 @@ describe('ApiConfigPanel', () => {
     expect(recommendation).toHaveTextContent('Gemini 3.1 Pro Preview');
   });
 
+  it('explains V2 stage budgets and repair inheritance under the main route cap', () => {
+    render(
+      <ApiConfigPanel
+        settings={createDefaultAiSettings()}
+        onChange={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByText(/主剧情最大输出是本线路的请求上限/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/各主阶段使用不超过线路上限的独立预算/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/局部修复会继承本线路的最大输出上限/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/避免固定 4K/)).toBeInTheDocument();
+    expect(screen.queryByText(/新开局分为两次主剧情生成/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/开局两个阶段受保护最低输出/)).not.toBeInTheDocument();
+  });
+
   it('shows API import/export controls with a local secret warning', () => {
     render(<ApiConfigPanel settings={createDefaultAiSettings()} onChange={vi.fn()} />);
 
@@ -153,5 +175,61 @@ describe('ApiConfigPanel', () => {
     expect(onChange).toHaveBeenCalled();
     expect((onChange.mock.calls[0][0] as AiSettings).apiProfiles[0].apiKey).toBe('');
     expect(screen.getByLabelText('主剧情 API')).toHaveValue('');
+  });
+
+  it('keeps three newly created profiles separate when different names normalize to the same id slug', () => {
+    const onChange = vi.fn();
+    function Harness() {
+      const [settings, setSettings] = useState(createDefaultAiSettings());
+      return (
+        <ApiConfigPanel
+          settings={settings}
+          onChange={(next) => {
+            onChange(next);
+            setSettings(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+
+    ['GG Chan', 'GG-Chan', 'GG_Chan'].forEach((name, index) => {
+      if (index > 0) {
+        fireEvent.click(screen.getByRole('button', { name: '新建 API 配置' }));
+      }
+      fireEvent.change(screen.getByLabelText('配置名称'), { target: { value: name } });
+      fireEvent.change(screen.getByLabelText('Base URL'), {
+        target: { value: `https://api-${index + 1}.example.com/v1` }
+      });
+      fireEvent.change(screen.getByLabelText('API Key'), { target: { value: `sk-test-${index + 1}` } });
+      fireEvent.click(screen.getByRole('button', { name: '保存 API 档案' }));
+    });
+
+    const latestSettings = onChange.mock.calls.at(-1)?.[0] as AiSettings;
+    expect(latestSettings.apiProfiles).toHaveLength(3);
+    expect(latestSettings.apiProfiles.map((profile) => profile.id)).toEqual([
+      'api_gg_chan',
+      'api_gg_chan_2',
+      'api_gg_chan_3'
+    ]);
+    expect(latestSettings.apiProfiles.map((profile) => profile.name)).toEqual([
+      'GG Chan',
+      'GG-Chan',
+      'GG_Chan'
+    ]);
+    const profileList = within(screen.getByRole('complementary', { name: 'API 档案列表' }));
+    expect(profileList.getAllByRole('button')).toHaveLength(3);
+
+    fireEvent.click(profileList.getByRole('button', { name: /GG ChanOpenAI/ }));
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api-1-edited.example.com/v1' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存 API 档案' }));
+
+    const editedSettings = onChange.mock.calls.at(-1)?.[0] as AiSettings;
+    expect(editedSettings.apiProfiles).toHaveLength(3);
+    expect(editedSettings.apiProfiles[0]).toMatchObject({
+      id: 'api_gg_chan',
+      name: 'GG Chan',
+      baseUrl: 'https://api-1-edited.example.com/v1'
+    });
   });
 });

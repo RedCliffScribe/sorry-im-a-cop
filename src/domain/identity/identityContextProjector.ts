@@ -63,7 +63,12 @@ function cloneTriadProfile(profile: NonNullable<ActorRoleProfiles['triad']>) {
 }
 
 function cloneCivilianProfile(profile: NonNullable<ActorRoleProfiles['civilian']>) {
-  return { ...profile };
+  return {
+    ...profile,
+    sectorIds: [...(profile.sectorIds ?? [])],
+    roleTags: [...(profile.roleTags ?? [])],
+    livelihoodActorIds: [...(profile.livelihoodActorIds ?? [])]
+  };
 }
 
 export function projectCurrentRoleProfile(actor: Actor): CurrentRoleProfileProjection | undefined {

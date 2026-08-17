@@ -21,8 +21,53 @@ describe('runtime state', () => {
     expect(state.player.vitals.health).toBe(100);
     expect(state.player.vitals.stamina).toBe(100);
     expect(state.actors.player.vitals?.conditionSummary).toContain('状态正常');
+    expect(state.player.vitals.conditionLifecycle).toEqual({
+      persistence: 'stable',
+      establishedAt: state.time,
+      lastReviewedAt: state.time
+    });
     expect(state.grayLedger).toEqual([]);
     expect(state.grayNetworks).toEqual({ byAreaId: {} });
+  });
+
+  it('keeps an old non-default condition eligible for review while mirroring player and actor on load', () => {
+    const legacy = createInitialRuntimeState();
+    legacy.player.vitals = {
+      health: 100,
+      maxHealth: 100,
+      stamina: 100,
+      maxStamina: 100,
+      conditionSummary: '熬夜值守一整晚后精神松弛，强烈的疲惫感。'
+    };
+    legacy.actors.player.vitals = {
+      ...legacy.player.vitals,
+      conditionSummary: '已经过时的 Actor 副本。'
+    };
+
+    const loaded = withRuntimeDefaults(legacy);
+
+    expect(loaded.player.vitals.conditionLifecycle).toBeUndefined();
+    expect(loaded.actors.player.vitals).toEqual(loaded.player.vitals);
+    expect(loaded.player.vitals.conditionSummary).toContain('强烈的疲惫感');
+  });
+
+  it('migrates legacy overall reputation once and keeps repeated loads idempotent', () => {
+    const legacy = createInitialRuntimeState({ currentIdentity: 'civilian' });
+    legacy.player.reputation.overallReputation = 20;
+    delete legacy.player.reputation.overallReputationBaseline;
+    legacy.player.reputation.circles.business = {
+      visibility: 100,
+      standing: -20,
+      summary: '商业圈评价已经转差。'
+    };
+
+    const firstLoad = withRuntimeDefaults(legacy);
+    const secondLoad = withRuntimeDefaults(firstLoad);
+
+    expect(firstLoad.player.reputation.overallReputationBaseline).toBe(60);
+    expect(firstLoad.player.reputation.overallReputation).toBe(20);
+    expect(secondLoad.player.reputation.overallReputation).toBe(20);
+    expect(secondLoad.player.reputation.overallReputationBaseline).toBe(60);
   });
 
   it('creates finance defaults for new runtime states', () => {
@@ -124,6 +169,40 @@ describe('runtime state', () => {
       status: 'active'
     });
     expect(normalized.player.economy.bankBalance).toBe(2350);
+  });
+
+  it('normalizes older civilian role profiles without livelihood arrays', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'civilian',
+      civilianProfileId: 'hospital_nurse'
+    });
+    const civilian = state.actors.player.roleProfiles.civilian!;
+    const legacy = {
+      ...state,
+      actors: {
+        ...state.actors,
+        player: {
+          ...state.actors.player,
+          roleProfiles: {
+            ...state.actors.player.roleProfiles,
+            civilian: {
+              ...civilian,
+              sectorIds: undefined,
+              roleTags: undefined,
+              livelihoodActorIds: undefined
+            }
+          }
+        }
+      }
+    } as unknown as RuntimeState;
+
+    const normalized = withRuntimeDefaults(legacy);
+
+    expect(normalized.actors.player.roleProfiles.civilian).toMatchObject({
+      sectorIds: [],
+      roleTags: [],
+      livelihoodActorIds: []
+    });
   });
 
   it('creates an initial state from opening setup choices', () => {
@@ -353,6 +432,39 @@ describe('runtime state', () => {
     expect(playerActor.worldpackActorData).toEqual({});
     expect(playerActor.vitals?.health).toBe(100);
     expect(state.player.vitals.health).toBe(100);
+  });
+
+  it('repairs stale player police rank projections when loading an existing save', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'police',
+      lawIdentity: {
+        rank: 'Constable（警员 PC）'
+      }
+    });
+    state.lawIdentity = {
+      ...state.lawIdentity,
+      rank: 'Inspector（督察 IP）'
+    };
+    state.policePanel = {
+      ...state.policePanel,
+      careerPath: {
+        ...state.policePanel.careerPath,
+        currentRank: 'Constable（警员 PC）'
+      }
+    };
+    if (state.actors.player.roleProfiles.police) {
+      state.actors.player.roleProfiles.police.rank = 'Constable（警员 PC）';
+    }
+
+    const normalized = withRuntimeDefaults(state);
+
+    expect(normalized.lawIdentity.rank).toBe('Inspector（督察 IP）');
+    expect(normalized.policePanel.careerPath.currentRank).toBe('Inspector（督察 IP）');
+    expect(normalized.actors.player.roleProfiles.police?.rank).toBe('Inspector（督察 IP）');
+    expect(normalized.finance.cashflows.cashflow_player_police_salary).toMatchObject({
+      amount: 6500,
+      status: 'active'
+    });
   });
 
   it('migrates older non-player actors without forcing life or stamina fields onto NPCs', () => {

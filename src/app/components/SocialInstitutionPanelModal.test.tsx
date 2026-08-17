@@ -15,7 +15,7 @@ describe('SocialInstitutionPanelModal', () => {
     renderPanel(state);
 
     const dialog = screen.getByRole('dialog', { name: '机构' });
-    expect(dialog).toHaveTextContent('皇家香港警察');
+    expect(dialog).not.toHaveTextContent('皇家香港警察');
     expect(dialog).toHaveTextContent('廉政公署');
     expect(dialog).toHaveTextContent('公众认知');
     expect(dialog).not.toHaveTextContent('org_icac');
@@ -120,7 +120,7 @@ describe('SocialInstitutionPanelModal', () => {
 
     const dialog = screen.getByRole('dialog', { name: '机构' });
     expect(dialog).not.toHaveTextContent('秘密机构');
-    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /廉政公署/ }));
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /法律与廉政/ }));
     expect(dialog).toHaveTextContent('廉政公署');
     expect(dialog).not.toHaveTextContent('隐蔽线人');
     expect(dialog).not.toHaveTextContent('秘密消息源');
@@ -129,22 +129,26 @@ describe('SocialInstitutionPanelModal', () => {
   it('does not project a hidden former player role as a current institution membership', () => {
     const state = createInitialRuntimeState();
     const player = state.actors[state.player.actorId];
-    const policeOrganization = state.organizations.org_hk_police;
-    state.player.currentIdentity = 'gang_member';
-    player.currentIdentity = 'gang_member';
-    player.organizationRelations = player.organizationRelations.map((relation) =>
-      relation.organizationId === 'org_hk_police' ? { ...relation, visibility: 'hidden' } : relation
-    );
-    policeOrganization.stanceTowardPlayer = '玩家是基层成员，组织内部暂未形成稳定评价。';
-    policeOrganization.relatedActorIds = [state.player.actorId];
+    const mediaOrganization = state.organizations.org_tvb;
+    player.organizationRelations.push({
+      organizationId: 'org_tvb',
+      relationType: 'employee',
+      roleTitle: '前制作助理',
+      summary: '已经离职的旧工作。',
+      visibility: 'hidden'
+    });
+    mediaOrganization.stanceTowardPlayer = '玩家仍是电视台制作人员。';
+    mediaOrganization.relatedActorIds = [state.player.actorId];
     const relatedCaseId = Object.keys(state.cases)[0];
-    if (relatedCaseId) policeOrganization.relatedCaseIds = [relatedCaseId];
+    if (relatedCaseId) mediaOrganization.relatedCaseIds = [relatedCaseId];
 
     renderPanel(state);
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /媒体/ }));
+    fireEvent.click(within(screen.getByLabelText('机构列表')).getByRole('button', { name: /TVB/ }));
 
     const detail = screen.getByLabelText('机构详情');
     expect(detail).toHaveTextContent('当前身份下没有公开的直接关系。');
-    expect(detail).not.toHaveTextContent('玩家是基层成员');
+    expect(detail).not.toHaveTextContent('玩家仍是电视台制作人员');
     expect(detail).not.toHaveTextContent(state.player.name);
     if (relatedCaseId) expect(detail).not.toHaveTextContent(state.cases[relatedCaseId].title);
   });
@@ -152,18 +156,23 @@ describe('SocialInstitutionPanelModal', () => {
   it('derives the current public player role from the visible organization relation', () => {
     const state = createInitialRuntimeState();
     const player = state.actors[state.player.actorId];
-    const policeRelation = player.organizationRelations.find((relation) => relation.organizationId === 'org_hk_police');
-    expect(policeRelation).toBeDefined();
-    if (!policeRelation) return;
-    policeRelation.visibility = 'player_known';
-    policeRelation.roleTitle = '高级警员';
-    policeRelation.departmentOrUnit = '旺角警署';
-    state.organizations.org_hk_police.stanceTowardPlayer = '暂无直接组织关系。';
+    player.organizationRelations.push({
+      organizationId: 'org_tvb',
+      relationType: 'employee',
+      roleTitle: '新闻助理',
+      departmentOrUnit: '新闻部',
+      summary: '负责采访联络。',
+      visibility: 'player_known',
+      isPrimary: true
+    });
+    state.organizations.org_tvb.stanceTowardPlayer = '暂无直接组织关系。';
 
     renderPanel(state);
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /媒体/ }));
+    fireEvent.click(within(screen.getByLabelText('机构列表')).getByRole('button', { name: /TVB/ }));
 
     expect(screen.getByLabelText('机构详情')).toHaveTextContent(
-      '玩家当前以高级警员 / 旺角警署身份与该机构保持直接关系。'
+      '玩家当前以新闻助理 / 新闻部身份与该机构保持直接关系。'
     );
     expect(screen.getByLabelText('机构详情')).not.toHaveTextContent('暂无直接组织关系。');
   });
@@ -207,7 +216,7 @@ describe('SocialInstitutionPanelModal', () => {
     expect(dialog).not.toHaveTextContent('org_hsbc');
   });
 
-  it('includes finance and property anchors in the business filter', () => {
+  it('separates finance and property anchors into their registered filters', () => {
     const state = createInitialRuntimeState();
 
     renderPanel(state);
@@ -216,8 +225,71 @@ describe('SocialInstitutionPanelModal', () => {
 
     const list = screen.getByLabelText('机构列表');
     expect(list).toHaveTextContent('汇丰银行');
-    expect(list).toHaveTextContent('长江实业');
+    expect(list).not.toHaveTextContent('长江实业');
     expect(screen.getByLabelText('机构详情')).not.toHaveTextContent('廉政公署');
+
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /地产与专业服务/ }));
+    expect(list).toHaveTextContent('长江实业');
+    expect(list).not.toHaveTextContent('汇丰银行');
+  });
+
+  it('keeps transport, utilities, medical and social-service anchors in distinct filters', () => {
+    const state = createInitialRuntimeState();
+
+    renderPanel(state);
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /交通与公用事业/ }));
+
+    const list = screen.getByLabelText('机构列表');
+    expect(list).toHaveTextContent('地下铁路公司');
+    expect(list).toHaveTextContent('九龙巴士');
+    expect(list).not.toHaveTextContent('伊利沙伯医院');
+    expect(list).not.toHaveTextContent('廉政公署');
+
+    fireEvent.click(within(screen.getByLabelText('机构分类')).getByRole('button', { name: /医疗与社会服务/ }));
+    expect(list).toHaveTextContent('伊利沙伯医院');
+    expect(list).not.toHaveTextContent('九龙巴士');
+  });
+
+  it('marks the shared civilian employer and links back to livelihood', () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'civilian',
+      civilianProfileId: 'hospital_nurse'
+    });
+    const organizationId =
+      state.actors.player.roleProfiles.civilian?.employerOrganizationId;
+    const onOpenLivelihood = vi.fn();
+
+    render(
+      <SocialInstitutionPanelModal
+        state={state}
+        initialOrganizationId={organizationId}
+        onClose={vi.fn()}
+        onOpenLivelihood={onOpenLivelihood}
+      />
+    );
+
+    const detail = screen.getByLabelText('机构详情');
+    expect(detail).toHaveTextContent('当前任职');
+    expect(detail).toHaveTextContent('医院护士');
+    fireEvent.click(screen.getByRole('button', { name: '查看我的营生' }));
+    expect(onOpenLivelihood).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the correct stock-market institution for the opening year', () => {
+    const state1984 = createInitialRuntimeState({
+      startTime: { year: 1984, month: 12, day: 19, hour: 20, minute: 0 }
+    });
+    const firstRender = renderPanel(state1984);
+    expect(screen.getByRole('dialog', { name: '机构' })).toHaveTextContent('香港证券市场（四会时期）');
+    expect(screen.getByRole('dialog', { name: '机构' })).not.toHaveTextContent('香港联合交易所');
+    firstRender.unmount();
+
+    const state1986 = createInitialRuntimeState({
+      startTime: { year: 1986, month: 4, day: 2, hour: 9, minute: 0 }
+    });
+    renderPanel(state1986);
+    expect(screen.getByRole('dialog', { name: '机构' })).toHaveTextContent('香港联合交易所');
+    expect(screen.getByRole('dialog', { name: '机构' })).not.toHaveTextContent('香港证券市场（四会时期）');
   });
 
   it('keeps triad and identity-gated city power anchors out of the civilian institution panel', () => {

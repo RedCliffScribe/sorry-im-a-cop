@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { VisualRepository } from '../../domain/imageGeneration/visualRepository';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import type { GameTime, MemoryItem, RuntimeState } from '../../domain/runtime/types';
 import { PlayerDossierModal } from './PlayerDossierModal';
@@ -60,6 +61,7 @@ function createDossierState(): RuntimeState {
     ...state.actors.player,
     name: '梁志文',
     englishName: 'Vincent Leung',
+    birthDate: '1964-03-12',
     computedAge: 24,
     publicIdentity: '旺角军装警员',
     actualIdentitySummary: '皇家香港警察基层警员，正在学习街面规矩。',
@@ -118,6 +120,38 @@ function createDossierState(): RuntimeState {
 }
 
 describe('PlayerDossierModal', () => {
+  it('opens the visual editor immediately when entered from the portrait shortcut', async () => {
+    const state = createDossierState();
+    const repository = {
+      loadSnapshot: vi.fn().mockResolvedValue({
+        schemaVersion: 1,
+        saveId: 'save-player-avatar-shortcut',
+        characterAnchors: {},
+        scenePlans: {},
+        tasks: {},
+        characterBatches: {},
+        assets: {},
+        bindings: {},
+        storySceneDisplayStates: {}
+      })
+    } as unknown as VisualRepository;
+
+    render(
+      <PlayerDossierModal
+        state={state}
+        onClose={vi.fn()}
+        onStateChange={vi.fn()}
+        visualSaveId="save-player-avatar-shortcut"
+        visualRepository={repository}
+        initialVisualEditorOpen
+      />
+    );
+
+    const summary = screen.getByText('生成、导入或更换主角头像');
+    expect(summary.closest('details')).toHaveAttribute('open');
+    expect(await screen.findByText('当前唯一角色锚点')).toBeInTheDocument();
+  });
+
   it('renders only the approved identity, profile and long-record sections', () => {
     render(<PlayerDossierModal state={createDossierState()} onStateChange={vi.fn()} onClose={vi.fn()} />);
 
@@ -164,6 +198,20 @@ describe('PlayerDossierModal', () => {
     expect(dialog.querySelector('dl')).toBeNull();
     expect(dialog.querySelector('dt')).toBeNull();
     expect(dialog.querySelector('dd')).toBeNull();
+  });
+
+  it('uses the canonical law identity rank when a legacy actor profile is stale', () => {
+    const state = createDossierState();
+    state.lawIdentity.rank = 'Inspector（督察 IP）';
+    if (state.actors.player.roleProfiles.police) {
+      state.actors.player.roleProfiles.police.rank = 'Constable (PC)';
+    }
+
+    render(<PlayerDossierModal state={state} onStateChange={vi.fn()} onClose={vi.fn()} />);
+
+    const dialog = screen.getByRole('dialog', { name: '主角资料' });
+    expect(dialog).toHaveTextContent('Inspector（督察 IP）');
+    expect(dialog).not.toHaveTextContent('Constable (PC)');
   });
 
   it('spends a free point and keeps the player actor attributes synchronized', () => {

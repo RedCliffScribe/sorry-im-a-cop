@@ -1,3 +1,5 @@
+// @ts-expect-error The app tsconfig intentionally omits Node ambient types; this test only reads CSS text.
+import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
@@ -53,6 +55,57 @@ describe('FinanceArchiveModal', () => {
 
     expect(screen.getByText('Ledger 1')).toBeInTheDocument();
     expect(state.finance.ledger).toHaveLength(35);
-    expect(container.querySelector('.finance-ledger-scroll')).toBeInTheDocument();
+    const ledgerScroll = screen.getByRole('region', { name: '近期收支记录列表' });
+    expect(ledgerScroll).toHaveClass('finance-ledger-scroll');
+    expect(ledgerScroll).toHaveAttribute('tabindex', '0');
+  });
+
+  it('shows each ledger entry with its exact in-game date and time', () => {
+    const state = createInitialRuntimeState();
+    state.finance.ledger = [
+      {
+        entryId: 'ledger_taxicab',
+        gameTime: { year: 1988, month: 9, day: 15, hour: 20, minute: 7 },
+        direction: 'expense',
+        amount: 25,
+        account: 'cash',
+        title: '计程车费',
+        summary: '搭乘计程车前往住所。',
+        relatedAssetItemIds: [],
+        relatedActorIds: [],
+        relatedPlaceIds: [],
+        source: 'writeback',
+        visibility: 'player_known'
+      }
+    ];
+
+    const { container } = render(<FinanceArchiveModal state={state} onStateChange={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.getByText('1988年09月15日 星期四 20:07')).toBeInTheDocument();
+    expect(container.querySelector('.finance-ledger-time')).toHaveTextContent('1988年09月15日 星期四 20:07');
+  });
+
+  it('keeps the outer modal fixed while giving recent ledger entries a larger inner scroll viewport', () => {
+    const css = readFileSync('src/styles/global.css', 'utf8');
+    const ledgerRule = css.match(
+      /\.finance-archive-modal--polished \.finance-ledger-scroll\s*\{([^}]*)\}/
+    )?.[1] ?? '';
+    const ledgerSectionRule = css.match(
+      /\.finance-archive-modal--polished \.finance-ledger-section\s*\{([^}]*)\}/
+    )?.[1] ?? '';
+    const archiveBodyRule = css.match(
+      /\.finance-archive-modal--polished \.finance-archive-body\s*\{([^}]*)\}/
+    )?.[1] ?? '';
+    const ledgerHeadingRule = css.match(
+      /\.finance-list-card \.finance-ledger-heading-main\s*\{([^}]*)\}/
+    )?.[1] ?? '';
+
+    expect(ledgerRule).toContain('block-size: clamp(340px, 42dvh, 480px)');
+    expect(ledgerRule).toContain('overflow-y: auto');
+    expect(ledgerRule).toContain('overflow-x: hidden');
+    expect(ledgerRule).toContain('scrollbar-gutter: stable');
+    expect(ledgerSectionRule).toContain('grid-template-rows: auto auto');
+    expect(archiveBodyRule).toContain('grid-auto-rows: max-content');
+    expect(ledgerHeadingRule).toContain('display: grid');
   });
 });

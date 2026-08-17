@@ -3,6 +3,7 @@ import type { RelationshipContextProjection } from '../relationship/relationship
 import type { Actor, RuntimeState } from '../runtime/types';
 
 export type RemoteNpcPresenceSource =
+  | 'roleContact'
   | 'relationshipHeartbeat'
   | 'currentMatter'
   | 'signal'
@@ -34,11 +35,13 @@ export interface RemoteNpcPresenceProjection {
 export interface RemoteNpcPresenceOptions {
   playerInput?: string;
   maxCandidates?: number;
+  roleContactActorIds?: string[];
 }
 
 const DEFAULT_MAX_CANDIDATES = 4;
 
 const sourceBaseScore: Record<RemoteNpcPresenceSource, number> = {
+  roleContact: 525,
   relationshipHeartbeat: 500,
   dueDynamicEvent: 450,
   currentMatter: 350,
@@ -68,9 +71,17 @@ function isRemoteVisibleActor(state: RuntimeState, actor: Actor | undefined): ac
   if (!actor) return false;
   if (actor.actorId === state.player.actorId) return false;
   if (actor.visibility === 'hidden') return false;
-  if (actor.presence === 'present' || actor.presence === 'nearby') return false;
   const currentScene = state.location.currentSceneId ? state.scenes[state.location.currentSceneId] : undefined;
   if (currentScene?.presentActorIds.includes(actor.actorId)) return false;
+  const isMarkedLocal = actor.presence === 'present' || actor.presence === 'nearby';
+  const isAtCurrentPlace = Boolean(actor.currentPlaceId && actor.currentPlaceId === state.location.currentPlaceId);
+  const isAtCurrentScene = Boolean(
+    state.location.currentSceneId && actor.currentSceneId === state.location.currentSceneId
+  );
+  // Actor presence is a last-known status and may remain "present" after the player leaves.
+  // Only treat it as local when the actor has no other location anchor or still shares the
+  // player's current place/scene. This keeps an opening duty sergeant reachable by radio.
+  if (isMarkedLocal && (!actor.currentPlaceId || isAtCurrentPlace || isAtCurrentScene)) return false;
   return true;
 }
 
@@ -85,7 +96,18 @@ function actorBasis(actor: Actor): string[] {
   ]);
 }
 
-function channelForSource(source: RemoteNpcPresenceSource): string {
+function isTriadRoleContact(actor: Actor, source: RemoteNpcPresenceSource): boolean {
+  if (source !== 'roleContact' || actor.currentIdentity !== 'gang_member') return false;
+  const profile = actor.roleProfiles.triad;
+  return Boolean(profile && (profile.status === 'active' || profile.status === 'cover'));
+}
+
+function channelForSource(source: RemoteNpcPresenceSource, actor: Actor): string {
+  if (source === 'roleContact') {
+    return isTriadRoleContact(actor, source)
+      ? '电话、传呼、托话、场所联络或街面碰头'
+      : '警队电台、电话、传呼、值日台或既有工作联络';
+  }
   if (source === 'relationshipHeartbeat') return '电话、传呼、托人带话、街边偶遇或旧记忆回响';
   if (source === 'dueDynamicEvent') return '已到期的动态事件、传呼、电话或他人转述';
   if (source === 'currentMatter') return '当前事项压力、未处理牵连或他人提醒';
@@ -94,7 +116,7 @@ function channelForSource(source: RemoteNpcPresenceSource): string {
 }
 
 function presenceHint(actor: Actor, source: RemoteNpcPresenceSource, title: string): string {
-  return `未裁定建议：${actor.name}可通过${channelForSource(source)}在本回合形成远场存在感，围绕「${title}」轻触剧情；只有正文自然采纳后，才允许写回关系、记忆、当前事项、新闻或延迟事件。`;
+  return `未裁定建议：${actor.name}可通过${channelForSource(source, actor)}在本回合形成远场存在感，围绕「${title}」轻触剧情；只有正文自然采纳后，才允许写回关系、记忆、当前事项、新闻或延迟事件。`;
 }
 
 function buildTriggerReasons(source: RemoteNpcPresenceSource, actor: Actor, sourceText: string, playerInput: string): string[] {
@@ -167,6 +189,39 @@ export function projectRemoteNpcPresence(
   const omitted = { count: 0 };
   const missingActorRefs = new Set<string>();
   const byActor = new Map<string, RemoteNpcPresenceCandidate>();
+
+  for (const actor of selectActorRefs(state, options.roleContactActorIds ?? [], omitted, missingActorRefs)) {
+    const policeProfile = actor.roleProfiles.police;
+    const triadProfile = actor.roleProfiles.triad;
+    const triadContact = isTriadRoleContact(actor, 'roleContact');
+    const basis = compact([
+      triadContact
+        ? '结构化角色链路：当前公开社团身份的直属或同组联系人'
+        : '结构化角色链路：当前公开身份的工作联系人',
+      actor.publicIdentity ? `公开身份: ${actor.publicIdentity}` : undefined,
+      triadContact && triadProfile?.societyName ? `社团: ${triadProfile.societyName}` : undefined,
+      triadContact && triadProfile?.roleTitle ? `位置: ${triadProfile.roleTitle}` : undefined,
+      triadContact && triadProfile?.rankSummary ? `层级: ${triadProfile.rankSummary}` : undefined,
+      triadContact && triadProfile?.territorySummary ? `活动区域: ${triadProfile.territorySummary}` : undefined,
+      !triadContact && policeProfile?.rank ? `警阶: ${policeProfile.rank}` : undefined,
+      !triadContact && policeProfile?.stationOrPost ? `驻点: ${policeProfile.stationOrPost}` : undefined,
+      !triadContact && policeProfile?.department ? `部门: ${policeProfile.department}` : undefined,
+      !triadContact && policeProfile?.assignmentSummary ? `岗位: ${policeProfile.assignmentSummary}` : undefined,
+      ...actorBasis(actor)
+    ]);
+    const triggerReasons = buildTriggerReasons('roleContact', actor, basis.join(' '), playerInput);
+    upsertByActor(byActor, {
+      actorId: actor.actorId,
+      actorName: actor.name,
+      source: 'roleContact',
+      sourceId: 'player_role_chain',
+      title: '当前身份角色链路',
+      triggerReasons,
+      basis,
+      presenceHint: presenceHint(actor, 'roleContact', '当前身份角色链路'),
+      score: candidateScore('roleContact', actor, 40, triggerReasons)
+    });
+  }
 
   for (const heartbeat of relationshipProjection.heartbeatCandidates) {
     const sourceText = `${heartbeat.title} ${heartbeat.summary} ${heartbeat.reason}`;

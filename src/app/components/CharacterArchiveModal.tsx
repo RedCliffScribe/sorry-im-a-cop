@@ -1,23 +1,227 @@
 import { useMemo, useState } from 'react';
+import { IndexedDbCustomContentRepository } from '../../domain/customContent/IndexedDbCustomContentRepository';
+import { importRuntimeActorToCustomLibrary } from '../../domain/customContent/runtimeActorImport';
+import { ImagePromptConversionProbe } from '../../domain/imageGeneration/promptConversion';
+import { IndexedDbVisualRepository, type VisualRepository } from '../../domain/imageGeneration/visualRepository';
 import { formatPoliceText } from '../../domain/police/policeTerminology';
-import { isAdultFemaleActorAt } from '../../domain/runtime/actorAge';
+import { deriveActorAgeAt, isAdultFemaleActorAt } from '../../domain/runtime/actorAge';
 import { normalizeActorFemaleProfile } from '../../domain/runtime/femaleProfile';
+import {
+  createManualActorProfileDraft,
+  type ManualActorProfileDraft
+} from '../../domain/runtime/manualActorProfile';
 import { removeActorFromRuntimeState } from '../../domain/runtime/removeActor';
 import type {
   Actor,
   ActorAdultPrivateProfile,
   ActorFemaleProfile,
   ActorFemaleRelationshipEdge,
+  ActorPregnancyPaternityCandidate,
   AttributeBlock,
   MemoryItem,
   RuntimeState
 } from '../../domain/runtime/types';
+import { useChineseSearchNormalizer } from '../localization/useChineseSearchNormalizer';
+import { CharacterVisualPanel, CharacterVisualThumbnail } from './CharacterVisualPanel';
+import type { AvgVisualOverrideRepository } from '../../domain/avgVisualOverride';
+import { AvgPortraitOverrideControl } from './avg/AvgVisualOverrideControls';
+import {
+  buildAvgPortraitGenerationContext,
+  type AvgImageGenerationService
+} from '../../domain/avgImageGeneration';
+import type { AvgPresentationResourceRuntime } from './avg/avgPresentationResourceRuntime';
 
 interface CharacterArchiveModalProps {
   state: RuntimeState;
   onClose: () => void;
   onStateChange?: (state: RuntimeState) => void;
+  onUpdateActorProfile?: (actorId: string, draft: ManualActorProfileDraft) => Promise<void>;
   showAdultPrivateProfiles?: boolean;
+  visualSaveId?: string;
+  visualRepository?: VisualRepository;
+  customContentRepository?: IndexedDbCustomContentRepository;
+  createPromptConversion?: () => ImagePromptConversionProbe | null;
+  onOpenImageSettings?: () => void;
+  onVisualRepositoryChanged?: () => void;
+  avgOverrideRepository?: AvgVisualOverrideRepository;
+  avgOverrideRevision?: number;
+  avgImageGenerationService?: AvgImageGenerationService;
+  avgResourceRuntime?: AvgPresentationResourceRuntime;
+  onAvgOverrideChanged?: () => void;
+}
+
+interface CharacterProfileEditorProps {
+  actor: Actor;
+  onCancel: () => void;
+  onSave: (draft: ManualActorProfileDraft) => Promise<void>;
+}
+
+function CharacterProfileEditor({ actor, onCancel, onSave }: CharacterProfileEditorProps) {
+  const [draft, setDraft] = useState<ManualActorProfileDraft>(() => createManualActorProfileDraft(actor));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function setTextField<K extends Exclude<keyof ManualActorProfileDraft, 'aliases' | 'equipment' | 'gender'>>(
+    field: K,
+    value: ManualActorProfileDraft[K]
+  ) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function setListField(field: 'aliases' | 'equipment', value: string) {
+    setDraft((current) => ({ ...current, [field]: value.split(/\r?\n/) }));
+  }
+
+  return (
+    <form
+      className="character-profile-editor"
+      aria-label="修改人物资料"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setSaving(true);
+        setError(null);
+        try {
+          await onSave(draft);
+        } catch (saveError) {
+          setError(saveError instanceof Error ? saveError.message : '人物资料保存失败，请稍后重试。');
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <div className="character-profile-editor-notice">
+        <strong>当前存档本地修改</strong>
+        <span>不会改动人物ID、身份结构、组织、历史正文、记忆、案件、图片绑定或全局自定义人物。</span>
+        <span>你实际改过的稳定资料将优先于后续AI写回；衣着、关系等动态摘要仍可随剧情变化。</span>
+      </div>
+
+      <section>
+        <h4>基础资料</h4>
+        <div className="character-profile-editor-grid">
+          <label>
+            <span>姓名 *</span>
+            <input value={draft.name} maxLength={60} onChange={(event) => setTextField('name', event.target.value)} />
+          </label>
+          <label>
+            <span>英文名</span>
+            <input value={draft.englishName} maxLength={100} onChange={(event) => setTextField('englishName', event.target.value)} />
+          </label>
+          <label>
+            <span>常用称呼</span>
+            <input value={draft.callName} maxLength={60} onChange={(event) => setTextField('callName', event.target.value)} />
+          </label>
+          <label>
+            <span>性别</span>
+            <select
+              value={draft.gender}
+              onChange={(event) => setDraft((current) => ({ ...current, gender: event.target.value as Actor['gender'] }))}
+            >
+              <option value="male">男</option>
+              <option value="female">女</option>
+              <option value="nonbinary">非二元</option>
+              <option value="unknown">未知</option>
+            </select>
+          </label>
+          <label>
+            <span>出生日期</span>
+            <input
+              type="date"
+              value={draft.birthDate}
+              onChange={(event) => setTextField('birthDate', event.target.value)}
+            />
+          </label>
+          <label className="character-profile-editor-wide">
+            <span>别名（每行一项）</span>
+            <textarea value={draft.aliases.join('\n')} onChange={(event) => setListField('aliases', event.target.value)} />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h4>身份显示</h4>
+        <p className="character-profile-editor-readonly">结构身份：{identityLabels[actor.currentIdentity]}（不可在此修改）</p>
+        <div className="character-profile-editor-grid">
+          <label>
+            <span>公开身份</span>
+            <input value={draft.publicIdentity} maxLength={160} onChange={(event) => setTextField('publicIdentity', event.target.value)} />
+          </label>
+          <label>
+            <span>角色定位</span>
+            <input value={draft.positionSummary} maxLength={300} onChange={(event) => setTextField('positionSummary', event.target.value)} />
+          </label>
+          <label className="character-profile-editor-wide">
+            <span>实际身份摘要</span>
+            <textarea value={draft.actualIdentitySummary} maxLength={600} onChange={(event) => setTextField('actualIdentitySummary', event.target.value)} />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h4>人物档案</h4>
+        <div className="character-profile-editor-grid">
+          <label className="character-profile-editor-wide">
+            <span>人物简介</span>
+            <textarea value={draft.profileSummary} maxLength={1200} onChange={(event) => setTextField('profileSummary', event.target.value)} />
+          </label>
+          <label className="character-profile-editor-wide">
+            <span>外貌</span>
+            <textarea value={draft.appearance} maxLength={1200} onChange={(event) => setTextField('appearance', event.target.value)} />
+          </label>
+          <label>
+            <span>衣着</span>
+            <textarea value={draft.clothing} maxLength={800} onChange={(event) => setTextField('clothing', event.target.value)} />
+          </label>
+          <label>
+            <span>装备（每行一项）</span>
+            <textarea value={draft.equipment.join('\n')} onChange={(event) => setListField('equipment', event.target.value)} />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h4>行为倾向</h4>
+        <div className="character-profile-editor-grid">
+          {([
+            ['personality', '性格'],
+            ['speechStyle', '说话风格'],
+            ['motivation', '动机'],
+            ['longTermGoal', '长期目标'],
+            ['values', '价值观']
+          ] as const).map(([field, label]) => (
+            <label key={field}>
+              <span>{label}</span>
+              <textarea value={draft[field]} maxLength={600} onChange={(event) => setTextField(field, event.target.value)} />
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h4>当前关系摘要</h4>
+        <div className="character-profile-editor-grid">
+          {([
+            ['relationshipSummary', '关系摘要'],
+            ['attitudeTowardPlayer', '对玩家态度'],
+            ['trustTendency', '信任/戒备'],
+            ['entanglementSummary', '重要牵连']
+          ] as const).map(([field, label]) => (
+            <label key={field}>
+              <span>{label}</span>
+              <textarea value={draft[field]} maxLength={800} onChange={(event) => setTextField(field, event.target.value)} />
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {error ? <div className="character-profile-editor-error" role="alert">{error}</div> : null}
+      <div className="character-profile-editor-actions">
+        <button type="button" disabled={saving} onClick={onCancel}>取消</button>
+        <button type="submit" className="character-profile-editor-save" disabled={saving}>
+          {saving ? '正在保存…' : '保存修改'}
+        </button>
+      </div>
+    </form>
+  );
 }
 
 const identityLabels: Record<Actor['currentIdentity'], string> = {
@@ -290,13 +494,47 @@ function privateProfileText(value: string | undefined, fallback = '未记录具�
   return text && !privateProfilePlaceholders.has(text) ? text : fallback;
 }
 
+function visiblePaternityCandidates(
+  candidates: ActorPregnancyPaternityCandidate[] | undefined
+): ActorPregnancyPaternityCandidate[] {
+  return (candidates ?? []).filter((candidate) => candidate.visibility !== 'hidden');
+}
+
+function formatPaternityCandidates(candidates: ActorPregnancyPaternityCandidate[] | undefined): string | undefined {
+  const names = visiblePaternityCandidates(candidates)
+    .map((candidate) => candidate.name ?? candidate.actorId)
+    .filter((candidate): candidate is string => Boolean(candidate));
+  return names.length > 0 ? names.join('、') : undefined;
+}
+
 function AdultPrivateProfileBlock({ profile }: { profile: ActorAdultPrivateProfile }) {
   const womb = profile.womb;
   const wombRecords = womb?.records ?? [];
   const pregnancy = womb?.pregnancy;
-  const visiblePaternity =
-    pregnancy?.paternityCandidates.filter((candidate) => candidate.visibility !== 'hidden') ?? [];
+  const currentPaternity = formatPaternityCandidates(pregnancy?.paternityCandidates);
+  const pendingPregnancyChecks = womb?.pendingPregnancyChecks ?? [];
   const pregnancyHistory = womb?.pregnancyHistory ?? [];
+  const paternityRecords = Array.from(
+    wombRecords.reduce<
+      Map<
+        string,
+        {
+          date?: string;
+          candidates: string;
+          result?: 'positive' | 'negative';
+        }
+      >
+    >((records, record, index) => {
+      const candidates = formatPaternityCandidates(record.paternityCandidates);
+      if (!candidates) return records;
+      records.set(record.pregnancyId ?? `${record.date ?? 'unknown'}-${index}`, {
+        date: record.date,
+        candidates,
+        result: record.pregnancyCheckResult
+      });
+      return records;
+    }, new Map()).values()
+  );
 
   return (
     <details className="character-female-private-panel">
@@ -349,6 +587,18 @@ function AdultPrivateProfileBlock({ profile }: { profile: ActorAdultPrivateProfi
               <dl>
                 <dt>验孕日期</dt>
                 <dd>{formatProfileTime(pregnancy.checkDueAt)}</dd>
+                {pregnancy.status === 'pending_check' && pendingPregnancyChecks.length > 0 ? (
+                  <>
+                    <dt>后续待判定</dt>
+                    <dd>
+                      {pendingPregnancyChecks.length} 项：
+                      {pendingPregnancyChecks.map((item) => {
+                        const candidates = formatPaternityCandidates(item.paternityCandidates);
+                        return `${formatProfileTime(item.checkDueAt)}${candidates ? `（父系候选：${candidates}）` : ''}`;
+                      }).join('、')}
+                    </dd>
+                  </>
+                ) : null}
                 {pregnancy.status !== 'pending_check' ? (
                   <>
                     <dt>确认节点</dt>
@@ -361,12 +611,10 @@ function AdultPrivateProfileBlock({ profile }: { profile: ActorAdultPrivateProfi
                     <dd>{formatProfileTime(pregnancy.dueAt)}</dd>
                   </>
                 ) : null}
-                {visiblePaternity.length > 0 ? (
+                {currentPaternity ? (
                   <>
-                    <dt>已知父亲候选</dt>
-                    <dd>
-                      {visiblePaternity.map((candidate) => candidate.name ?? candidate.actorId ?? '身份未明').join('、')}
-                    </dd>
+                    <dt>当前父系候选</dt>
+                    <dd>{currentPaternity}</dd>
                   </>
                 ) : null}
                 {pregnancy.childActorId ? (
@@ -382,13 +630,32 @@ function AdultPrivateProfileBlock({ profile }: { profile: ActorAdultPrivateProfi
                   </>
                 ) : null}
               </dl>
-              {pregnancy.status === 'pending_check' ? <small>结果尚未揭晓，存档与读档不会重新掷骰。</small> : null}
+              {pregnancy.status === 'pending_check' ? (
+                <small>
+                  结果尚未揭晓，存档与读档不会重新掷骰。同日风险合并，跨日风险分别排期；较早判定成功后，后续待判定自动取消。
+                </small>
+              ) : null}
             </div>
           ) : womb?.lastPregnancyCheck ? (
             <div className="character-pregnancy-last-check">
               最近验孕：{formatProfileTime(womb.lastPregnancyCheck.checkedAt)} ·{' '}
               {womb.lastPregnancyCheck.result === 'positive' ? '阳性' : '阴性'}
             </div>
+          ) : null}
+          {paternityRecords.length > 0 ? (
+            <dl>
+              <dt>父系记录</dt>
+              <dd>
+                {paternityRecords.map((record, index) => (
+                  <span key={`${record.date ?? 'unknown'}-${record.candidates}-${index}`}>
+                    {index > 0 ? '；' : ''}
+                    {record.date ? `${record.date}：` : ''}
+                    {record.candidates}
+                    {record.result ? `（验孕${record.result === 'positive' ? '阳性' : '阴性'}）` : ''}
+                  </span>
+                ))}
+              </dd>
+            </dl>
           ) : null}
           <div className="character-female-womb-records">
             <strong>记录</strong>
@@ -414,7 +681,12 @@ function AdultPrivateProfileBlock({ profile }: { profile: ActorAdultPrivateProfi
                   <li key={item.pregnancyId}>
                     <span>{formatProfileTime(item.endedAt)}</span>
                     <p>{item.summary}</p>
-                    <small>{item.outcome === 'live_birth' ? '活产' : '妊娠终止'}</small>
+                    <small>
+                      {item.outcome === 'live_birth' ? '活产' : '妊娠终止'}
+                      {formatPaternityCandidates(item.paternityCandidates)
+                        ? ` · 父系候选：${formatPaternityCandidates(item.paternityCandidates)}`
+                        : ''}
+                    </small>
                   </li>
                 ))}
               </ul>
@@ -475,13 +747,44 @@ export function CharacterArchiveModal({
   state,
   onClose,
   onStateChange,
-  showAdultPrivateProfiles = true
+  onUpdateActorProfile,
+  showAdultPrivateProfiles = true,
+  visualSaveId,
+  visualRepository,
+  customContentRepository,
+  createPromptConversion,
+  onOpenImageSettings,
+  onVisualRepositoryChanged,
+  avgOverrideRepository,
+  avgOverrideRevision,
+  avgImageGenerationService,
+  avgResourceRuntime,
+  onAvgOverrideChanged
 }: CharacterArchiveModalProps) {
   const [search, setSearch] = useState('');
+  const normalizeSearchText = useChineseSearchNormalizer(Boolean(search.trim()));
   const [importantOnly, setImportantOnly] = useState(false);
   const [presentOnly, setPresentOnly] = useState(false);
   const [selectedActorId, setSelectedActorId] = useState<string | null>(null);
   const [pendingDeleteActorId, setPendingDeleteActorId] = useState<string | null>(null);
+  const [pendingImportActorId, setPendingImportActorId] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<{
+    actorId: string;
+    kind: 'success' | 'already_exists' | 'error';
+    message: string;
+  } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [editingActorId, setEditingActorId] = useState<string | null>(null);
+  const [detailView, setDetailView] = useState<'profile' | 'visual'>('profile');
+  const [visualRefreshKey, setVisualRefreshKey] = useState(0);
+  const imageRepository = useMemo(
+    () => visualRepository ?? (visualSaveId ? new IndexedDbVisualRepository() : undefined),
+    [visualRepository, visualSaveId]
+  );
+  const characterLibraryRepository = useMemo(
+    () => customContentRepository ?? new IndexedDbCustomContentRepository(),
+    [customContentRepository]
+  );
 
   const archiveActors = useMemo(
     () =>
@@ -492,14 +795,14 @@ export function CharacterArchiveModal({
   );
 
   const filteredActors = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = normalizeSearchText(search);
     return archiveActors.filter((actor) => {
       if (importantOnly && actor.importance < 60) return false;
       if (presentOnly && actor.presence !== 'present' && actor.presence !== 'nearby') return false;
       if (!query) return true;
-      return actorSearchText(actor, getActorPlaceName(state, actor)).includes(query);
+      return normalizeSearchText(actorSearchText(actor, getActorPlaceName(state, actor))).includes(query);
     });
-  }, [archiveActors, importantOnly, presentOnly, search, state]);
+  }, [archiveActors, importantOnly, normalizeSearchText, presentOnly, search, state]);
 
   const selectedActor =
     filteredActors.find((actor) => actor.actorId === selectedActorId) ?? filteredActors[0] ?? archiveActors[0];
@@ -509,6 +812,7 @@ export function CharacterArchiveModal({
   const presentCount = archiveActors.filter((actor) => actor.presence === 'present' || actor.presence === 'nearby').length;
   const importantCount = archiveActors.filter((actor) => actor.importance >= 60).length;
   const selectedFemaleProfile = normalizeActorFemaleProfile(selectedActor?.femaleProfile);
+  const selectedActorAge = selectedActor ? deriveActorAgeAt(selectedActor, state.time) : undefined;
   const selectedAdultPrivateProfile =
     selectedActor && selectedFemaleProfile && showAdultPrivateProfiles && isAdultFemaleActorAt(selectedActor, state.time)
       ? selectedFemaleProfile.adultPrivateProfile
@@ -576,6 +880,10 @@ export function CharacterArchiveModal({
                     onClick={() => {
                       setSelectedActorId(actor.actorId);
                       setPendingDeleteActorId(null);
+                      setPendingImportActorId(null);
+                      setImportStatus(null);
+                      setEditingActorId(null);
+                      setDetailView('profile');
                     }}
                   >
                     <span className="character-roster-line">
@@ -596,8 +904,16 @@ export function CharacterArchiveModal({
             {selectedActor ? (
               <>
                 <div className="character-detail-title">
-                  <div className="character-avatar" aria-hidden="true">
-                    {selectedActor.name.slice(0, 1)}
+                  <div className="character-avatar">
+                    {visualSaveId && imageRepository ? (
+                      <CharacterVisualThumbnail
+                        repository={imageRepository}
+                        visualSaveId={visualSaveId}
+                        actorId={selectedActor.actorId}
+                        actorName={selectedActor.name}
+                        refreshKey={visualRefreshKey}
+                      />
+                    ) : <span aria-hidden="true">{selectedActor.name.slice(0, 1)}</span>}
                   </div>
                   <div>
                     <h3>{formatActorName(selectedActor)}</h3>
@@ -606,20 +922,125 @@ export function CharacterArchiveModal({
                     </p>
                     <div className="character-detail-tags">
                       <span>{presenceLabels[selectedActor.presence]}</span>
-                      <span>{genderLabels[selectedActor.gender]}{selectedActor.computedAge ? ` ${selectedActor.computedAge}岁` : ''}</span>
+                      <span>{genderLabels[selectedActor.gender]}{typeof selectedActorAge === 'number' ? ` ${selectedActorAge}岁` : ''}</span>
                       <span>往来度 {selectedActor.interactionScore}</span>
                     </div>
                   </div>
-                  {onStateChange ? (
+                  <div className="character-detail-title-actions">
+                    {onUpdateActorProfile && editingActorId !== selectedActor.actorId ? (
+                      <button
+                        type="button"
+                        className="character-profile-edit-button"
+                        onClick={() => {
+                          setEditingActorId(selectedActor.actorId);
+                          setPendingImportActorId(null);
+                          setPendingDeleteActorId(null);
+                          setImportStatus(null);
+                          setDetailView('profile');
+                        }}
+                      >
+                        修改资料
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className="character-delete-button"
-                      onClick={() => setPendingDeleteActorId(selectedActor.actorId)}
+                      className="character-library-import-button"
+                      disabled={isImporting}
+                      onClick={() => {
+                        setPendingImportActorId(selectedActor.actorId);
+                        setPendingDeleteActorId(null);
+                        setImportStatus(null);
+                      }}
                     >
-                      删除人物
+                      导入自定义人物库
                     </button>
-                  ) : null}
+                    {onStateChange ? (
+                      <button
+                        type="button"
+                        className="character-delete-button"
+                        onClick={() => {
+                          setPendingDeleteActorId(selectedActor.actorId);
+                          setPendingImportActorId(null);
+                          setImportStatus(null);
+                        }}
+                      >
+                        删除人物
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
+
+                {pendingImportActorId === selectedActor.actorId ? (
+                  <div className="character-library-import-confirmation">
+                    <span>
+                      将“{selectedActor.name}”复制为一份待审核草稿。不会带入本局关系、记忆、位置或当前状态；请到首页“自定义”中编辑并发布，之后才能用于新开局。
+                    </span>
+                    <div>
+                      <button
+                        type="button"
+                        disabled={isImporting}
+                        onClick={() => setPendingImportActorId(null)}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="character-library-import-confirm-button"
+                        disabled={isImporting}
+                        onClick={async () => {
+                          setIsImporting(true);
+                          setImportStatus(null);
+                          try {
+                            const sourceCharacterAssetId =
+                              state.customContent?.characterRuntimeBindings.find(
+                                (binding) => binding.actorId === selectedActor.actorId
+                              )?.characterAssetId;
+                            const result = await importRuntimeActorToCustomLibrary({
+                              repository: characterLibraryRepository,
+                              worldpackId: state.world.worldpackId,
+                              actor: selectedActor,
+                              sourceCharacterAssetId
+                            });
+                            setImportStatus({
+                              actorId: selectedActor.actorId,
+                              kind:
+                                result.status === 'imported'
+                                  ? 'success'
+                                  : 'already_exists',
+                              message:
+                                result.status === 'imported'
+                                  ? `已将“${selectedActor.name}”保存为待审核草稿。请到首页“自定义”中编辑并发布。`
+                                  : `“${selectedActor.name}”已经在自定义人物库中，无需重复导入。`
+                            });
+                            setPendingImportActorId(null);
+                          } catch (error) {
+                            setImportStatus({
+                              actorId: selectedActor.actorId,
+                              kind: 'error',
+                              message:
+                                error instanceof Error
+                                  ? `导入失败：${error.message}`
+                                  : '导入失败，请稍后重试。'
+                            });
+                          } finally {
+                            setIsImporting(false);
+                          }
+                        }}
+                      >
+                        {isImporting ? '正在导入…' : '确认导入'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {importStatus?.actorId === selectedActor.actorId ? (
+                  <div
+                    className={`character-library-import-status character-library-import-status--${importStatus.kind}`}
+                    role={importStatus.kind === 'error' ? 'alert' : 'status'}
+                  >
+                    {importStatus.message}
+                  </div>
+                ) : null}
 
                 {onStateChange && pendingDeleteActorId === selectedActor.actorId ? (
                   <div className="character-delete-confirmation" role="alert">
@@ -644,6 +1065,43 @@ export function CharacterArchiveModal({
                     </div>
                   </div>
                 ) : null}
+
+                {editingActorId === selectedActor.actorId && onUpdateActorProfile ? (
+                  <CharacterProfileEditor
+                    key={selectedActor.actorId}
+                    actor={selectedActor}
+                    onCancel={() => setEditingActorId(null)}
+                    onSave={async (draft) => {
+                      await onUpdateActorProfile(selectedActor.actorId, draft);
+                      setEditingActorId(null);
+                    }}
+                  />
+                ) : (
+                <>
+                <div className="character-detail-view-switch" role="tablist" aria-label="人物详情内容">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={detailView === 'profile'}
+                    className={detailView === 'profile' ? 'active' : ''}
+                    onClick={() => setDetailView('profile')}
+                  >
+                    资料
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={detailView === 'visual'}
+                    className={detailView === 'visual' ? 'active' : ''}
+                    disabled={!visualSaveId || (!imageRepository && !avgOverrideRepository)}
+                    onClick={() => setDetailView('visual')}
+                  >
+                    视觉内容
+                  </button>
+                </div>
+
+                {detailView === 'profile' ? (
+                  <>
 
                 <div className="character-summary-strip">
                   <strong>{selectedActor.attitudeTowardPlayer}</strong>
@@ -783,6 +1241,47 @@ export function CharacterArchiveModal({
                   </div>
                   {renderMemoryItems(actorMemoryGroups.longTerm, '暂无长期记忆条目。', '长期记忆')}
                 </section>
+
+                  </>
+                ) : visualSaveId && (imageRepository || avgOverrideRepository) ? (
+                  <>
+                    {avgOverrideRepository && onAvgOverrideChanged ? (
+                      <AvgPortraitOverrideControl
+                        actor={selectedActor}
+                        visualPartitionId={visualSaveId}
+                        worldpackId={state.world.worldpackId}
+                        repository={avgOverrideRepository}
+                        revision={avgOverrideRevision}
+                        imageGeneration={avgImageGenerationService ? {
+                          kind: 'portrait',
+                          service: avgImageGenerationService,
+                          saveId: visualSaveId,
+                          context: buildAvgPortraitGenerationContext(state, selectedActor),
+                          onOpenSettings: onOpenImageSettings
+                        } : undefined}
+                        resourceRuntime={avgResourceRuntime}
+                        onChanged={onAvgOverrideChanged}
+                      />
+                    ) : null}
+                    {imageRepository ? (
+                      <CharacterVisualPanel
+                        actor={selectedActor}
+                        visualSaveId={visualSaveId}
+                        worldYear={state.time.year}
+                        repository={imageRepository}
+                        createPromptConversion={createPromptConversion}
+                        onOpenSettings={onOpenImageSettings}
+                        onRepositoryChanged={() => {
+                          setVisualRefreshKey((value) => value + 1);
+                          onVisualRepositoryChanged?.();
+                        }}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+
+                </>
+                )}
 
               </>
             ) : (

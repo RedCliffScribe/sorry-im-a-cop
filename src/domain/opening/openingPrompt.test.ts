@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialRuntimeState, type OpeningSetup } from '../runtime/initialState';
 import type { Trait } from '../runtime/types';
+import { composeOpeningBlueprintPrompt } from './composeOpeningBlueprintPrompt';
 import { composeOpeningPrompt } from './composeOpeningPrompt';
 
 const openingTrait: Trait = {
@@ -48,6 +49,16 @@ function parseOpeningExample(prompt: string): Record<string, unknown> {
 describe('opening prompt', () => {
   const openingPressureIds = ['relaxed', 'routine', 'standard', 'tense', 'high'] as const;
 
+  it('defines interaction score as a non-negative entanglement score in the blueprint', () => {
+    const setup = createSetup();
+    const initialState = createInitialRuntimeState(setup);
+    const prompt = composeOpeningBlueprintPrompt({ setup, initialState });
+
+    expect(prompt).toContain('interactionScore 只能填写 0—100 的整数');
+    expect(prompt).toContain('不是好感度');
+    expect(prompt).toContain('禁止使用负数');
+  });
+
   it('feeds real opening choices and the JSON contract to the narrator', () => {
     const setup = createSetup();
     const state = createInitialRuntimeState(setup);
@@ -65,19 +76,34 @@ describe('opening prompt', () => {
     expect(prompt).toContain('开局额外要求（最高优先级）');
     expect(prompt).toContain('不要立刻变成大案');
     expect(prompt).toContain('initialActors');
+    expect(prompt).toContain('playerRoleRelation');
+    expect(prompt).toContain('police_supervisor');
+    expect(prompt).toContain('正文中有真实姓名并直接发言或行动');
     expect(prompt).toContain('pressureSeeds');
     expect(prompt).toContain('0-1000');
     expect(prompt).toContain('-100到100');
     expect(prompt).toContain('clothing');
     expect(prompt).toContain('equipment');
     expect(prompt).toContain('最多三件');
+    expect(prompt).toContain('必须原样写入对应字段');
+    expect(prompt).toContain('不得因为金额罕见');
     expect(prompt).toContain('roleProfiles');
     expect(prompt).toContain('attributes 六维');
     expect(prompt).toContain('不要把所有 NPC 都写成 50/50/50/50/50/50');
+    expect(prompt).toContain('当前天气由本地环境状态给出');
+    expect(prompt).toContain('不得自行改成雨天');
+    expect(prompt).not.toContain('刚下完一场细雨');
+    expect(prompt).not.toContain('收起雨伞');
     expect(prompt).toContain('NPC 不需要生命/体力字段');
     expect(prompt).toContain('港警职级资料库');
     expect(prompt).toContain('SPC 绝不是 SP');
     expect(prompt).toContain('PC/SPC 是一线基层人员');
+    expect(prompt).toContain('香港警队行动单位资料库（长期制度边界）');
+    expect(prompt).toContain('Emergency Unit（冲锋队 EU）是总区级快速反应军装单位');
+    expect(prompt).toContain('Sergeant 通常承担一辆冲锋车的车辆指挥');
+    expect(prompt).toContain('PTU 可以在平日补充街面警力，但不能和 EU 混称');
+    expect(prompt).toContain('默认由分区军装处理');
+    expect(prompt).toContain('“冲锋车”特指 EU');
     expect(prompt).toContain('memory.kind 只能使用 turn、actor、case、place、world、player');
     expect(prompt).toContain('历史背景、时代大事、新闻环境请使用 world');
     expect(prompt).toContain('casePatches');
@@ -91,27 +117,22 @@ describe('opening prompt', () => {
     expect(prompt).toContain('成人关系描写指南');
     expect(prompt).toContain('adultPrivateProfile 是成年女性的香闺秘档');
     expect(prompt).toContain('女性 NPC 必须写 femaleProfile');
-    expect(prompt).toContain('确认成年女性 NPC 必须生成 adultPrivateProfile');
+    expect(prompt).toContain('开局阶段一律省略 adultPrivateProfile');
+    expect(prompt).toContain('后续关系发展或明确成人事件形成可靠结构化事实后逐步建立');
+    expect(prompt).not.toContain('确认成年女性 NPC 必须生成 adultPrivateProfile');
     expect(prompt).toContain('未来文生图资料');
-    expect(prompt).toContain('profileStatus / womb / partProfiles');
-    expect(prompt).toContain('partProfiles 固定包含 胸部 / 小穴 / 屁穴');
-    expect(prompt).toContain('直接写该部位');
-    expect(prompt).toContain('直白、具体、粗俗、可感');
+    expect(prompt).toContain('直白、清楚、具体、粗俗、可感');
     expect(prompt).toContain('动作、接触、摩擦、湿热、体液、喘息和身体反应');
-    expect(prompt).toContain('当前动作 → 接触部位与身体位置 → 方向、力度和节奏');
-    expect(prompt).toContain('双方生理、语言和情绪反馈 → 下一动作或调整');
-    expect(prompt).toContain('从已有的 RECENT_STORY_PROJECTION 或当前场景中确认最后一个确切姿势');
-    expect(prompt).toContain('慢节奏不是同义反复');
-    expect(prompt).toContain('不得只换姓名套用同一段结构');
-    expect(prompt).toContain('动作路径、主导感官、人物表达或现实后果至少两项');
-    expect(prompt).toContain('输出前静默逐句复核成人段落');
+    expect(prompt).toContain('先确认当前阶段：试探/前戏、进行中、接近高潮、高潮或事后照料');
+    expect(prompt).toContain('每一拍只推进一至两件真正发生变化的事');
+    expect(prompt).toContain('从 RECENT_STORY_PROJECTION 和当前场景确认最后一个确切姿势');
+    expect(prompt).toContain('不来自同义反复、全身扫描或器官清单');
+    expect(prompt).toContain('只换姓名套用同一段结构');
+    expect(prompt).toContain('没有替玩家决定反应、同意、升级或结果');
+    expect(prompt).toContain('输出前静默复核：阶段没有跳跃');
     expect(prompt.indexOf('成人段落输出前复核')).toBeGreaterThan(prompt.indexOf('硬规则'));
-    expect(prompt).toContain('不要使用“甬道”这类女性器官隐喻');
-    expect(prompt).toContain('也不要用“巨物、坚硬”这类替代男性器官或勃起状态的词');
-    expect(prompt).toContain('imagePromptAnchor 是独立的文生图可画标签');
-    expect(prompt).toContain('可保留如玉、细腻这类可画风格词');
-    expect(prompt).toContain('不得反灌到 description');
-    expect(prompt).toContain('不要写英文状态占位、中文待补内容、无记录占位、元说明、工程说明或泛化一致性说明');
+    expect(prompt).toContain('不要用“甬道、花径、秘处、玉峰、春潮、云雨、攻城略地”等词遮蔽实际部位');
+    expect(prompt).toContain('也不要用“巨物、坚硬”等词替代男性器官或勃起状态');
     expect(prompt).not.toContain('视觉锚点');
     expect(prompt).not.toContain('锚点已建立');
     expect(prompt).not.toContain('依据成年女性档案');
@@ -150,6 +171,7 @@ describe('opening prompt', () => {
     const prompt = composeOpeningPrompt({ setup, initialState: state });
     const example = parseOpeningExample(prompt);
     const playerPatch = example.playerPatch as Record<string, unknown>;
+    const financePatch = example.financePatch as { upsertCashflows: Array<Record<string, unknown>> };
 
     expect(prompt).toContain('市民开局身份边界');
     expect(prompt).toContain('公开职业：油麻地果栏运输帮工');
@@ -157,12 +179,66 @@ describe('opening prompt', () => {
     expect(prompt).toContain('夜班目击与货物流向使玩家成为警方常见联系人');
     expect(prompt).toContain('有人要求夹带一批来历不明的货');
     expect(prompt).toContain('不要在开局直接弹出“加入警队/加入社团”二选一');
+    expect(prompt).toContain('生活雇主模板候选');
+    expect(prompt).toContain('templateId=transport_firm');
+    expect(prompt).toContain('不代表任何机构或事件已经存在');
     expect(prompt).toContain('警员编号：不适用；不得生成或写入');
     expect(prompt).not.toContain('警务值班节奏：');
     expect(prompt).not.toContain('港警职级资料库（长期约束');
+    expect(prompt).not.toContain('香港警队行动单位资料库（长期制度边界）');
     expect(playerPatch).not.toHaveProperty('policeNumber');
+    expect(prompt).toContain('identityBinding="civilian"');
+    expect(prompt).toContain('按更散工方式');
+    expect(prompt).toContain('市民上班安排：尚未上班；周一至周五 · 夜班；22:00–次日06:00');
+    expect(prompt).toContain('周六、周日休息');
+    expect(financePatch.upsertCashflows).toEqual([]);
     expect(example.casePatches).toEqual([]);
     expect(example.secretFacts).toEqual([]);
+  });
+
+  it('feeds a real civilian employer and its stable salary baseline', () => {
+    const setup: OpeningSetup = {
+      ...createSetup(),
+      currentIdentity: 'civilian',
+      civilianProfileId: 'bank_employee',
+      policeNumber: undefined,
+      lawIdentity: undefined
+    };
+    const prompt = composeOpeningPrompt({ setup, initialState: createInitialRuntimeState(setup) });
+    const example = parseOpeningExample(prompt);
+    const financePatch = example.financePatch as { upsertCashflows: Array<Record<string, unknown>> };
+    const memories = example.memories as Array<Record<string, unknown>>;
+
+    expect(prompt).toContain('雇主 / 经营机构：香港上海汇丰银行（org_hsbc）');
+    expect(prompt).toContain('开局固定月收入基准：HK$3200（月薪');
+    expect(financePatch.upsertCashflows[0]).toMatchObject({
+      itemId: 'cashflow_player_civilian_primary_job',
+      kind: 'salary',
+      amount: 3200,
+      identityBinding: 'civilian',
+      status: 'active'
+    });
+    expect(memories[0]).toMatchObject({ relatedOrganizationIds: ['org_hsbc'] });
+  });
+
+  it('distinguishes self-employed operating income from salary', () => {
+    const setup: OpeningSetup = {
+      ...createSetup(),
+      currentIdentity: 'civilian',
+      civilianProfileId: 'self_employed_merchant',
+      policeNumber: undefined,
+      lawIdentity: undefined
+    };
+    const prompt = composeOpeningPrompt({ setup, initialState: createInitialRuntimeState(setup) });
+    const example = parseOpeningExample(prompt);
+    const financePatch = example.financePatch as { upsertCashflows: Array<Record<string, unknown>> };
+
+    expect(prompt).toContain('玩家只经营一间小型本地生意');
+    expect(financePatch.upsertCashflows[0]).toMatchObject({
+      kind: 'asset_income',
+      amount: 4000,
+      identityBinding: 'civilian'
+    });
   });
 
   it('keeps an unemployed civilian free of fabricated work and salary anchors', () => {
@@ -176,11 +252,14 @@ describe('opening prompt', () => {
     const state = createInitialRuntimeState(setup);
 
     const prompt = composeOpeningPrompt({ setup, initialState: state });
+    const example = parseOpeningExample(prompt);
+    const financePatch = example.financePatch as { upsertCashflows: unknown[] };
 
     expect(prompt).toContain('公开职业：暂时无业');
     expect(prompt).toContain('当前没有固定职业、雇主或固定薪水');
     expect(prompt).toContain('不得强行生成上班任务或工资现金流');
     expect(prompt).toContain('你目前没有固定工作');
+    expect(financePatch.upsertCashflows).toEqual([]);
   });
 
   it('feeds a bounded middle-rank triad role without granting top-level authority or police UI facts', () => {
@@ -201,6 +280,7 @@ describe('opening prompt', () => {
     const prompt = composeOpeningPrompt({ setup, initialState: state });
     const example = parseOpeningExample(prompt);
     const playerPatch = example.playerPatch as Record<string, unknown>;
+    const financePatch = example.financePatch as { upsertCashflows: Array<Record<string, unknown>> };
 
     expect(prompt).toContain('社团开局身份边界');
     expect(prompt).toContain('字头：十四K（org_14k）');
@@ -213,7 +293,14 @@ describe('opening prompt', () => {
     expect(prompt).toContain('警员编号：不适用；不得生成或写入');
     expect(prompt).not.toContain('警务值班节奏：');
     expect(prompt).not.toContain('港警职级资料库（长期约束');
+    expect(prompt).not.toContain('香港警队行动单位资料库（长期制度边界）');
     expect(playerPatch).not.toHaveProperty('policeNumber');
+    expect(prompt).toContain('社团职级本身不产生统一工资');
+    expect(financePatch.upsertCashflows[0]).toMatchObject({
+      itemId: 'cashflow_player_triad_regular_duty',
+      identityBinding: 'gang_member',
+      status: 'active'
+    });
     expect(example.casePatches).toEqual([]);
     expect(example.secretFacts).toEqual([]);
   });
@@ -253,6 +340,9 @@ describe('opening prompt', () => {
     expect(prompt).toContain('当前时间：1988-09-12 星期一 22:13');
     expect(prompt).toContain('警务值班节奏');
     expect(prompt).toContain('临近交班');
+    expect(prompt).toContain('- 班别：晚更');
+    expect(prompt).toContain('- 时段：14:00–22:45');
+    expect(prompt).toContain('- 下一更：1988年9月13日 星期二 晚更 14:00–22:45');
     expect(prompt).toContain('不要因为玩家是警察就自动安排新报案、新上级任务或连续加班');
     expect(prompt).toContain('可以写下班、休班、补眠、私人生活、人脉、家庭、娱乐、街坊关系或城市日常');
   });
@@ -272,21 +362,21 @@ describe('opening prompt', () => {
     }
   });
 
-  it('locks opening narrative density and first-scene responsibilities', () => {
+  it('sets opening density without forcing a fixed first-scene template', () => {
     const setup = createSetup();
     const state = createInitialRuntimeState(setup);
 
     const prompt = composeOpeningPrompt({ setup, initialState: state });
 
-    expect(prompt).toContain('开局 narrativeText 目标 900-1400 个中文字符');
-    expect(prompt).toContain('最低不得少于 700 个中文字符');
-    expect(prompt).toContain('时代背景');
-    expect(prompt).toContain('人物背景');
-    expect(prompt).toContain('当前情况');
-    expect(prompt).toContain('第一幕');
+    expect(prompt).toContain('当前篇幅档位目标 900-1400 个中文字符');
+    expect(prompt).toContain('narrativeText 不得少于 900 个中文字符');
+    expect(prompt).toContain('不得因为身份日常、事件简单或结构化字段较多而自行缩短');
+    expect(prompt).toContain('不设固定段落数、固定顺序或逐项检查表');
+    expect(prompt).toContain('时代感只选一至两个会影响当前行动的具体锚点');
+    expect(prompt).toContain('第一幕聚焦一个能够继续行动的具体事务、关系或现场变化');
     expect(prompt).toContain('先完整写 narrativeText');
-    expect(prompt).toContain('输出前自检');
-    expect(prompt).toContain('现场锚点、玩家行动承接、NPC 或环境反应、局面变化、下一步可互动点');
+    expect(prompt).toContain('这些是可选材料，不是固定顺序');
+    expect(prompt).not.toContain('开局正文必须同时完成四件事');
     expect(prompt).not.toContain('长度适中');
   });
 
@@ -300,9 +390,9 @@ describe('opening prompt', () => {
       narrativeLengthLevel: 'immersive'
     });
 
-    expect(prompt).toContain('开局 narrativeText 目标 1800-2800 个中文字符');
-    expect(prompt).toContain('最低不得少于 1200 个中文字符');
-    expect(prompt).toContain('常规回合 narrativeText 目标 1400-2200 个中文字符');
+    expect(prompt).toContain('当前篇幅档位目标 1800-2800 个中文字符');
+    expect(prompt).toContain('narrativeText 不得少于 1800 个中文字符');
+    expect(prompt).toContain('常规回合 narrativeText 目标 1400-2200 个中文字符且不得少于 1400 个中文字符');
   });
 
   it('uses the selected narrative perspective in the opening prompt', () => {
@@ -319,6 +409,87 @@ describe('opening prompt', () => {
     expect(prompt).toContain('本局选择第三人称');
     expect(prompt).toContain('玩家姓名“陈启明”或代词“他”');
     expect(prompt).toContain('玩家明确说出的对白可以自称“我”');
+  });
+
+  it('uses natural protagonist portrayal in the opening without granting key decisions', () => {
+    const setup = createSetup();
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({
+      setup,
+      initialState: state,
+      playerPortrayalMode: 'natural'
+    });
+
+    expect(prompt).toContain('正文演绎风格（硬约束，高于可编辑文风与酒馆预设）');
+    expect(prompt).toContain('本局选择“自然代演”');
+    expect(prompt).toContain('开局阶段还没有普通回合的玩家行动输入');
+    expect(prompt).toContain('如果“开局额外要求”明确写了主角要说或要做的内容');
+    expect(prompt).toContain('必须把该内容在 narrativeText 中真正演出来');
+    expect(prompt).toContain('绝对不得替玩家接受或拒绝机会');
+    expect(prompt).toContain('同意或升级亲密行为');
+    expect(prompt).toContain('停在第一个需要玩家回答或作出实质选择的位置');
+  });
+
+  it('defaults opening protagonist portrayal to natural performance', () => {
+    const setup = createSetup();
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({ setup, initialState: state });
+
+    expect(prompt).toContain('本局选择“自然代演”');
+    expect(prompt).toContain('开局阶段还没有普通回合的玩家行动输入');
+    expect(prompt).not.toContain('本局选择“玩家主导”');
+  });
+
+  it('uses player-led opening portrayal when explicitly selected', () => {
+    const setup = createSetup();
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({
+      setup,
+      initialState: state,
+      playerPortrayalMode: 'player_led'
+    });
+
+    expect(prompt).toContain('本局选择“玩家主导”');
+    expect(prompt).toContain('只有玩家明确输入的对白和动作');
+    expect(prompt).not.toContain('本局选择“自然代演”');
+  });
+
+  it('uses original opening prose with Tavern tuning while preserving the length contract', () => {
+    const setup = createSetup();
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({
+      setup,
+      initialState: state,
+      narrativeLengthLevel: 'long',
+      playerPortrayalMode: 'original'
+    });
+
+    expect(prompt).toContain('本局选择“原始”');
+    expect(prompt).toContain('恢复 1.0 版先立场面、再承接行动、再写人物与环境反馈');
+    expect(prompt).toContain('可以配合酒馆预设调整措辞、节奏、修辞与对白口味');
+    expect(prompt).toContain('当前篇幅档位目标 1300-2000 个中文字符');
+    expect(prompt).toContain('narrativeText 不得少于 1300 个中文字符');
+    expect(prompt).toContain('必须完成当前篇幅档位的目标与最低字符数');
+  });
+
+  it('requires Hong Kong Traditional Chinese for player-visible opening output', () => {
+    const setup = createSetup();
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({
+      setup,
+      initialState: state,
+      locale: 'zh-Hant-HK'
+    });
+
+    expect(prompt).toContain('玩家可见输出语言');
+    expect(prompt).toContain('香港繁體中文');
+    expect(prompt).toContain('narrativeText');
+    expect(prompt).toContain('JSON 字段名、稳定 ID、枚举值');
   });
 
   it('uses editable prompt overrides for opening style guides', () => {
@@ -350,13 +521,59 @@ describe('opening prompt', () => {
 
     expect(parsed).toHaveProperty('narrativeText');
     expect((parsed.narrativeText as string).length).toBeGreaterThan(180);
-    expect(((parsed.narrativeText as string).match(/【[^】]+】/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(((parsed.narrativeText as string).match(/【[^】]+】/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(parsed).toHaveProperty('initialActors');
     expect(parsed).toHaveProperty('playerPatch');
     expect(parsed).toHaveProperty('casePatches');
     expect(parsed).toHaveProperty('caseEvidencePatches');
     expect(parsed).toHaveProperty('deferredEventPatches');
     expect(parsed).toHaveProperty('assetPatch');
+  });
+
+  it('requires a triad opening to establish a patron, a peer, and one current responsibility', () => {
+    const setup: OpeningSetup = {
+      ...createSetup(),
+      currentIdentity: 'gang_member',
+      policeNumber: undefined,
+      lawIdentity: undefined
+    };
+    const state = createInitialRuntimeState(setup);
+
+    const prompt = composeOpeningPrompt({ setup, initialState: state });
+    const parsed = parseOpeningExample(prompt);
+    const actors = parsed.initialActors as Array<Record<string, unknown>>;
+    const matters = parsed.currentMatterPatches as Array<Record<string, unknown>>;
+
+    expect(actors.map((actor) => actor.playerRoleRelation)).toEqual(
+      expect.arrayContaining(['triad_patron', 'triad_peer'])
+    );
+    expect(actors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          playerRoleRelation: 'triad_patron',
+          computedAge: 43,
+          birthDate: `${state.time.year - 43}-05-12`,
+          clothing: expect.not.stringContaining('军装')
+        }),
+        expect.objectContaining({
+          playerRoleRelation: 'triad_peer',
+          computedAge: 29,
+          birthDate: `${state.time.year - 29}-08-18`,
+          clothing: expect.not.stringContaining('军装')
+        })
+      ])
+    );
+    expect(matters).toEqual([
+      expect.objectContaining({
+        source: 'triad_responsibility',
+        matterKind: 'social',
+        relatedOrganizationIds: [state.actors.player.roleProfiles.triad?.organizationId]
+      })
+    ]);
+    expect(prompt).toContain('直属上线并标记 playerRoleRelation="triad_patron"');
+    expect(prompt).toContain('同组成员并标记 playerRoleRelation="triad_peer"');
+    expect(prompt).toContain('source="triad_responsibility"');
+    expect(prompt).toContain('第一项责任不是传统任务，也不是强制指令');
   });
 
   it('does not hardcode ordinary NPC names in the opening JSON example', () => {

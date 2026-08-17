@@ -27,6 +27,8 @@ export const reputationCircleLabels: Record<ReputationCircle, string> = {
 
 export const neutralReputationSummary = '尚未形成稳定整体口碑。';
 
+const OVERALL_REPUTATION_BASELINE_VISIBILITY = 100;
+
 const legacyCircleAliases: Record<string, ReputationCircle> = {
   policeinternal: 'police',
   police: 'police',
@@ -93,10 +95,57 @@ export function createInitialReputationState(currentIdentity: CurrentIdentity): 
   return {
     notoriety: 0,
     overallReputation: 0,
+    overallReputationBaseline: 0,
     summary: neutralReputationSummary,
     circles: createInitialReputationCircles(currentIdentity),
     logs: []
   };
+}
+
+export function deriveOverallReputationBaseline(
+  circles: ReputationByCircle,
+  overallReputation: number
+): number {
+  let weightedStanding = 0;
+  let totalWeight = OVERALL_REPUTATION_BASELINE_VISIBILITY;
+
+  for (const circle of reputationCircleValues) {
+    const entry = circles[circle];
+    const visibilityWeight = clampReputationVisibility(entry.visibility);
+    if (visibilityWeight <= 0) continue;
+    weightedStanding += clampReputationScore(entry.standing) * visibilityWeight;
+    totalWeight += visibilityWeight;
+  }
+
+  return (
+    (clampReputationScore(overallReputation) * totalWeight - weightedStanding) /
+    OVERALL_REPUTATION_BASELINE_VISIBILITY
+  );
+}
+
+export function resolveOverallReputationBaseline(state: PlayerReputationState): number {
+  return typeof state.overallReputationBaseline === 'number' && Number.isFinite(state.overallReputationBaseline)
+    ? state.overallReputationBaseline
+    : deriveOverallReputationBaseline(state.circles, state.overallReputation);
+}
+
+export function deriveOverallReputationFromCircles(
+  circles: ReputationByCircle,
+  baseline = 0
+): number {
+  let weightedStanding =
+    (Number.isFinite(baseline) ? baseline : 0) * OVERALL_REPUTATION_BASELINE_VISIBILITY;
+  let totalWeight = OVERALL_REPUTATION_BASELINE_VISIBILITY;
+
+  for (const circle of reputationCircleValues) {
+    const entry = circles[circle];
+    const visibilityWeight = clampReputationVisibility(entry.visibility);
+    if (visibilityWeight <= 0) continue;
+    weightedStanding += clampReputationScore(entry.standing) * visibilityWeight;
+    totalWeight += visibilityWeight;
+  }
+
+  return clampReputationScore(weightedStanding / totalWeight);
 }
 
 export function normalizeReputationEntry(value: unknown, fallback: ReputationEntry): ReputationEntry {
@@ -142,17 +191,22 @@ export function normalizePlayerReputationState(
 ): PlayerReputationState {
   if (!value || typeof value !== 'object') return cloneReputationState(fallback);
   const raw = value as Partial<PlayerReputationState>;
+  const circles = normalizeReputationCircles(raw.circles, fallback.circles);
+  const overallReputationBaseline =
+    typeof raw.overallReputationBaseline === 'number' && Number.isFinite(raw.overallReputationBaseline)
+      ? raw.overallReputationBaseline
+      : typeof raw.overallReputation === 'number' && Number.isFinite(raw.overallReputation)
+        ? deriveOverallReputationBaseline(circles, raw.overallReputation)
+        : resolveOverallReputationBaseline(fallback);
   return {
     notoriety:
       typeof raw.notoriety === 'number' && Number.isFinite(raw.notoriety)
         ? clampReputationVisibility(raw.notoriety)
         : fallback.notoriety,
-    overallReputation:
-      typeof raw.overallReputation === 'number' && Number.isFinite(raw.overallReputation)
-        ? clampReputationScore(raw.overallReputation)
-        : fallback.overallReputation,
+    overallReputation: deriveOverallReputationFromCircles(circles, overallReputationBaseline),
+    overallReputationBaseline,
     summary: typeof raw.summary === 'string' && raw.summary.trim() ? raw.summary : fallback.summary,
-    circles: normalizeReputationCircles(raw.circles, fallback.circles),
+    circles,
     logs: Array.isArray(raw.logs)
       ? raw.logs.map((log) => ({
           ...log,
@@ -163,11 +217,14 @@ export function normalizePlayerReputationState(
 }
 
 export function cloneReputationState(state: PlayerReputationState): PlayerReputationState {
+  const circles = normalizeReputationCircles(state.circles, state.circles);
+  const overallReputationBaseline = resolveOverallReputationBaseline(state);
   return {
     notoriety: state.notoriety,
-    overallReputation: state.overallReputation,
+    overallReputation: deriveOverallReputationFromCircles(circles, overallReputationBaseline),
+    overallReputationBaseline,
     summary: state.summary,
-    circles: normalizeReputationCircles(state.circles, state.circles),
+    circles,
     logs: state.logs.map((log) => ({ ...log, gameTime: { ...log.gameTime } }))
   };
 }

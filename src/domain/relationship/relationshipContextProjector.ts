@@ -17,6 +17,8 @@ export interface RelationshipProjectionDiagnostics {
   projectedThreadIds: string[];
   heartbeatCandidateCount: number;
   heartbeatCandidateThreadIds: string[];
+  identityRegistryCount: number;
+  identityRegistryTruncatedCount: number;
   omittedHiddenCount: number;
   omittedIrrelevantCount: number;
   missingActorRefs: string[];
@@ -25,12 +27,20 @@ export interface RelationshipProjectionDiagnostics {
 export interface RelationshipContextProjection {
   threads: ProjectedRelationshipThread[];
   heartbeatCandidates: RelationshipHeartbeatCandidate[];
+  identityRegistry: Array<{
+    threadId: string;
+    kind: RelationshipThread['kind'];
+    primaryActorId?: string;
+    relatedActorIds: string[];
+    status: RelationshipThread['status'];
+  }>;
   diagnostics: RelationshipProjectionDiagnostics;
 }
 
 export interface RelationshipProjectionOptions {
   maxThreads?: number;
   maxHeartbeatCandidates?: number;
+  maxIdentityRegistry?: number;
   presentActorIds?: Iterable<string>;
 }
 
@@ -42,6 +52,7 @@ interface ScoredThread {
 
 const DEFAULT_MAX_THREADS = 5;
 const DEFAULT_MAX_HEARTBEAT_CANDIDATES = 3;
+const DEFAULT_MAX_IDENTITY_REGISTRY = 80;
 
 function activeActorIds(state: RuntimeState, presentActorIds?: Iterable<string>): Set<string> {
   const ids = new Set<string>([state.player.actorId]);
@@ -119,6 +130,7 @@ export function projectRelationshipContext(
 ): RelationshipContextProjection {
   const maxThreads = options.maxThreads ?? DEFAULT_MAX_THREADS;
   const maxHeartbeatCandidates = options.maxHeartbeatCandidates ?? DEFAULT_MAX_HEARTBEAT_CANDIDATES;
+  const maxIdentityRegistry = options.maxIdentityRegistry ?? DEFAULT_MAX_IDENTITY_REGISTRY;
   const activeIds = activeActorIds(state, options.presentActorIds);
 
   const allThreads = Object.values(state.relationshipThreads ?? {});
@@ -152,16 +164,33 @@ export function projectRelationshipContext(
     presentActorIds: activeIds,
     maxCandidates: maxHeartbeatCandidates
   });
+  const identityRegistry = visibleThreads
+    .sort(
+      (left, right) =>
+        gameTimeValue(right.updatedAt) - gameTimeValue(left.updatedAt) || left.threadId.localeCompare(right.threadId)
+    )
+    .slice(0, maxIdentityRegistry)
+    .map((thread) => ({
+      threadId: thread.threadId,
+      kind: thread.kind,
+      primaryActorId: thread.primaryActorId,
+      relatedActorIds: [...thread.relatedActorIds],
+      status: thread.status
+    }))
+    .sort((left, right) => left.threadId.localeCompare(right.threadId));
 
   return {
     threads,
     heartbeatCandidates,
+    identityRegistry,
     diagnostics: {
       sourceThreadCount: allThreads.length,
       projectedThreadCount: threads.length,
       projectedThreadIds: threads.map((thread) => thread.threadId),
       heartbeatCandidateCount: heartbeatCandidates.length,
       heartbeatCandidateThreadIds: heartbeatCandidates.map((candidate) => candidate.threadId),
+      identityRegistryCount: identityRegistry.length,
+      identityRegistryTruncatedCount: Math.max(0, visibleThreads.length - identityRegistry.length),
       omittedHiddenCount,
       omittedIrrelevantCount: Math.max(0, visibleThreads.length - scored.length),
       missingActorRefs: Array.from(missingRefs).sort()

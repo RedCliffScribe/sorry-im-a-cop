@@ -4,25 +4,21 @@ import {
   createCityPowerInstitutionView,
   type CityPowerInstitutionViewRecord
 } from '../../domain/cityPower/cityPowerDatabaseView';
+import {
+  getInstitutionCategory,
+  institutionCategoryRegistry,
+  type InstitutionCategoryId
+} from '../../domain/livelihood/organizationCategory';
 import type { Actor, ActorOrganizationRelation, OrganizationType, RuntimeState } from '../../domain/runtime/types';
 
 interface SocialInstitutionPanelModalProps {
   state: RuntimeState;
   onClose: () => void;
+  initialOrganizationId?: string;
+  onOpenLivelihood?: () => void;
 }
 
-type InstitutionFilter = 'all' | 'government' | 'icac' | 'legal' | 'media' | 'entertainment' | 'business' | 'community';
-
-const institutionFilters: Array<{ key: InstitutionFilter; label: string; types?: string[] }> = [
-  { key: 'all', label: '全部' },
-  { key: 'government', label: '政府', types: ['government'] },
-  { key: 'icac', label: '廉政公署', types: ['icac'] },
-  { key: 'legal', label: '法律', types: ['legal', 'court'] },
-  { key: 'media', label: '媒体', types: ['media'] },
-  { key: 'entertainment', label: '娱乐', types: ['entertainment'] },
-  { key: 'business', label: '商业', types: ['business', 'finance', 'property'] },
-  { key: 'community', label: '社区', types: ['community'] }
-];
+type InstitutionFilter = InstitutionCategoryId;
 
 const typeLabels: Record<OrganizationType | string, string> = {
   police_force: '警队',
@@ -35,6 +31,7 @@ const typeLabels: Record<OrganizationType | string, string> = {
   business: '商业',
   finance: '金融',
   property: '地产',
+  transport: '交通',
   public_service: '公共服务',
   community: '社区',
   family: '家庭',
@@ -124,8 +121,7 @@ function getRelatedCaseNames(state: RuntimeState, organization: CityPowerInstitu
 
 function filterOrganization(organization: CityPowerInstitutionViewRecord, activeFilter: InstitutionFilter): boolean {
   if (activeFilter === 'all') return true;
-  const filter = institutionFilters.find((item) => item.key === activeFilter);
-  return Boolean(filter?.types?.includes(organization.type));
+  return getInstitutionCategory(organization.id, organization.type) === activeFilter;
 }
 
 function EmptyValue({ children = '暂无记录。' }: { children?: string }) {
@@ -141,7 +137,12 @@ function DetailBlock({ title, children }: { title: string; children: ReactNode }
   );
 }
 
-export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutionPanelModalProps) {
+export function SocialInstitutionPanelModal({
+  state,
+  onClose,
+  initialOrganizationId,
+  onOpenLivelihood
+}: SocialInstitutionPanelModalProps) {
   const [activeFilter, setActiveFilter] = useState<InstitutionFilter>('all');
   const playerActor = state.actors[state.player.actorId];
   const visibleOrganizations = useMemo(
@@ -149,11 +150,11 @@ export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutio
       createCityPowerInstitutionView(state.organizations, state.player.currentIdentity, undefined, {
         actorId: state.player.actorId,
         organizationRelations: playerActor?.organizationRelations ?? []
-      }),
-    [playerActor?.organizationRelations, state.organizations, state.player.actorId, state.player.currentIdentity]
+      }, state.time.year),
+    [playerActor?.organizationRelations, state.organizations, state.player.actorId, state.player.currentIdentity, state.time.year]
   );
   const filteredOrganizations = visibleOrganizations.filter((organization) => filterOrganization(organization, activeFilter));
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialOrganizationId ?? null);
   const selectedOrganization = filteredOrganizations.find((organization) => organization.id === selectedId) ?? filteredOrganizations[0] ?? null;
 
   return (
@@ -182,7 +183,7 @@ export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutio
             当前显示 <strong>{filteredOrganizations.length}</strong>
           </span>
           <span>
-            当前分类 <strong>{institutionFilters.find((item) => item.key === activeFilter)?.label ?? '全部'}</strong>
+            当前分类 <strong>{institutionCategoryRegistry.find((item) => item.id === activeFilter)?.label ?? '全部'}</strong>
           </span>
         </div>
 
@@ -191,18 +192,21 @@ export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutio
         ) : (
           <div className="institution-panel-body">
             <aside className="institution-filter-list" aria-label="机构分类">
-              {institutionFilters.map((filter) => {
+              {institutionCategoryRegistry.map((filter) => {
                 const count =
-                  filter.key === 'all'
+                  filter.id === 'all'
                     ? visibleOrganizations.length
-                    : visibleOrganizations.filter((organization) => filter.types?.includes(organization.type)).length;
+                    : visibleOrganizations.filter(
+                        (organization) =>
+                          getInstitutionCategory(organization.id, organization.type) === filter.id
+                      ).length;
                 return (
                   <button
-                    key={filter.key}
+                    key={filter.id}
                     type="button"
-                    className={activeFilter === filter.key ? 'active' : ''}
+                    className={activeFilter === filter.id ? 'active' : ''}
                     onClick={() => {
-                      setActiveFilter(filter.key);
+                      setActiveFilter(filter.id);
                       setSelectedId(null);
                     }}
                   >
@@ -235,7 +239,11 @@ export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutio
                   </div>
 
                   {selectedOrganization ? (
-                    <InstitutionDetail state={state} organization={selectedOrganization} />
+                    <InstitutionDetail
+                      state={state}
+                      organization={selectedOrganization}
+                      onOpenLivelihood={onOpenLivelihood}
+                    />
                   ) : null}
                 </>
               )}
@@ -247,7 +255,19 @@ export function SocialInstitutionPanelModal({ state, onClose }: SocialInstitutio
   );
 }
 
-function InstitutionDetail({ state, organization }: { state: RuntimeState; organization: CityPowerInstitutionViewRecord }) {
+function InstitutionDetail({
+  state,
+  organization,
+  onOpenLivelihood
+}: {
+  state: RuntimeState;
+  organization: CityPowerInstitutionViewRecord;
+  onOpenLivelihood?: () => void;
+}) {
+  const playerCivilianProfile = state.actors[state.player.actorId]?.roleProfiles.civilian;
+  const isCurrentEmployer =
+    state.player.currentIdentity === 'civilian' &&
+    playerCivilianProfile?.employerOrganizationId === organization.id;
   const relatedActors = getRelatedActors(state, organization);
   const relatedPlaces = getRelatedPlaceNames(state, organization);
   const relatedCases = getRelatedCaseNames(state, organization);
@@ -278,6 +298,25 @@ function InstitutionDetail({ state, organization }: { state: RuntimeState; organ
           <span>{sourceLabel(organization.source)}</span>
         </div>
       </header>
+
+      {isCurrentEmployer ? (
+        <section className="institution-current-employment" aria-label="当前任职">
+          <div>
+            <strong>当前任职</strong>
+            <span>
+              {playerCivilianProfile.publicOccupation ?? '当前职业'}
+              {playerCivilianProfile.workUnitSummary
+                ? ` · ${playerCivilianProfile.workUnitSummary}`
+                : ''}
+            </span>
+          </div>
+          {onOpenLivelihood ? (
+            <button type="button" onClick={onOpenLivelihood}>
+              查看我的营生
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       <DetailBlock title="简介">
         <p>{organization.summary}</p>

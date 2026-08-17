@@ -1,4 +1,6 @@
-export const ONLINE_WINDOW_SECONDS = 120;
+export const ONLINE_WINDOW_SECONDS = 10 * 60;
+export const ANALYTICS_HEARTBEAT_INTERVAL_SECONDS = 5 * 60;
+export const ANALYTICS_HEARTBEAT_MIN_WRITE_SECONDS = 4 * 60;
 export const DEFAULT_ANALYTICS_TIMEZONE = 'Asia/Shanghai';
 
 const textEncoder = new TextEncoder();
@@ -82,6 +84,18 @@ export function readCloudflareRegion(request) {
     regionCode: sanitizeText(cf.regionCode, '', 12, /^[A-Za-z0-9-]+$/),
     city: sanitizeText(cf.city, '未知城市', 96)
   };
+}
+
+export function isHeartbeatWriteDue(
+  lastSeenAt,
+  now,
+  minWriteSeconds = ANALYTICS_HEARTBEAT_MIN_WRITE_SECONDS
+) {
+  if (!lastSeenAt) return true;
+  const previous = Date.parse(lastSeenAt);
+  const current = now instanceof Date ? now.getTime() : Date.parse(now);
+  if (!Number.isFinite(previous) || !Number.isFinite(current)) return true;
+  return current - previous >= minWriteSeconds * 1_000;
 }
 
 export function hasAdminAuthorization(request, expectedToken) {

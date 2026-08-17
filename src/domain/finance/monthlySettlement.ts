@@ -1,4 +1,5 @@
 import { appendLedgerEntry, formatMonthKey, syncPlayerEconomyWithFinance } from './financeState';
+import { addMoneyAmount } from './moneyAmount';
 import { formatCurrencyAmount } from '../worldpack/economyConfig';
 import type {
   FinanceAccount,
@@ -60,8 +61,10 @@ function applySingleMonthSettlement(
   const bankNet = accountNet(activeItems, 'bank');
   const startingCashOnHand = finance.cashOnHand;
   const startingBankBalance = finance.bankBalance;
-  const endingCashOnHand = Math.max(0, startingCashOnHand + cashNet);
-  const endingBankBalance = Math.max(0, startingBankBalance + bankNet);
+  const cashResult = addMoneyAmount(startingCashOnHand, cashNet);
+  const bankResult = addMoneyAmount(startingBankBalance, bankNet);
+  const endingCashOnHand = cashResult.applied ? cashResult.value : startingCashOnHand;
+  const endingBankBalance = bankResult.applied ? bankResult.value : startingBankBalance;
   const itemSummaries = activeItems.map(
     (item) => `${item.direction === 'income' ? '收入' : '支出'}：${item.title} ${formatCurrencyAmount(item.amount, worldpackId)}；${item.summary}`
   );

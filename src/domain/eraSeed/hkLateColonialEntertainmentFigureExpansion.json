@@ -4054,5 +4054,344 @@
       "to": 1996
     },
     "sourceCredits": 6
+  },
+  {
+    "id": "fig_hk_ent_manual_pauline_chan_bo_lin",
+    "sourceId": "manual:lovehkfilm:chan_pauline",
+    "displayName": "陈宝莲",
+    "englishName": "Pauline Chan Bo-Lin",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 23,
+    "recognitionAliases": [
+      "陳寶蓮",
+      "Pauline Chan"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_julie_lee_wa_yuet",
+    "sourceId": "manual:fangoria:julie_lee_wa_yuet",
+    "displayName": "李华月",
+    "englishName": "Julie Lee Wa-Yuet",
+    "kinds": [
+      "actor",
+      "director",
+      "screenwriter"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 2,
+    "recognitionAliases": [
+      "李華月",
+      "Julie Lee"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_diana_pang",
+    "sourceId": "manual:hkfilm:diana_pang",
+    "displayName": "彭丹",
+    "englishName": "Diana Pang",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1995,
+      "to": 1996
+    },
+    "sourceCredits": 2,
+    "recognitionAliases": [
+      "彭丹"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_teresa_mak",
+    "sourceId": "manual:hkmdb:teresa_mak",
+    "displayName": "麦家琪",
+    "englishName": "Teresa Mak",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "麥家琪",
+      "Mak Ka-Kei"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_q23888552",
+    "sourceId": "Q23888552",
+    "displayName": "童玲",
+    "englishName": "Maria Tung Ling",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1984,
+      "to": 1992
+    },
+    "sourceCredits": 17,
+    "recognitionAliases": [
+      "童鈴",
+      "Maria Tung",
+      "Tong Ling"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_rena_murakami",
+    "sourceId": "manual:wikipedia:rena_murakami",
+    "displayName": "村上丽奈",
+    "englishName": "Rena Murakami",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1994
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "村上麗奈",
+      "村上 麗奈"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_chan_wing_chi",
+    "sourceId": "manual:chinesemoviedb:chan_wing_chi",
+    "displayName": "陈颖芝",
+    "englishName": "Chan Wing-Chi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1994
+    },
+    "sourceCredits": 9,
+    "recognitionAliases": [
+      "陳穎芝"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_isabella_chow",
+    "sourceId": "manual:tmdb:isabella_chow",
+    "displayName": "周弘",
+    "englishName": "Isabella Chow",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1990,
+      "to": 1995
+    },
+    "sourceCredits": 12,
+    "recognitionAliases": [
+      "Chow Wang"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_tsui_man_wah",
+    "sourceId": "manual:chinesemoviedb:tsui_man_wah",
+    "displayName": "徐曼华",
+    "englishName": "Tsui Man-Wah",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1987,
+      "to": 1994
+    },
+    "sourceCredits": 13,
+    "recognitionAliases": [
+      "徐曼華",
+      "Man-Wah Tsui"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_cindy_yip",
+    "sourceId": "manual:goldposter:cindy_yip",
+    "displayName": "叶先儿",
+    "englishName": "Cindy Yip",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 17,
+    "recognitionAliases": [
+      "葉先兒",
+      "叶仙儿",
+      "Yip Sin-Yi"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_cheng_yim_lai",
+    "sourceId": "manual:hkfilm:cheng_yim_lai",
+    "displayName": "郑艳丽",
+    "englishName": "Cheng Yim-Lai",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 2,
+    "recognitionAliases": [
+      "鄭艷麗"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_sharon_kwok",
+    "sourceId": "manual:hkfilm:sharon_kwok",
+    "displayName": "郭秀云",
+    "englishName": "Sharon Kwok",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1989,
+      "to": 1994
+    },
+    "sourceCredits": 10,
+    "recognitionAliases": [
+      "郭秀雲",
+      "Kwok Sau-Wan"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_chik_king_man",
+    "sourceId": "manual:hkmdb:chik_king_man",
+    "displayName": "植敬雯",
+    "englishName": "King-Man Chik",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1996
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "Chik King-Man"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_lee_lai_lai",
+    "sourceId": "manual:hk01:lily_lee",
+    "displayName": "李莉莉",
+    "englishName": "Lily Lee",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1991,
+      "to": 1996
+    },
+    "sourceCredits": 9,
+    "recognitionAliases": [
+      "李丽娴",
+      "李麗嫻",
+      "Lily Lee Lee-Lee"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_tsang_siu_yin",
+    "sourceId": "manual:hkfilm:tsang_siu_yin",
+    "displayName": "曾小燕",
+    "englishName": "Tsang Siu-Yin",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 5,
+    "recognitionAliases": [
+      "Tsang Siu-Yin"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_wong_wing_fong",
+    "sourceId": "manual:hkfilm:wong_wing_fong",
+    "displayName": "汪永芳",
+    "englishName": "Wong Wing-Fong",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "Wong Wing-Fong"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_yau_yuk_yue",
+    "sourceId": "manual:hkfilm:yau_yuk_yue",
+    "displayName": "邱玉茹",
+    "englishName": "Yau Yuk-Yue",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1993
+    },
+    "sourceCredits": 3,
+    "recognitionAliases": [
+      "Yau Yuk-Yue"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_rena_otomo",
+    "sourceId": "manual:hkmdb:rena_otomo",
+    "displayName": "大友梨奈",
+    "englishName": "Rena Otomo",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1992,
+      "to": 1995
+    },
+    "sourceCredits": 6,
+    "recognitionAliases": [
+      "大友利奈",
+      "Otomo Rena"
+    ]
+  },
+  {
+    "id": "fig_hk_ent_manual_ruby_wong_jo_yi",
+    "sourceId": "manual:watchpeak:ruby_wong_jo_yi",
+    "displayName": "黄祖儿",
+    "englishName": "Ruby Wong Jo-Yi",
+    "kinds": [
+      "actor"
+    ],
+    "activeYears": {
+      "from": 1993,
+      "to": 1996
+    },
+    "sourceCredits": 8,
+    "recognitionAliases": [
+      "黃祖兒",
+      "Wong Jo-Yi"
+    ]
   }
 ]

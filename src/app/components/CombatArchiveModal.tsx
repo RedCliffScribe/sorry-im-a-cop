@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { resolveCombatVisualAssets } from '../combatVisualAssets';
 import type { CombatEvent, CombatEventId, JudgementCheck, RuntimeState } from '../../domain/runtime/types';
+import { judgementAttributeLabels } from '../../domain/conflict/localJudgement';
 
 interface CombatArchiveModalProps {
   state: RuntimeState;
@@ -10,6 +11,7 @@ interface CombatArchiveModalProps {
 
 const combatOutcomeLabels: Record<CombatEvent['outcome'], string> = {
   player_advantage: '玩家占优',
+  opponent_advantage: '对手占优',
   player_wounded: '玩家受伤',
   opponent_subdued: '对方被制服',
   opponent_escaped: '对方逃脱',
@@ -174,8 +176,9 @@ function CombatDetail({
                       <article key={check.checkId}>
                         <strong>{check.title}</strong>
                         <span>
-                          难度 {check.difficulty} / 判定值 {check.score} / 差额 {formatSigned(check.margin)} /{' '}
-                          {judgementOutcomeLabels[check.outcome]}
+                          {check.rulesetVersion === 'v1.1-local-d100' && check.primaryAttribute
+                            ? `${judgementAttributeLabels[check.primaryAttribute]} ${check.primaryAttributeValue} / 目标值 ${check.effectiveTarget} / d100 ${check.presetRoll} / 余量 ${formatSigned(check.margin)} / ${judgementOutcomeLabels[check.outcome]}`
+                            : `难度 ${check.difficulty} / 判定值 ${check.score} / 差额 ${formatSigned(check.margin)} / ${judgementOutcomeLabels[check.outcome]}`}
                         </span>
                         <p>{check.shortSummary}</p>
                       </article>

@@ -1,8 +1,10 @@
 import type { RuntimeState } from '../runtime/types';
 import type { RuntimeRepository } from './RuntimeRepository';
 
+export const LEGACY_RUNTIME_STORAGE_KEY = 'sorry-im-a-cop-v2-runtime';
+
 export class LocalStorageRuntimeRepository implements RuntimeRepository {
-  constructor(private readonly key = 'sorry-im-a-cop-v2-runtime') {}
+  constructor(private readonly key = LEGACY_RUNTIME_STORAGE_KEY) {}
 
   async load(): Promise<RuntimeState | null> {
     const raw = localStorage.getItem(this.key);

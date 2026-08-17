@@ -114,6 +114,27 @@ describe('IndexedDbTurnSnapshotRepository', () => {
     expect(await repository.listTurnSnapshots('chain_a')).toEqual([]);
   });
 
+  it('clears snapshots across every rollback chain', async () => {
+    const repository = new IndexedDbTurnSnapshotRepository('cop-v2-test-turn-snapshots');
+    await repository.saveTurnSnapshot({
+      chainId: 'chain_a',
+      turnNumber: 1,
+      snapshot: createSnapshot('第一条链', 0),
+      maxDepth: 20
+    });
+    await repository.saveTurnSnapshot({
+      chainId: 'chain_b',
+      turnNumber: 1,
+      snapshot: createSnapshot('第二条链', 0),
+      maxDepth: 20
+    });
+
+    await repository.clearAll();
+
+    expect(await repository.listTurnSnapshots('chain_a')).toEqual([]);
+    expect(await repository.listTurnSnapshots('chain_b')).toEqual([]);
+  });
+
   it('upgrades a version 1 snapshot store with a chainId index and preserves records', async () => {
     const snapshot = createSnapshot('旧链行动', 0);
     const legacyDb = await openDatabase('cop-v2-test-turn-snapshots', 1, (db) => {

@@ -1,26 +1,67 @@
 import { getNarrativeLengthProfile, type NarrativeLengthLevel } from '../settings/narrativeLength';
+import { getCantoneseFlavorProfile } from '../settings/cantoneseFlavor';
+import { getGameDifficultyProfile } from '../settings/gameDifficulty';
+import {
+  calculateEffectiveTarget,
+  deriveLocalJudgementOutcome,
+  judgementAttributeLabels,
+  judgementDifficultyLabels,
+  judgementDifficultyModifiers,
+  type LocalJudgementSourceSnapshot
+} from '../conflict/localJudgement';
+import type { JudgementResolutionEnvelope } from '../conflict/judgementPreflight';
+import type { AttributeBlock, GameDifficultyLevel } from '../runtime/types';
 import {
   formatNpcSimulationPackageForPrompt,
   type NpcSimulationPackage
 } from '../npc/npcSimulation';
 import { resolvePromptText } from '../prompts/promptRegistry';
 import { hk1980sOpeningScenarios, hk1980sPoliceRankKnowledge, hk1980sTriadBehaviorKnowledge } from '../worldpack/hk1980sOpening';
-import type { NarrativePerspective, PregnancyMode, PromptSettings } from '../settings/types';
+import { hk1980sPoliceOperationalUnitKnowledge } from '../worldpack/hk1980sPoliceOperationalUnits';
+import type {
+  NarrativePerspective,
+  PlayerPortrayalMode,
+  PregnancyMode,
+  PromptSettings
+} from '../settings/types';
 import {
   createAdultRelationshipStyleGuide,
   createNarrativePerspectiveGuide,
-  createNarrativeStyleAndDisplayGuide
+  createNarrativeStyleAndDisplayGuide,
+  createPlayerActionLock,
+  createPlayerControlOutputRule,
+  createPlayerPortrayalGuide
 } from './narrativePromptGuides';
 import type { PromptContext } from './selectContext';
 import { formatGameTimeWithWeekday, formatTimeReferenceFrame } from '../time/gameTime';
+import { formatMemoryTemporalReferences } from '../time/memoryTemporal';
 import { formatCurrencyAmountByConfig } from '../worldpack/economyConfig';
+import { createNarrativeLanguageGuide, type AppLocale } from '../localization/appLocale';
+import { formatEverydayEmployerTemplateCandidates } from '../worldpack/hk1980sLivelihood';
+import { formatDramaExecutionPrompt } from '../drama/prompt';
+import type { DramaPlan, DramaPlanningContext, ForegroundContract } from '../drama/types';
+import { VEHICLE_ASSET_WRITEBACK_CONTRACT } from '../assets/assetWritebackContract';
+import { formatHistoricalHongKongNewsAnchorsForPrompt } from '../news/historicalHongKongNewsAnchors';
 
 export interface ComposePromptOptions {
   narrativeLengthLevel?: NarrativeLengthLevel;
   narrativePerspective?: NarrativePerspective;
+  playerPortrayalMode?: PlayerPortrayalMode;
+  locale?: AppLocale;
   pregnancyMode?: PregnancyMode;
   npcSimulationPackage?: NpcSimulationPackage;
   promptSettings?: PromptSettings;
+  dramaPlanningContext?: DramaPlanningContext;
+  dramaPlan?: DramaPlan;
+  foregroundContract?: ForegroundContract;
+  localJudgement?: {
+    presetRoll: number;
+    attributes: AttributeBlock;
+    gameDifficulty: GameDifficultyLevel;
+    sources: LocalJudgementSourceSnapshot;
+    preflightReason?: string;
+    resolution?: JudgementResolutionEnvelope;
+  };
 }
 
 function section(title: string, body: string): string {
@@ -147,7 +188,9 @@ function formatNpcMemoryProjection(context: PromptContext): string {
   const entries = projection.entries.map((entry) => {
     const reasons = entry.reasons.length ? entry.reasons.join(',') : 'none';
     const vector = entry.vectorScore === undefined ? '' : ` vectorScore=${entry.vectorScore.toFixed(3)}`;
-    return `- actorId=${entry.actorId} actor=${entry.actorName} route=${entry.route} core=${entry.coreActor} memoryId=${entry.memoryId} time=${formatMemoryTime(entry.gameTime)} relative=${entry.relativeLabel} tier=${entry.tier} certainty=${entry.certainty} score=${entry.score}${vector} reasons=${reasons}\n  memory=${entry.text}`;
+    const temporalReferences = formatMemoryTemporalReferences(entry.temporalReferences, context.currentTime);
+    const temporal = temporalReferences.length ? `\n  temporalReferences=${temporalReferences.join(' | ')}` : '';
+    return `- actorId=${entry.actorId} actor=${entry.actorName} route=${entry.route} core=${entry.coreActor} memoryId=${entry.memoryId} time=${formatMemoryTime(entry.gameTime)} relative=${entry.relativeLabel} tier=${entry.tier} certainty=${entry.certainty} score=${entry.score}${vector} reasons=${reasons}\n  memory=${entry.text}${temporal}`;
   });
 
   return [
@@ -157,7 +200,7 @@ function formatNpcMemoryProjection(context: PromptContext): string {
     'Rule: this is the single routed NPC memory source for continuity. Prefer present NPC memories, then explicitly mentioned NPCs, then remote-presence candidates.',
     'Rule: NPC memory importance is intentionally ignored. Selection comes from actor route, layer anchors, text/vector relevance and recency.',
     'Rule: time 是记忆发生的绝对时间，relative 是依据本回合当前时间临时计算的称呼；绝对 time 是唯一权威。',
-    'Rule: memory 文本里残留的“昨天、昨晚、今晚”等属于事件发生时的旧说法，不得据此重定日期；需要相对称呼时使用该条目的 relative。',
+    'Rule: memory 文本已尽可能按形成时的绝对日期展开；temporalReferences 给出解析后的绝对日期及其相对本回合的状态。它比旧措辞更权威。',
     'Rule: use these memories to preserve relationship continuity, remembered promises, grudges, favors, fear, trust, and conversational callbacks. Do not restate them mechanically.',
     'Rule: durable new NPC memories must still be written through actorMemories; this section is read-only context.'
   ].join('\n');
@@ -212,7 +255,7 @@ function formatRecentStoryProjection(context: PromptContext): string {
     '### recent_raw_story',
     formatList(rawEntries),
     `diagnostics: total=${projection.diagnostics.totalNarratorEntries} raw=${projection.diagnostics.rawEntryCount} summaries=${projection.diagnostics.summaryEntryCount} omittedEarlier=${projection.diagnostics.omittedEarlierCount}`,
-    'Rule: recent_raw_story preserves the latest player input and narrative wording for immediate continuity, tone, unresolved gestures and dialogue carry-over.',
+    'Rule: recent_raw_story preserves the latest player input, confirmed facts, spatial continuity, unfinished actions and exact dialogue carry-over; it is not a style sample, so do not imitate its wording, metaphors, sentence rhythm or paragraph pattern.',
     'Rule: older turns are covered by MEMORY_LAYER_PROJECTION and are not repeated here.',
     'Rule: historical suggestedActions are intentionally omitted. Do not infer old UI action choices from narrative context or copy choice-prompt phrasing into narrativeText.',
     'Rule: RECENT_COMPLETED_FACTS and other structured state override recent_raw_story whenever they conflict; recent prose cannot reopen or erase a structured terminal outcome.',
@@ -263,7 +306,9 @@ function formatWeatherProjection(context: PromptContext): string {
     `tags=${weather.tags.join(',') || 'none'}`,
     weather.reason ? `reason=${weather.reason}` : 'reason=none',
     '规则：天气用于现场氛围、能见度、湿滑、闷热、人流/交通和体力消耗参考；不是本地自动判定器。',
-    '规则：如果本回合天气明显变化或成为行动阻力/机会，写 weatherPatch；不要只在正文里漂移天气。'
+    '规则：天气是当前环境事实。即使天气影响了行动，也不要仅因再次描写其影响而写 weatherPatch。',
+    '规则：只有正文明确发生了实际气象变化，且新 condition 与当前 condition 不同时，才写 weatherPatch；普通时间推进和天气到期后的变化由本地系统处理。',
+    '规则：不得为了气氛反复延长细雨、大雨、雷雨或台风；当前天气可以继续影响路面、能见度、交通、人流、衣着、体力和本地判定因素。'
   ].join('\n');
 }
 
@@ -320,6 +365,8 @@ function formatAssetProjection(context: PromptContext): string {
     '规则：剧情中产生或变化的玩家拥有物品/资产必须用 assetPatch 写回；不要只写在正文里。',
     '规则：交给别人、寄出、提交到案件或证物袋、卖掉、丢失、销毁、消耗的物品，必须用 assetPatch.removeItems 从玩家持有中移除；提交案件时填写 movedToCaseId。',
     '规则：物品仍由玩家持有但内容变化时，必须复用同一个 itemId 用 assetPatch.upsertItems 更新完整物品对象；例如小说手稿从前三章推进到前四章，不要新建重复稿件，也不要让旧稿件消失。',
+    '规则：可直接花用的现金、港币、钞票和零钱只进入 financePatch，不得成为物品；支票、本票、汇票、存单、债券、欠条、收据和礼券等独立凭据在兑现前可以作为物品。',
+    '规则：钱包、钥匙串等不同实体不得合成一件组合物品；assetPatch.equippedItemIds 最多三项，只能引用应用后仍存在的真实物品 ID。',
     '规则：带 evidence 的物品默认是有效证据；只有剧情明确存在瑕疵、污染、来源争议或口径冲突时才写 disputed=true 和 disputeSummary。'
   ].join('\n');
 }
@@ -358,7 +405,8 @@ function formatCaseProjection(context: PromptContext): string {
     `diagnostics: selectedCases=${context.caseProjection.diagnostics.selectedCaseIds.join(',') || 'none'} selectedEvidence=${context.caseProjection.diagnostics.selectedEvidenceIds.join(',') || 'none'} omittedEvidence=${context.caseProjection.diagnostics.omittedEvidenceCount}`,
     'Rule: case status changes, new evidence, new actors, prosecution/court updates, or case activity must be written through casePatches and caseEvidencePatches. Do not infer or auto-close cases locally. Ordinary patrol help, nuisance calls, noise complaints, shopkeeper requests and on-scene mediation belong in currentMatterPatches or memories unless they have formal filing, serious harm, evidence, arrest, superior assignment or likely multi-turn investigation.',
     'Rule: playerRole=aware/involved means 相关案件，不是玩家当前负责案件；除非玩家主动提到、当前地点/人物直接相关、或 recentVisibleActivity 有新通知，不要让这类案件反复召唤玩家问话、补材料或重新办案。',
-    'Rule: if the story confirms a case has been transferred to 已移交 CID/反黑/重案/检控 or another unit, and the player is no longer lead/assist/execute, update it through casePatches with playerRole=aware or involved, and write leadActorName/currentFocus/playerVisibleProgress to show that another unit now handles it while the player only keeps knowledge or connection.'
+    'Rule: if the story confirms a case has been transferred to 已移交 CID/反黑/重案/检控 or another unit, and the player is no longer lead/assist/execute, update it through casePatches with playerRole=aware or involved, and write leadActorName/currentFocus/playerVisibleProgress to show that another unit now handles it while the player only keeps knowledge or connection.',
+    'Rule: when playerRole=assist or execute and the story explicitly establishes an existing non-player actor as the case lead, handler or officer in charge, casePatches must include both that stable leadActorId and leadActorName. Never invent or replace an actor ID from prose alone.'
   ].join('\n');
 }
 
@@ -386,7 +434,7 @@ function formatFinanceProjection(projection: PromptContext['financeProjection'])
   const cashflows = projection.activeCashflows
     .map(
       (item) =>
-        `- ${item.direction === 'income' ? '收入' : '支出'}：${item.title} ${formatAmount(item.amount)}/月，进入${formatAccount(item.account)}；${item.summary}`
+        `- itemId=${item.itemId} ${item.direction === 'income' ? '收入' : '支出'}：${item.title} ${formatAmount(item.amount)}/月，进入${formatAccount(item.account)}${item.identityBinding ? `，绑定身份=${item.identityBinding}` : ''}；${item.summary}`
     )
     .join('\n') || '- 无固定收支项目';
   const ledger = projection.recentLedger
@@ -414,10 +462,13 @@ function formatFinanceProjection(projection: PromptContext['financeProjection'])
     '月度报告：',
     reports,
     'Rule: upsertCashflows is only for stable recurring monthly income/expense being created, changed, or ended. Salary, rent, asset income and other formal recurring payments normally use account="bank".',
+    'Rule: player job or role income must set identityBinding to civilian, gang_member, or police. Rewrite an existing arrangement by reusing its itemId; pause it by upserting the same full item with status="paused"; end it with removeCashflowItemIds.',
+    '规则：市民的稳定雇佣工资可建立固定收入；无业、散工、按更和数日短工不建立整月工资，在实际领钱时做一次性结算。社团职级没有统一工资，只有明确稳定的场所月例、掩护职业或资产收益才建立固定收入。',
     'Rule: concrete one-time scene payments normally use cashDelta and account="cash"; bank transfers, cheques and formal account payments use bankDelta and account="bank". Do not invent a transfer between accounts.',
     'Rule: every concrete one-time payment or income must include both the matching financePatch cash/bank delta and one ledgerEntries item. Minimal ledger shape: {"direction":"expense","amount":35,"account":"cash","title":"买烟","summary":"在报摊买了一包烟。"}',
+    '规则：金钱写回必须使用本回合真实发生的具体整数金额；不得因为数额罕见而擅自缩小，也不得把金额上限、字段示例或技术限制当作剧情事实。没有实际收支时不要为了“同步”而改写余额。',
     '规则：固定收入/支出写 financePatch.upsertCashflows；灰色收入、礼物、人情可另写 grayLedgerPatch，但灰色账本只记录来源，不直接改变现金或存款；真实到账仍必须写 financePatch。',
-    '成长规则：只有本回合完成有意义的行动、调查、冲突、训练或重要社交时，才可写 playerPatch.progression.experienceGain（通常 1-30，重大成果可更高）；不得直接返回等级、当前经验或自由属性点。'
+    '成长规则：判定、战斗、案件阶段、事项完成与结构化关系里程碑由本地结算经验，不要重复奖励。playerPatch.progression.experienceGain 只用于训练、工作或重要社交等难以结构化的成长建议；普通日常和无进展回合不要写，通常 4-12，重要非结构化成果最多 20。不得直接返回等级、当前经验或自由属性点。'
   ].join('\n');
 }
 
@@ -475,6 +526,28 @@ function formatOrganizationStructureTree(
     .join('\n');
 }
 
+function formatTriadOrganizationProfile(
+  organization: PromptContext['institutionProjection']['organizations'][number]
+): string {
+  const profile = organization.triadProfile;
+  const state = organization.triadState;
+  if (!profile || !state) return '';
+  const areas = profile.activityAreas.map((area) => {
+    const runtime = state.activityAreas.find((item) => item.placeId === area.placeId);
+    return `${area.placeId}:${area.label} activity=${area.activitySummary} status=${runtime?.statusSummary ?? '未确认'} pressure=${runtime?.pressureSummary ?? area.localPressureSummary} confidence=${runtime?.confidence ?? 'unknown'}`;
+  });
+  return [
+    `\n  triadProfile.organizationStyle=${profile.organizationStyle}`,
+    `\n  triadProfile.decisionCulture=${profile.decisionCulture}`,
+    `\n  triadProfile.leadershipSelection=${profile.leadershipSelection}`,
+    `\n  triadProfile.operatingLines=${profile.operatingLines.join('；') || 'none'}`,
+    `\n  triadProfile.customaryRules=${profile.customaryRules.join('；') || 'none'}`,
+    `\n  triadProfile.internalFaultLines=${profile.internalFaultLines.join('；') || 'none'}`,
+    `\n  triadState.leadership=phase:${state.leadership.phase} summary:${state.leadership.visibleSummary} next:${state.leadership.nextMilestone ?? 'none'} leader:${state.leadership.currentLeaderActorId ?? 'unknown'} candidates:${state.leadership.knownCandidateActorIds.join(',') || 'none'} confidence:${state.leadership.confidence}`,
+    `\n  triadState.activityAreas=${areas.join(' | ')}`
+  ].join('');
+}
+
 function formatInstitutionProjection(context: PromptContext): string {
   const projection = context.institutionProjection;
   const organizations = projection.organizations.map(
@@ -485,7 +558,8 @@ function formatInstitutionProjection(context: PromptContext): string {
             .map((line) => `    ${line}`)
             .join('\n')}`
         : '\n  structureTree=none';
-      return `- organizationId=${organization.organizationId} name=${organization.name} type=${organization.type} importance=${organization.importance} reasons=${organization.reasons.join(',') || 'none'}\n  summary=${organization.summary}\n  publicKnowledge=${organization.publicKnowledge}\n  currentState=${organization.currentState}\n  stanceTowardPlayer=${organization.stanceTowardPlayer}\n  pressureSummary=${organization.pressureSummary}${structureTree}\n  relatedActors=${organization.relatedActorIds.join(',') || 'none'} relatedPlaces=${organization.relatedPlaceIds.join(',') || 'none'} relatedCases=${organization.relatedCaseIds.join(',') || 'none'}`;
+      const triadProfile = formatTriadOrganizationProfile(organization);
+      return `- organizationId=${organization.organizationId} name=${organization.name} aliases=${organization.aliases.join(',') || 'none'} type=${organization.type} importance=${organization.importance} reasons=${organization.reasons.join(',') || 'none'}\n  summary=${organization.summary}\n  publicKnowledge=${organization.publicKnowledge}\n  currentState=${organization.currentState}\n  stanceTowardPlayer=${organization.stanceTowardPlayer}\n  pressureSummary=${organization.pressureSummary}${structureTree}${triadProfile}\n  relatedActors=${organization.relatedActorIds.join(',') || 'none'} relatedPlaces=${organization.relatedPlaceIds.join(',') || 'none'} relatedCases=${organization.relatedCaseIds.join(',') || 'none'}`;
     }
   );
 
@@ -498,10 +572,66 @@ function formatInstitutionProjection(context: PromptContext): string {
     `diagnostics: source=${projection.diagnostics.sourceOrganizationCount} projected=${projection.diagnostics.projectedOrganizationCount} projectedIds=${projection.diagnostics.projectedOrganizationIds.join(',') || 'none'} omittedHidden=${projection.diagnostics.omittedHiddenCount} omittedIrrelevant=${projection.diagnostics.omittedIrrelevantCount} missingRefs=${projection.diagnostics.missingOrganizationRefs.join(',') || 'none'}`,
     'Rule: this is a selected projection of known social institutions, not a complete government directory or organization-management system.',
     'Rule: changes to stable institutions must be written through organizationPatches.',
+    'ORGANIZATION_IDENTITY_LOCK: if an existing institution, employer, player-owned enterprise, or one of its aliases is being updated, reuse the supplied organizationId exactly. A renamed description or an added phrase such as family/group/company does not create a new institution.',
     'Rule: society hierarchy updates must use organizationPatches[].structureTree. 未知职位或未知人员写“未知”，不要用一段普通说明文字替代结构树。',
+    'Rule: triadProfile is immutable worldpack context. Visible changes to an existing society leadership phase or registered activity-area status use organizationPatches[].triadState; use only supplied actorId/placeId values and never invent territory or expose hidden facts.',
     'Rule: actor-to-institution roles must be written through actorPatches[].organizationRelations. Do not use prose as state.',
     'Rule: visibility=hidden relations must not be exposed in normal narration or ordinary prompt context.',
     'Rule: do not automatically convict, prosecute, adjudicate, discipline, or close matters through institutional authority unless a structured delayed event or explicit writeback says so.'
+  ].join('\n');
+}
+
+function formatLivelihoodProjection(context: PromptContext): string {
+  const projection = context.livelihoodProjection;
+  if (!projection.available) return '';
+  const profile = projection.roleProfile;
+  const workSchedule = projection.workSchedule;
+  const organization = projection.primaryOrganization;
+  const track = projection.primaryOrganizationTrack;
+  const relations = projection.workRelations.map(
+    (relation) =>
+      `- actorId=${relation.actorId} name=${relation.name} identity=${relation.publicIdentity} relation=${relation.relationType ?? 'unspecified'} role=${relation.roleTitle ?? 'unspecified'} unit=${relation.departmentOrUnit ?? 'unspecified'} summary=${relation.summary}`
+  );
+  const matters = projection.activeMatters.map(
+    (matter) =>
+      `- id=${matter.id} title=${matter.title} status=${matter.status} pressure=${matter.pressureLevel ?? 0} source=${matter.source} summary=${matter.summary} hook=${matter.currentHook ?? 'none'} actors=${matter.relatedActorIds.join(',') || 'none'} organizations=${matter.relatedOrganizationIds.join(',') || 'none'}`
+  );
+  const outcomes = projection.recentOutcomes.map(
+    (outcome) =>
+      `- outcomeId=${outcome.outcomeId} title=${outcome.title} summary=${outcome.summary} consequence=${outcome.consequence ?? 'none'}`
+  );
+  const employerTemplateCandidates = profile
+    ? formatEverydayEmployerTemplateCandidates({
+        year: context.currentTime.year,
+        sectorIds: profile.sectorIds,
+        roleTags: profile.roleTags
+      })
+    : 'none';
+  return [
+    'LIVELIHOOD_CONTEXT_PROJECTION',
+    `summary: ${projection.livelihoodSummary}`,
+    `profile: occupation=${profile?.publicOccupation ?? 'unknown'} employmentStatus=${profile?.employmentStatusId ?? 'unknown'} workplace=${projection.workplaceName ?? profile?.workplacePlaceId ?? 'none'} employer=${organization ? `${organization.organizationId}:${organization.name}` : 'none'} unit=${profile?.workUnitSummary ?? 'none'} position=${profile?.positionSummary ?? 'none'}`,
+    `workSchedule: status=${workSchedule.status} label=${workSchedule.label} pattern=${workSchedule.scheduleLabel} window=${workSchedule.scheduleWindow}`,
+    `currentWork: ${workSchedule.currentWorkSummary}`,
+    `nextWork: ${workSchedule.nextWorkSummary}`,
+    `weeklyPattern: ${workSchedule.weeklyPatternSummary}`,
+    `roleBoundary: duty=${profile?.dutySummary ?? 'none'} decisionScope=${profile?.decisionScopeSummary ?? 'none'} access=${profile?.accessSummary ?? 'none'}`,
+    `organizationDirection: objective=${track?.objective ?? 'none'} action=${track?.currentAction ?? 'none'} status=${track?.currentStatus ?? organization?.currentState ?? 'none'}`,
+    'workRelations:',
+    formatList(relations),
+    'activeLivelihoodMatters:',
+    formatList(matters),
+    'recentLivelihoodOutcomes:',
+    formatList(outcomes),
+    'everydayEmployerTemplateCandidates:',
+    employerTemplateCandidates,
+    `opportunities: ${projection.opportunitySummaries.join('；') || 'none'}`,
+    `obstacles: ${projection.obstacleSummaries.join('；') || 'none'}`,
+    'Rule: this projection describes the civilian player role using existing Actor, Organization, CurrentMatter and organization evolution facts. It is not a second career truth source.',
+    'Rule: everydayEmployerTemplateCandidates are candidate vocabulary selected only from structured sectorIds/roleTags. They may help portray a small employer, work relationship or pressure, but never prove that an employer, event or pressure already exists.',
+    'Rule: organization direction is background context, not an automatic player assignment. Create matterKind="livelihood" only when a real actor, notice, workplace event or explicit work arrangement has brought the matter to the player.',
+    ...workSchedule.promptRules.map((rule) => `Rule: ${rule}`),
+    'Rule: when the public identity remains civilian but employment, occupation, employer, workplace, unit, duties or work contacts actually change, write civilianRoleProfilePatch rather than identityContextPatch.'
   ].join('\n');
 }
 
@@ -609,15 +739,22 @@ function formatRelationshipProjection(context: PromptContext): string {
       `  relatedActors=${candidate.relatedActorIds.join(',') || 'none'}`
     ].join('\n')
   );
+  const identityRegistry = projection.identityRegistry.map(
+    (thread) =>
+      `- threadId=${thread.threadId} kind=${thread.kind} primaryActorId=${thread.primaryActorId ?? 'none'} relatedActors=${thread.relatedActorIds.join(',') || 'none'} status=${thread.status}`
+  );
 
   return [
     'RELATIONSHIP_CONTEXT_PROJECTION',
+    'stableIdentityRegistry:',
+    formatList(identityRegistry),
     'threads:',
     formatList(threads),
     'heartbeatCandidates:',
     formatList(heartbeats),
-    `diagnostics: source=${projection.diagnostics.sourceThreadCount} projected=${projection.diagnostics.projectedThreadCount} heartbeat=${projection.diagnostics.heartbeatCandidateCount} projectedIds=${projection.diagnostics.projectedThreadIds.join(',') || 'none'} omittedHidden=${projection.diagnostics.omittedHiddenCount} omittedIrrelevant=${projection.diagnostics.omittedIrrelevantCount} missingActorRefs=${projection.diagnostics.missingActorRefs.join(',') || 'none'}`,
+    `diagnostics: source=${projection.diagnostics.sourceThreadCount} projected=${projection.diagnostics.projectedThreadCount} heartbeat=${projection.diagnostics.heartbeatCandidateCount} identityRegistry=${projection.diagnostics.identityRegistryCount} identityRegistryTruncated=${projection.diagnostics.identityRegistryTruncatedCount} projectedIds=${projection.diagnostics.projectedThreadIds.join(',') || 'none'} omittedHidden=${projection.diagnostics.omittedHiddenCount} omittedIrrelevant=${projection.diagnostics.omittedIrrelevantCount} missingActorRefs=${projection.diagnostics.missingActorRefs.join(',') || 'none'}`,
     'Rule: relationshipThreadPatches records durable 人脉/缘份 thread changes; do not store these changes only in prose.',
+    'Rule: stableIdentityRegistry 是本轮最相关的玩家可见关系身份索引；本地还会保护未投喂条目。更新必须逐字复用既有 threadId；不得用相同 threadId 指向另一名人物，也不得用新 threadId 重建同一人物关系线。network 与 fate 是同一关系线的层级：已有 network 在正文形成明确、持续的亲密或伴侣事实后可复用原 threadId 升级为 fate；已有 fate 不得降回 network；不得让同一人物同时保留一条人脉和一条缘份。primaryActorId 和既有人物锚点不可在普通更新中替换。',
     'Rule: 新建关系线必须有家庭、正式伴侣、正式线人、债务/承诺、保护、长期共同事务、反复接触或持续冲突之一，并填写 creationBasis 与 evidenceRefs。一次见面、单次盘问、普通同事、同地点出现、单条记忆或高 importance 都不足以创建。',
     'Rule: Heartbeat candidates are undecided suggestions, not happened facts. Only use them if the current scene naturally adopts them, then write actual consequences through structured writeback.',
     'Rule: 人脉 is ordinary long-term social relations; 缘份 is long-term emotional/romantic relationship threads, not an adult content entry.',
@@ -727,6 +864,7 @@ function formatBackgroundEvolutionProjection(context: PromptContext): string {
     'Rule: activeNpcActions 是正在发生的既有事实，不是待选建议；在结果出现前不要把行动写成已经完成。expectedEndAt 只是预计时间，不保证成功。',
     'Rule: activeOrganizationActions 是已激活组织的低频后台行动事实；不要把组织写成静止，也不要据此扩写资金、地盘、全体成员日程或逐日经营。',
     'Rule: recentOutcomes 与 chronicle 是已经发生的事实；不得让人物忘记、重复计划或否认这些结果。',
+    'Rule: activeNpcActions、activeOrganizationActions、recentOutcomes 与 chronicle 中出现的 actorId 都是既有人物的稳定 ID。正文若继续承接这些人物，actorPatches、actorMemories、事项、案件和关系写回必须逐字复用该 actorId；不得因为玩家本轮没有点名就另造新 actorId。',
     'Rule: 仅在玩家行动、当前地点、案件或关系自然相交时把远场事实带进正文，不要每回合强行播报。',
     'Rule: 不要在主叙事写回中伪造或直接改写后台轨道；主回合只对玩家当场造成的普通人物、案件、关系、事项与记忆变化负责。'
   ].join('\n');
@@ -777,6 +915,7 @@ function formatDynamicProjection(context: PromptContext): string {
     'Rule: Current matters are not quests, task lists, rewards, steps, progress bars, or local success/failure checks.',
     'Rule: Do not write rewards, completion steps, or local success/failure states for current matters.',
     'Rule: signals and rumors are not confirmed facts unless later confirmed by structured state or direct scene evidence.',
+    'Rule: when the current scene directly confirms, disproves, clarifies, or supersedes a projected signal, update that same stable signalId through signalPatches with status=resolved or stale. Do not leave the old rumor active and do not create a near-duplicate replacement.',
     'Rule: newspaper issues should read like period media material, not an engineering event list.',
     'Rule: dynamic events cannot replace finance monthly settlement. Money changes still use financePatch or the local monthly finance system.',
     'Rule: do not automatically convict, prosecute, adjudicate, discipline, close a case, or resolve a case only because a signal or newspaper article exists.',
@@ -874,11 +1013,19 @@ function formatConflictProjection(context: PromptContext): string {
   });
   const judgementChecks = projection.judgementChecks.map((check) => {
     const factors = check.factors
-      .map((factor) => `${factor.label} ${factor.value >= 0 ? '+' : ''}${factor.value}: ${factor.reason}`)
+      .map((factor) => {
+        const source = factor.sourceType
+          ? ` source=${factor.sourceType}${factor.sourceId ? `:${factor.sourceId}` : ''}`
+          : '';
+        return `${factor.label} ${factor.value >= 0 ? '+' : ''}${factor.value}${source}: ${factor.reason}`;
+      })
       .join('；');
+    const isLocalD100 = check.rulesetVersion === 'v1.1-local-d100';
     return [
       `- checkId=${check.checkId} title=${check.title} category=${check.category} outcome=${check.outcome}`,
-      `  difficulty=${check.difficulty} score=${check.score} margin=${check.margin}`,
+      isLocalD100
+        ? `  ruleset=v1.1-local-d100 primary=${check.primaryAttribute}/${check.primaryAttributeValue} secondary=${check.secondaryAttribute ?? 'none'}/${check.secondaryModifier ?? 0} sceneDifficulty=${check.difficultyTier}/${check.difficultyModifier} gameDifficulty=${check.gameDifficulty}/${check.gameDifficultyModifier} context=${check.contextModifierTotal} target=${check.effectiveTarget} roll=${check.presetRoll} margin=${check.margin}`
+        : `  legacyDifficulty=${check.difficulty} legacyScore=${check.score} legacyMargin=${check.margin}`,
       `  summary=${check.shortSummary}`,
       check.consequenceSummary ? `  consequence=${check.consequenceSummary}` : '',
       `  factors=${factors || 'none'}`
@@ -894,12 +1041,97 @@ function formatConflictProjection(context: PromptContext): string {
     'linkedJudgementChecks:',
     formatList(judgementChecks),
     `diagnostics: projectedCombats=${projection.diagnostics.projectedCombatIds.join(',') || 'none'} projectedChecks=${projection.diagnostics.projectedJudgementCheckIds.join(',') || 'none'} source=${projection.diagnostics.sourceCount} projected=${projection.diagnostics.projectedCount} omitted=${projection.diagnostics.omittedCount} hidden=${projection.diagnostics.hiddenCount}`,
-    'Rule: 判定只用于追捕、格斗、持械、枪械、人群冲突、拘捕、逃脱等需要仪式感和不确定性的重大场面；普通对话、巡逻、询问和日常摩擦不要创建判定。',
-    'Rule: 如果本回合发生重大判定，正文可用【判定】标签自然承接，但持久记录必须写 judgementCheckPatches；不要从正文反向推断本地记录。',
+    'Rule: 判定用于结果确有不确定性且失败会形成实际差异的观察、推理、谈判、行动、体力、意志、追捕或对抗；纯例行、无阻力、必然成功的动作不要创建判定。',
+    'Rule: 如果本回合发生判定，正文可用【判定】标签自然承接，但持久记录必须写 judgementCheckPatches；不要从正文反向推断本地记录。',
     'Rule: 如果本回合发生重大战斗/追逐，写 combatEventPatches；combatText 必须是过程化精彩描写，目标 180-260 字左右，不是摘要、报告或表格。',
     'Rule: combatText 要写清场地、光线、天气、声音等现场压力，双方站位和动作反应，关键判定如何体现在动作转折中，最后落到伤势、制服、逃脱、消耗或现场后果。',
     'Rule: participants/resultSummary/consequenceSummary 用结构化字段概括；不要用 combatText 重复参与方列表或结果说明。',
     'Rule: 战斗弹窗记录只承载已经发生的重大对抗，不替代案件、伤势、物品、记忆、声誉或动态事件；这些后果仍需写入各自结构化模块。'
+  ].join('\n');
+}
+
+function formatLocalJudgementContract(
+  localJudgement: NonNullable<ComposePromptOptions['localJudgement']>
+): string {
+  if (localJudgement.preflightReason && !localJudgement.resolution) {
+    return [
+      'LOCAL_D100_JUDGEMENT_RESOLUTION',
+      '判定预检已经完成：本回合不需要核心判定。',
+      `预检原因：${localJudgement.preflightReason}`,
+      '不得创建 judgementCheckPatches，也不得自行升级成追捕、格斗、持械、枪械、人群冲突、拘捕或逃脱等重大对抗。',
+      '正文仍需真实回应玩家行动，但不得自行掷骰、虚构目标值或把无阻力行动写成系统判定。'
+    ].join('\n');
+  }
+  if (localJudgement.resolution) {
+    const resolution = localJudgement.resolution;
+    const factorLines = resolution.factors.map(
+      (factor) =>
+        `- ${factor.sourceType ?? 'other'}:${factor.sourceId ?? 'no-id'} ${factor.label} ${factor.value >= 0 ? '+' : ''}${factor.value}：${factor.reason}`
+    );
+    return [
+      'LOCAL_D100_JUDGEMENT_RESOLUTION',
+      '判定已经由本地系统在正文生成前完成。以下是本回合唯一、只读的结算结果。',
+      `checkId=${resolution.checkId}`,
+      `category=${resolution.category}`,
+      `primaryAttribute=${resolution.primaryAttribute}`,
+      `secondaryAttribute=${resolution.secondaryAttribute ?? 'none'}`,
+      `difficultyTier=${resolution.difficultyTier}`,
+      `effectiveTarget=${resolution.effectiveTarget}`,
+      `presetRoll=${resolution.presetRoll}`,
+      `outcome=${resolution.outcome}`,
+      `margin=${resolution.margin}`,
+      `stakes=${resolution.stakesSummary}`,
+      `combatIntent=${resolution.combatIntent}`,
+      '本地已采用的结构化因素：',
+      ...(factorLines.length > 0 ? factorLines : ['- 无']),
+      '你不得重新掷骰、修改目标值、更改 outcome、增加未核验因素或另建第二次判定。',
+      '正文第一次生成就必须服从该 outcome，写清该结果对应的行动转折、代价与后果。',
+      '最终 JudgementCheck 由本地引擎插入。过渡兼容期允许 judgementCheckPatches 回显同一 checkId 和结果摘要，但任何数字与 outcome 回显都不具权威，且不得返回第二条判定。',
+      resolution.combatIntent === 'none'
+        ? '预检没有确认重大对抗；不得自行创建 combatEventPatches。'
+        : `本回合已确认 ${resolution.combatIntent} 重大对抗；必须创建且只创建相关 combatEventPatches，并让 judgementCheckIds 引用 ${resolution.checkId}。`
+    ].join('\n');
+  }
+  const difficulty = getGameDifficultyProfile(localJudgement.gameDifficulty);
+  const attributes = Object.entries(localJudgement.attributes)
+    .map(([key, value]) => `${judgementAttributeLabels[key as keyof AttributeBlock]}(${key})=${value}`)
+    .join('，');
+  const traitSources = localJudgement.sources.traits
+    .map(
+      (source) =>
+        `- sourceType=trait sourceId=${source.sourceId} name=${source.name} status=${source.status} scopes=${source.scopes.join(',') || 'none'} effect=${source.effectSummary}`
+    );
+  const equipmentSources = localJudgement.sources.equipment
+    .map(
+      (source) =>
+        `- sourceType=equipment sourceId=${source.sourceId} name=${source.name} summary=${source.summary}`
+    );
+
+  return [
+    'LOCAL_D100_JUDGEMENT_CONTRACT',
+    `本回合唯一预置骰：d100=${localJudgement.presetRoll}。所有正文篇幅重生成、JSON 修复和完整合同重试都必须复用此点数，不得重新掷骰。`,
+    `当前六维：${attributes}。`,
+    `当前本局难度：${difficulty.label}（目标值修正 ${difficulty.modifier >= 0 ? '+' : ''}${difficulty.modifier}）。`,
+    '职责边界：你只决定本回合是否需要判定，以及判定的主属性、副属性、场景难度、逐项情境修正和叙事后果；本地引擎独占目标值、骰点与结果真值。',
+    '触发边界：当观察、思考、交涉、行动、体魄、意志或对抗的结果存在真实不确定性，且成功/失败会让局面不同，创建一次判定。例行操作、无阻力行动、已被事实保证的结果不得判定。每回合最多一次判定。',
+    '主属性取完整数值。副属性可省略；有副属性时修正为 round((副属性-50)/5)，并限制在 -10..+10，且不能与主属性相同。',
+    `场景难度只用 ${Object.entries(judgementDifficultyLabels)
+      .map(([id, label]) => {
+        const modifier = judgementDifficultyModifiers[id as keyof typeof judgementDifficultyModifiers];
+        return `${label}(${id})=${modifier >= 0 ? '+' : ''}${modifier}`;
+      })
+      .join(' / ')}。场景难度衡量行动本身的成功概率，不是后果有多严重；高后果不会自动升为危险或极端。`,
+    '情境因素 factors 最多五项，每项必须写 sourceType、label、value、reason；sourceType 只可为 trait（特质）、equipment（装备）、status（状态/伤势）、environment（环境）、preparation（准备）或 other（其他）。每项必须说明直接相关的具体事实，使用 -10..+10 的整数；本地合计限制在 -20..+20。不得把六维、场景难度或本局难度重复写进 factors。',
+    '特质与装备不是自动加分：必须逐项检查下方当前来源，只有对本次行动有直接作用时才可纳入。trait/equipment 因素必须同时写出下方对应的稳定 sourceId；不得虚构、引用未列出的来源或把同一稳定来源重复计算。status/environment/preparation/other 通常省略 sourceId，但仍必须有当前正文或状态事实支撑。无相关来源时 factors 可以为空，不得为了填满项目强行加成。',
+    '当前可核对的玩家特质：',
+    ...formatList(traitSources, '- 无可用特质').split('\n'),
+    '当前已装备且可核对的装备：',
+    ...formatList(equipmentSources, '- 无已装备物品').split('\n'),
+    '有效目标值 = 主属性 + 副属性修正 + 场景难度修正 + 本局难度修正 + 情境合计，最终限制在 5..95。',
+    '结果：1..5 大成功；6..目标值 成功；目标值+1..目标值+10 部分成功；其余失败；96..100 大失败。天然大成功/大失败优先。',
+    '若创建 judgementCheckPatches，每项必须是完整记录：checkId、turnId、gameTime 对象、title、category、targetSummary（可选）、relatedActorIds、relatedPlaceIds、relatedCaseIds、rulesetVersion="v1.1-local-d100"、primaryAttribute、可选 secondaryAttribute、difficultyTier、presetRoll、effectiveTarget、outcome、shortSummary、consequenceSummary（可选）、factors、relatedCombatEventId（可选）和 visibility。不得只返回本地骰制新增字段；presetRoll 必须等于上方预置骰，effectiveTarget/outcome 必须按公式精确回显。不要写 difficulty 或 score，它们由本地兼容层生成。',
+    '正文的动作结果、代价、伤势、战斗结局和其他结构化写回必须服从这次本地结果；不得在结构化结果失败时把正文写成无代价成功。',
+    '玩家输入已经实际进入追捕、格斗、持械、枪械、人群冲突、拘捕或逃脱等重大对抗时，combatEventPatches 不是可选摘要：必须与本回合唯一 judgementCheckPatches 同时创建，并让 combatEventPatches[].judgementCheckIds 精确引用其 checkId。不得只写正文或判定而漏掉对抗记录，也不得在合同重试时删除对抗记录来规避校验。'
   ].join('\n');
 }
 
@@ -949,7 +1181,7 @@ function formatPolicePanelProjection(context: PromptContext): string {
     'actionHints:',
     formatList(projection.actionHints.map((item) => `- ${item}`)),
     `diagnostics: selectedClimate=${projection.diagnostics.selectedClimateKeys.join(',') || 'none'} omittedClimate=${projection.diagnostics.omittedClimateCount}`,
-    'Rule: use this panel as police institution context. Do not auto-promote, auto-discipline, or rewrite police career progress unless playerPatch.policePanel explicitly updates it.'
+    'Rule: use this panel as police institution context. Do not auto-promote, auto-discipline, or rewrite police career progress unless playerPatch.policePanel explicitly updates it. A formally completed same-identity police station, department, operational-unit or posting transfer must use policeRoleProfilePatch.'
   ].join('\n');
 }
 
@@ -958,6 +1190,11 @@ function formatPoliceDutyProjection(context: PromptContext): string {
   return [
     'POLICE_DUTY_CONTEXT',
     `状态：${projection.label}`,
+    `班别：${projection.shiftLabel}`,
+    `时段：${projection.scheduleWindow}`,
+    `当前安排：${projection.currentDutySummary}`,
+    `下一更：${projection.nextDutySummary}`,
+    `轮班规则：${projection.rosterSummary}`,
     projection.summary,
     '规则：',
     ...projection.ordinaryTurnRules.map((rule) => `- ${rule}`)
@@ -1035,19 +1272,44 @@ function formatPrivateText(value: string | undefined, fallback: string): string 
   return text && !adultPrivatePlaceholderTexts.has(text) ? text : fallback;
 }
 
+function formatVisiblePaternityCandidates(
+  candidates:
+    | Array<{
+        actorId?: string;
+        name?: string;
+        visibility: string;
+      }>
+    | undefined
+): string | undefined {
+  const visible = (candidates ?? [])
+    .filter((candidate) => candidate.visibility !== 'hidden')
+    .map((candidate) => candidate.name ?? candidate.actorId)
+    .filter((candidate): candidate is string => Boolean(candidate));
+  return visible.length > 0 ? visible.join('、') : undefined;
+}
+
 function formatAdultPrivateWomb(profile: NonNullable<PromptContext['actorPackets'][number]['femaleProfile']>['adultPrivateProfile']): string {
   const womb = profile?.womb;
   const records = womb?.records?.length
     ? womb.records
         .slice(-6)
-        .map((record) => [record.date, record.description, record.pregnancyCheckDate ? `判定日=${record.pregnancyCheckDate}` : ''].filter(Boolean).join(':'))
+        .map((record) =>
+          [
+            record.date,
+            record.description,
+            record.pregnancyCheckDate ? `判定日=${record.pregnancyCheckDate}` : '',
+            record.pregnancyCheckResult ? `判定=${record.pregnancyCheckResult}` : '',
+            formatVisiblePaternityCandidates(record.paternityCandidates)
+              ? `玩家已知父系候选=${formatVisiblePaternityCandidates(record.paternityCandidates)}`
+              : ''
+          ]
+            .filter(Boolean)
+            .join(':')
+        )
         .join('；')
     : '无';
   const pregnancy = womb?.pregnancy;
-  const visiblePaternity = pregnancy?.paternityCandidates
-    .filter((candidate) => candidate.visibility !== 'hidden')
-    .map((candidate) => candidate.name ?? candidate.actorId)
-    .filter((candidate): candidate is string => Boolean(candidate));
+  const visiblePaternity = formatVisiblePaternityCandidates(pregnancy?.paternityCandidates);
   const lifecycle = pregnancy
     ? [
         `阶段=${pregnancy.status}`,
@@ -1059,18 +1321,39 @@ function formatAdultPrivateWomb(profile: NonNullable<PromptContext['actorPackets
           : undefined,
         pregnancy.postpartumUntil ? `产后恢复至=${formatGameTime(pregnancy.postpartumUntil)}` : undefined,
         pregnancy.childActorId ? `孩子=${pregnancy.childName ?? pregnancy.childActorId}(${pregnancy.childActorId})` : undefined,
-        visiblePaternity?.length ? `玩家已知父亲候选=${visiblePaternity.join('、')}` : undefined
+        visiblePaternity ? `玩家已知父系候选=${visiblePaternity}` : undefined
       ]
         .filter(Boolean)
         .join(' / ')
     : '无活动妊娠';
+  const pendingChecks = womb?.pendingPregnancyChecks?.length
+    ? womb.pendingPregnancyChecks
+        .map((item) => {
+          const candidates = formatVisiblePaternityCandidates(item.paternityCandidates);
+          return [
+            `${formatGameTime(item.registeredAt)}→${formatGameTime(item.checkDueAt)}`,
+            candidates ? `玩家已知父系候选=${candidates}` : undefined
+          ]
+            .filter(Boolean)
+            .join('/');
+        })
+        .join('；')
+    : '无';
   const history = womb?.pregnancyHistory?.length
     ? womb.pregnancyHistory
         .slice(-3)
-        .map((item) => `${formatGameTime(item.endedAt)}:${item.outcome}:${item.summary}`)
+        .map((item) => {
+          const candidates = formatVisiblePaternityCandidates(item.paternityCandidates);
+          return [
+            `${formatGameTime(item.endedAt)}:${item.outcome}:${item.summary}`,
+            candidates ? `玩家已知父系候选=${candidates}` : undefined
+          ]
+            .filter(Boolean)
+            .join(':');
+        })
         .join('；')
     : '无';
-  return `    - 子宫档案: 状态=${womb?.status ?? '未受孕'} / 宫口状态=${womb?.cervixStatus ?? '紧闭'} / 生命周期=${lifecycle} / 历史=${history} / 记录=${records}`;
+  return `    - 子宫档案: 状态=${womb?.status ?? '未受孕'} / 宫口状态=${womb?.cervixStatus ?? '紧闭'} / 生命周期=${lifecycle} / 后续待验孕=${pendingChecks} / 历史=${history} / 记录=${records}`;
 }
 
 function formatIdentityContextProjection(context: PromptContext): string {
@@ -1086,6 +1369,93 @@ function formatIdentityContextProjection(context: PromptContext): string {
     `PROTAGONIST_PRIVATE_KNOWLEDGE\n${JSON.stringify(projection.protagonistPrivateKnowledge, null, 2)}`,
     `DIRECTOR_ONLY_FACTS\n${JSON.stringify(projection.directorOnlyFacts, null, 2)}`,
     `PUBLIC_FACTS\n${JSON.stringify(projection.publicFacts, null, 2)}`
+  ].join('\n');
+}
+
+function formatTriadMembershipProjection(context: PromptContext): string {
+  const roleProjection = context.identityProjection.currentShell.publicRoleProfile;
+  if (!roleProjection || roleProjection.identity !== 'gang_member') return '';
+  const profile = roleProjection.profile;
+  if (profile.status !== 'active' && profile.status !== 'cover') return '';
+
+  const actorName = (actorId: string) =>
+    context.actorPackets.find((actor) => actor.actorId === actorId)?.name ??
+    context.remoteNpcPresenceProjection.candidates.find((actor) => actor.actorId === actorId)?.actorName ??
+    actorId;
+  const organizationAction = context.backgroundEvolutionProjection.activeOrganizationActions.find(
+    (action) => action.organizationId === profile.organizationId
+  );
+  const responsibilities = context.dynamicProjection.currentMatters.filter(
+    (matter) =>
+      matter.source === 'triad_responsibility' &&
+      Boolean(profile.organizationId && matter.relatedOrganizationIds.includes(profile.organizationId))
+  );
+
+  return [
+    'TRIAD_MEMBERSHIP_CONTEXT',
+    `organizationId=${profile.organizationId ?? 'unknown'} societyName=${profile.societyName ?? 'unknown'}`,
+    `position=${[profile.rankSummary, profile.roleTitle].filter(Boolean).join(' / ') || '未明确'}`,
+    `territory=${profile.territorySummary ?? '未明确'}`,
+    `patrons=${profile.patronActorIds.map((actorId) => `${actorName(actorId)}(${actorId})`).join('；') || 'none'}`,
+    `peers=${profile.peerActorIds.map((actorId) => `${actorName(actorId)}(${actorId})`).join('；') || 'none'}`,
+    `obligation=${profile.obligationSummary}`,
+    `risk=${profile.riskSummary}`,
+    organizationAction
+      ? `organizationDirection=${organizationAction.objective} / ${organizationAction.currentAction} / ${organizationAction.currentStatus}`
+      : 'organizationDirection=当前没有已激活的可见组织行动，不得凭空补造。',
+    'currentResponsibilities:',
+    formatList(
+      responsibilities.map(
+        (matter) =>
+          `- matterId=${matter.id} status=${matter.status} title=${matter.title}\n  summary=${matter.summary}\n  currentHook=${matter.currentHook ?? 'none'}\n  relatedActors=${matter.relatedActorIds.join(',') || 'none'}`
+      )
+    ),
+    'Rules:',
+    '- 组织方向是正在演化的背景事实，不等于玩家自动接到任务。新责任必须由稳定 actorId 的直属上线或有权人物在正文中真实联系、当面交代后，才可写 currentMatterPatches。',
+    '- 当前责任不是任务清单。玩家可以完成、拒绝、敷衍、换方法、隐瞒或利用机会；只按本回合真实结果更新原 matterId、人物关系、必要记忆与组织观感。',
+    '- 不得因为组织方向存在就每回合推进责任，也不得在没有人物传导时让玩家突然知道后台计划。'
+  ].join('\n');
+}
+
+function formatScreenCharacterSeedProjection(context: PromptContext): string {
+  const projection = context.screenCharacterSeedProjection;
+  const characters = projection.characters.map((character) => {
+    const aliases = character.recognitionAliases.join('/') || 'none';
+    const sectors = character.sectors.join(',') || 'none';
+    const relationships = character.relationshipAnchors.join(' / ') || 'none';
+    const accessRoutes = character.accessRoutes.join(' / ') || 'none';
+    const hooks = character.promptHooks.join(' / ') || 'none';
+    return [
+      `- seedId=${character.id} canonicalCharacterId=${character.canonicalCharacterId} runtimeActorId=${character.runtimeActorId} displayName=${character.displayName} englishName=${character.englishName ?? 'none'} category=${character.category} score=${character.score} reasons=${character.reasons.join(',') || 'none'} confidence=${character.sourceConfidence}`,
+      `  INTERNAL_SOURCE_ANCHOR_DO_NOT_EXPOSE: sourceWorkTitle=${character.sourceWorkTitle} sourceWorkTitleEn=${character.sourceWorkTitleEn ?? 'none'} medium=${character.medium} worldpackAvailableYears=${character.availableYears.from}-${character.availableYears.to}`,
+      `  WORLD_TIME_PLACEMENT_DO_NOT_EXPOSE: ${character.worldpackPlacementAnchor ?? 'Use the supplied profile only within availableYears; no source event after the exact current game date has happened.'}`,
+      `  aliases=${aliases} gender=${character.gender} ageRange=${character.ageRange.min}-${character.ageRange.max} currentIdentity=${character.currentIdentity} sectors=${sectors}`,
+      `  publicIdentity=${character.publicIdentity}`,
+      `  actualIdentity=${character.actualIdentitySummary}`,
+      `  position=${character.positionSummary}`,
+      `  profile=${character.profileSummary}`,
+      `  personality=${character.personality}`,
+      `  speechStyle=${character.speechStyle}`,
+      `  motivation=${character.motivation}`,
+      `  longTermGoal=${character.longTermGoal}`,
+      `  values=${character.values}`,
+      `  capability=${character.capabilityProfile}`,
+      `  appearance=${character.appearanceAnchor}`,
+      `  clothing=${character.clothingAnchor}`,
+      `  relationships=${relationships}`,
+      `  accessRoutes=${accessRoutes}`,
+      `  hooks=${hooks}`,
+      `  identityHook=${character.identityHook}`
+    ].join('\n');
+  });
+
+  return [
+    'SCREEN_CHARACTER_SEED_PROJECTION',
+    `diagnostics: selected=${projection.diagnostics.selectedCharacterIds.join(',') || 'none'} eligible=${projection.diagnostics.eligibleCharacters} total=${projection.diagnostics.totalCharacters} textChars=${projection.diagnostics.selectedTextChars} estimatedTokenBudget=${projection.diagnostics.estimatedTokenBudget} omitted=${projection.diagnostics.omittedCharacterCount}`,
+    'rules:',
+    formatList(projection.rules.map((rule) => `- ${rule}`)),
+    'characters:',
+    formatList(characters)
   ].join('\n');
 }
 
@@ -1228,14 +1598,144 @@ function formatActorPacket(actor: PromptContext['actorPackets'][number]): string
   ].join('\n');
 }
 
-function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
-  return {
-    writebackVersion: '1.5',
+function formatExplicitActorReferenceProjection(context: PromptContext): string {
+  const projection = context.explicitActorReferenceProjection;
+  if (projection.actors.length === 0) return '- 本轮玩家没有点名人物志中的远场人物。';
+  const actors = projection.actors.map((actor) => {
+    const names = uniqueText([
+      actor.name,
+      actor.englishName,
+      actor.callName,
+      ...actor.aliases
+    ]).join(' / ');
+    return [
+      `- actorId: ${actor.actorId}`,
+      `  姓名与别名: ${names}`,
+      `  本轮命中: ${actor.matchedValues.join(' / ')}`,
+      `  身份: ${actor.publicIdentity ?? '未标明'}`,
+      ...(actor.actualIdentitySummary
+        ? [`  玩家已知实际身份摘要: ${actor.actualIdentitySummary}`]
+        : []),
+      `  档案: ${actor.profileSummary || '未标明'}`,
+      `  职位/位置: ${actor.positionSummary || '未标明'}；${actor.currentPlaceId ?? '地点未明'}`,
+      `  当前状态: ${actor.statusSummary || '未标明'}`,
+      `  与玩家关系: ${actor.relationshipSummary || '未标明'}`,
+      `  是否存在同名歧义: ${actor.ambiguous ? '是；只能在列出的候选中消歧，不得另造第三人' : '否；必须复用此 actorId'}`
+    ].join('\n');
+  });
+  return actors.join('\n\n');
+}
+
+function createTurnResponseExample(
+  pregnancyMode: PregnancyMode = 'standard',
+  dramaPlanningContext?: DramaPlanningContext,
+  dramaPlan?: DramaPlan,
+  localJudgementInput?: ComposePromptOptions['localJudgement']
+) {
+  const localJudgement = localJudgementInput ?? {
+    presetRoll: 50,
+    attributes: {
+      body: 50,
+      action: 50,
+      perception: 50,
+      thinking: 50,
+      negotiation: 50,
+      will: 50
+    },
+    gameDifficulty: 'standard' as const,
+    sources: {
+      traits: [],
+      equipment: []
+    }
+  };
+  const exampleJudgementFactors = [
+    {
+      sourceType: 'preparation' as const,
+      label: '站位准备',
+      value: 4,
+      reason: '玩家在对方起步前已占据较有利位置。'
+    },
+    {
+      sourceType: 'environment' as const,
+      label: '湿滑地面',
+      value: -4,
+      reason: '后巷地面积水，快速发力容易失足。'
+    }
+  ];
+  const exampleJudgementCalculation = calculateEffectiveTarget({
+    attributes: localJudgement.attributes,
+    primaryAttribute: 'action',
+    secondaryAttribute: 'body',
+    difficultyTier: 'hard',
+    gameDifficulty: localJudgement.gameDifficulty,
+    factors: exampleJudgementFactors
+  });
+  const exampleJudgementOutcome = deriveLocalJudgementOutcome(
+    localJudgement.presetRoll,
+    exampleJudgementCalculation.effectiveTarget
+  );
+  const exampleCombatPresentation = {
+    critical_success: {
+      outcome: 'opponent_subdued' as const,
+      conditionAfter: '持刀手被干净利落地控制，没有形成反击机会。',
+      combatText:
+        '窄巷里的积水被脚步踢开，嫌疑人刚回身举刀，玩家已借墙面缩短距离，侧身让过刀锋，顺势扣住持刀腕压向卷闸门。铁皮震出一声闷响，对方膝盖一软，折刀随即落地，整个危险动作在围观者反应过来前已经结束。',
+      resultSummary: '玩家以明显优势控制嫌疑人。',
+      consequenceSummary: '嫌疑人被迅速制服，玩家保留了继续处理现场的余力。'
+    },
+    success: {
+      outcome: 'opponent_subdued' as const,
+      conditionAfter: '右腕被压住，仍在挣扎。',
+      combatText:
+        '窄巷里的积水被脚步踢开，嫌疑人回身挥刀，刀光贴着霓虹一闪。玩家先侧身避过刀锋，再借墙面缩短距离，一手扣住对方持刀腕，一手顶住肩颈，把人压向卷闸门。铁皮震出一声闷响，对方膝盖一软，折刀终于脱手。',
+      resultSummary: '玩家成功控制嫌疑人。',
+      consequenceSummary: '嫌疑人被压制，玩家有一定体力消耗，现场动静引来街坊围观。'
+    },
+    partial_success: {
+      outcome: 'player_advantage' as const,
+      conditionAfter: '持刀手暂时被逼退，但仍有脱身空间。',
+      combatText:
+        '嫌疑人回身挥刀时，玩家侧身避开正面刀锋，以警棍逼住对方手腕。湿滑地面让双方同时失去一步站位，折刀没有落地，但持刀手被迫退到卷闸门旁。玩家抢到巷口一侧的主动，却还没能完成控制。',
+      resultSummary: '玩家取得站位优势，但未能立即制服嫌疑人。',
+      consequenceSummary: '对方仍有反抗或逃脱可能，玩家必须承担继续逼近的风险。'
+    },
+    failure: {
+      outcome: 'opponent_escaped' as const,
+      conditionAfter: '持刀手借湿滑地面和巷道转角脱离控制。',
+      combatText:
+        '嫌疑人突然回身挥刀，玩家侧避时脚下在积水里一滑，原本封住巷口的角度被拉开。对方没有恋战，撞翻垃圾桶制造阻挡，趁铁桶滚动和街坊惊叫的空隙钻过转角。玩家稳住身体时，后巷只剩急促脚步声。',
+      resultSummary: '玩家未能控制嫌疑人，对方逃离现场。',
+      consequenceSummary: '追捕线索仍在，但玩家失去眼前接触并惊动了附近街坊。'
+    },
+    critical_failure: {
+      outcome: 'player_wounded' as const,
+      conditionAfter: '持刀手突破控制并造成玩家受伤。',
+      combatText:
+        '玩家逼近时在积水里失足，持刀手抓住重心失衡的瞬间反手挥刀。刀锋擦过防守手臂，疼痛迫使玩家退开半步；对方随即撞翻垃圾桶封住巷道，冲过转角。附近街坊惊叫后退，现场由拘捕迅速变成受伤与追逃并存的混乱局面。',
+      resultSummary: '玩家在控制失败时受伤，嫌疑人趁机逃脱。',
+      consequenceSummary: '玩家伤势必须写入生命状态，现场追捕也需要重新组织。'
+    }
+  }[exampleJudgementOutcome];
+  const example = {
+    writebackVersion: '1.7',
     narrativeText:
-      '【旁白】报案室的电话线里有一点杂音，窗外的霓虹被雨水拖成发亮的细线。墙上的钟刚过九点，纸本记录簿摊在桌角，几名夜归市民在长凳上压低声音等候。\n【旁白】你按下听筒时，值日警长抬眼看了你一下，像是在判断这通电话到底是普通街坊求助，还是有人借警署线路递话。\n【报案室警员】“阿Sir，外面有人找你，站了好一阵。说不出全名，只讲你会认得佢。”\n【旁白】话音刚落，门口的玻璃被雨水和车灯映得发白，一个穿旧夹克的男人避开报案室里其他人的目光，手里攥着一只皱掉的烟盒。\n【旁白】你还没走过去，旁边茶餐厅老板已经把外卖袋放到柜台上，顺口补了一句：“今晚旺角唔太平，几条街都有人问你哋巡逻路线。”',
+      '【旁白】报案室墙上的钟刚过九点，雨水沿着玻璃门往下淌。值班簿摊在柜台内侧，最上面一页记着西洋菜街两次噪音投诉；第一次报案时间是八点四十分，第二次却写成八点二十五分，门牌和报案人姓氏也各差一个字。\n【旁白】你逐项核对那两行记录，夹在簿里的电话便笺露出半截。便笺上的号码属于街角茶餐厅，来电人说话时没有留下全名，只要求巡逻警员去后门看看。\n【报案室警员】“第一通系女人打嚟，讲楼上有人搬铁架。隔咗十几分钟，男声又打一次，净系问我哋几时到。我听住唔似同一个人。”\n【旁白】报案室警员把电话登记纸移到灯下，用笔帽点出两个接听时间，没有替其中任何一方补上身份。记录旁边的值日警长翻过当晚巡逻表，表上显示负责那一段的警员八点半仍在花园街处理小贩争执，尚未到过投诉地址。\n【值日警长】“所以唔好当两张纸系一件事。一个真系投诉，另一个可能只系想知巡逻车去到边。你查记录可以，未问清楚之前，唔好帮佢哋拼埋个故事。”\n【旁白】送外卖过来的茶餐厅老板一直站在柜台另一端，听见自己的店号被念出来，先把零钱收回围裙口袋，才承认八点多确实有人借过店里的电话。\n【茶餐厅老板】“个女仔我认得，住附近，平时收铺会经过。后尾嗰个男人唔系熟客，买包烟先问电话。佢冇讲社团名，我都冇胆乱认；不过佢问嘅唔系几时有人到，系问巡逻车通常由边条街入。”\n【旁白】老板说到这里便停住，只肯描述那人的灰夹克、左手虎口一道旧疤，以及离开时走向通菜街的方向。他不愿在满是候问市民的报案室里签正式口供，却也没有否认自己看清了对方。两次来电的差别、尚未核实的身份和巡逻表上的空档已经摆在同一张柜台上。值日警长没有替你把它升级成案件，只把电话便笺压回簿页旁，等候你决定如何处置。',
+    presentationHints: {
+      dialogueEmotions: ['serious', 'serious', 'worried'],
+      innerMonologueEmotions: []
+    },
     turnSummary:
       '本回合事实摘要：玩家接到有人在报案室外找他的消息；茶餐厅老板提到附近有人打听巡逻路线；后续只应承接门口来人、街面询问和报案室现场反应。',
     suggestedActions: ['继续询问眼前的人。', '先观察周围反应。'],
+    playerVitalsReview: {
+      changed: false,
+      reason: '玩家本回合只在室内核对记录和交谈，生命、体力与身体状态均未改变。'
+    },
+    pregnancyLifecycleReview: {
+      changed: false,
+      events: [],
+      reason: '本回合没有发生受孕风险、医学确认、妊娠终止或分娩。'
+    },
     timePatch: {
       elapsedMinutes: 10,
       reason: '简短交谈并观察现场。'
@@ -1269,12 +1769,10 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
           sourceItemSignificance: '只有穿上有特殊意义的衣物时才写。',
           lastChangedReason: '玩家明确换装或剧情明确要求换装时才写。'
         },
-        equipment: ['最多三件当前随身装备'],
         reputation: {
           notorietyDelta: 0,
-          overallReputationDelta: 0,
-          summary: '只有整体知名度或整体口碑确实变化时才写。',
-          reason: '说明本回合为什么会改变整体声誉；没有明确社会评价变化时不要写。',
+          summary: '概括本回合各圈层评价与传播变化；整体口碑由本地综合。',
+          reason: '说明本回合为什么会改变知名度或圈层评价；没有明确社会评价变化时不要写。',
           circlePatches: [
             {
               circle: 'neighborhoodMedia',
@@ -1288,6 +1786,9 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
         policePanel: {
           unitSummary: '只有警队单位、岗位理解或职责边界确实变化时才写。',
           careerPath: {
+            currentRank: '只有正式晋升、降职、复职或职级纠正确已生效时才写完整现职级，例如 Inspector（督察 IP）；仅获推荐、候选、面试或等待任命时禁止提前更新。',
+            targetRank: '现职级正式变化后，写下一合理目标职级；没有明确目标时可以省略。',
+            routeSummary: '概括现职级已经生效以及下一阶段晋升路径；不要把尚未生效的推荐写成既成晋升。',
             dynamicAssessment: {
               seniority: '年资/资历有新信息时才更新。',
               discipline: '纪律记录或处分风险有新信息时才更新。',
@@ -1304,11 +1805,58 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
           actionHints: []
         }
       },
+      policeRoleProfilePatch: {
+        reason: '只在玩家当前公开身份仍为 police，且正式调令、借调、归队或转岗已经生效并完成报到时写；口头讨论、申请、候选、面试、等待调令或临时协助不得提前改档。',
+        stationOrPost: '完整的新驻点、警署、总部或派驻地点；必须重写完整当前值，不能沿用旧单位。',
+        department: '完整的新部门或行动单位，例如 Criminal Investigation Department（刑事侦缉处 CID）。',
+        assignmentSummary: '已经生效的新岗位与职责摘要。',
+        postRole: '已确认的新岗位称谓。',
+        publicIdentity: '对外可见的当前警察职务；省略时本地会由职级、部门和岗位重建。',
+        supervisorActorIds: ['actor_existing_or_created_this_turn'],
+        peerActorIds: ['actor_existing_or_created_this_turn'],
+        authoritySummary: '新岗位实际拥有的权限边界。',
+        accessSummary: '新岗位实际可接触的资料与资源。',
+        dutySummary: '新岗位已经成立的日常职责。'
+      },
+      civilianRoleProfilePatch: {
+        reason: '只在当前公开身份仍为市民、且本回合已经正式入职、离职、失业、升职、转岗、换地点或转为自营时写；没有生效变化时必须省略整个对象。正式受雇与 active civilian salary 必须同回合原子写入，缺一不可；正式离职也必须同时结束原固定工资。',
+        employmentStatusId: 'employed',
+        publicOccupation: '本回合已经生效的新职业',
+        employerOrganizationId: 'org_existing_or_created_this_turn',
+        employerRelationType: 'employee',
+        workplacePlaceId: 'place_existing_or_created_this_turn',
+        workUnitSummary: '已确认的科室、班组、门店或部门',
+        positionSummary: '已确认的岗位',
+        dutySummary: '已经成立的日常职责',
+        decisionScopeSummary: '玩家可以自行决定和需要协调的边界',
+        accessSummary: '该岗位实际能够接触的信息与资源',
+        sectorIds: ['open_registered_sector_tag'],
+        roleTags: ['open_registered_role_tag'],
+        livelihoodActorIds: ['actor_existing_or_created_this_turn']
+      },
       financePatch: {
         cashDelta: 0,
         bankDelta: 0,
         summary: '本回合随身现金与银行存款没有明显变化。',
-        upsertCashflows: [],
+        upsertCashflows: [
+          {
+            itemId: 'cashflow_player_civilian_primary_job',
+            direction: 'income',
+            kind: 'salary',
+            title: '稳定受雇工作月薪（只有本回合正式建立时才写）',
+            amount: 1800,
+            account: 'bank',
+            identityBinding: 'civilian',
+            summary: '玩家已经完成录用并正式建立持续按月发薪的受雇关系。',
+            activeFromMonth: '1984-12',
+            relatedAssetItemIds: [],
+            relatedActorIds: ['player'],
+            relatedPlaceIds: ['place_employer_stable_id'],
+            source: 'writeback',
+            status: 'active',
+            visibility: 'player_known'
+          }
+        ],
         removeCashflowItemIds: [],
         ledgerEntries: []
       },
@@ -1355,14 +1903,6 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
         }
       ],
       actorPatches: [
-        {
-          actorId: 'player',
-          vitalsPatch: {
-            healthDelta: 0,
-            staminaDelta: -8,
-            conditionSummary: '刚经历追逐或长时间奔走，体力有所下降。'
-          }
-        },
         {
           actorId: 'npc_stable_id',
           name: '实际输出时生成或复用一个真实中文姓名，不要照抄示例占位文本',
@@ -1473,20 +2013,34 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
         {
           caseId: 'case_stable_id',
           title: '标题',
-          status: 'open',
-          playerAccessLevel: 'rumor',
+          caseType: '案件类型',
+          status: 'investigating',
+          playerRole: 'execute',
           summary: '摘要。',
+          currentFocus: '当前需要调查或处理的重点。',
+          playerVisibleProgress: '玩家可见的案件进展。',
           officialRecordSummary: '档案/官方口径。',
           publicNarrativeSummary: '街坊/媒体口径。',
           playerKnownSummary: '玩家已知内容。',
-          conflictSummary: '核心冲突。'
+          conflictSummary: '核心冲突。',
+          relatedActorIds: ['player'],
+          relatedPlaceIds: ['place_stable_id'],
+          activityLog: [
+            {
+              kind: 'created',
+              summary: '本回合正式建立案件档案。',
+              relatedActorIds: ['player'],
+              relatedPlaceIds: ['place_stable_id']
+            }
+          ]
         }
       ],
       organizationPatches: [
-        {
-          organizationId: 'org_stable_id',
-          name: '组织名',
-          type: '组织类型',
+          {
+            organizationId: 'org_stable_id',
+            name: '组织名',
+            aliases: ['同一机构已经确认的旧称或简称'],
+            type: '组织类型',
           summary: '组织摘要。',
           stanceTowardPlayer: '对玩家态度。',
           pressureSummary: '相关压力。',
@@ -1511,7 +2065,24 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
                 }
               ]
             }
-          ]
+          ],
+          triadState: {
+            leadership: {
+              phase: 'consultation',
+              visibleSummary: '资深人物正在就下一阶段话事安排交换意见。',
+              nextMilestone: '三日后再次议事。',
+              knownCandidateActorIds: ['actor_existing_candidate'],
+              confidence: 'medium'
+            },
+            activityAreas: [
+              {
+                placeId: 'place_existing_activity_area',
+                statusSummary: '原有看场人手正在调整，尚未形成稳定新安排。',
+                pressureSummary: '警方巡查和内部交接同时增加风险。',
+                confidence: 'medium'
+              }
+            ]
+          }
         }
       ],
       relationshipThreadPatches: [
@@ -1545,19 +2116,25 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
                 actorId: 'adult_female_actor_id',
                 riskType: 'unprotected',
                 summary: '仅在正文明确发生可能导致受孕的成人行为时，客观概括本次风险事件。',
-                fatherActorId: 'player',
-                fatherName: '玩家姓名或已知人物名',
-                fatherVisibility: 'player_known'
+                paternityCandidates: [
+                  {
+                    actorId: 'player',
+                    name: '玩家姓名',
+                    visibility: 'player_known'
+                  },
+                  {
+                    actorId: 'other_known_actor_id',
+                    name: '同一风险窗口内的另一名已知人物',
+                    visibility: 'player_known'
+                  }
+                ]
               }
             ],
       pregnancyResolutionPatches: [
         {
           actorId: 'adult_female_actor_id',
-          outcome: 'live_birth',
-          summary: '仅在正文明确发生分娩或妊娠终止时写；不要用它自行判定怀孕。',
-          childName: '正文已明确的孩子姓名',
-          childGender: 'female',
-          fatherActorId: 'player'
+          outcome: 'pregnancy_confirmed',
+          summary: '医院检查已在本回合明确确认妊娠；仅限已有疑似怀孕状态。'
         }
       ],
       currentMatterPatches: [
@@ -1602,7 +2179,7 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
               id: 'article_stable_id',
               section: 'local',
               headline: '新闻标题',
-              body: '新闻正文，可包含时代新闻、娱乐新闻、街坊关注或与玩家相关的报道。',
+              body: '新闻正文，优先报道符合日期的香港公共事件、民生、经济、娱乐、国际或治安消息。',
               playerRelated: false,
               relatedActorIds: [],
               relatedPlaceIds: [],
@@ -1696,46 +2273,49 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
             reason: '物品已被正式移交到某案件或剧情中失去。',
             movedToCaseId: 'case_stable_id'
           }
-        ]
+        ],
+        equippedItemIds: []
       },
-      judgementCheckPatches: [
-        {
-          checkId: 'check_stable_id',
-          turnId: 'turn_current',
-          gameTime: {
-            year: 1988,
-            month: 9,
-            day: 12,
-            hour: 21,
-            minute: 30
-          },
-          title: '后巷近身压制',
-          category: 'melee',
-          targetSummary: '玩家试图在后巷压制持刀嫌疑人。',
-          relatedActorIds: ['player', 'npc_suspect_id'],
-          relatedPlaceIds: ['place_stable_id'],
-          relatedCaseIds: ['case_stable_id'],
-          difficulty: 62,
-          score: 70,
-          outcome: 'success',
-          shortSummary: '玩家成功压住对方持刀手。',
-          consequenceSummary: '嫌疑人失去主动，但玩家体力消耗明显。',
-          factors: [
-            {
-              label: '体魄与行动',
-              value: 8,
-              reason: '玩家身体素质和反应速度占优。'
-            },
-            {
-              label: '环境',
-              value: -4,
-              reason: '后巷湿滑且空间狭窄。'
-            }
-          ],
-          visibility: 'player_known'
-        }
-      ],
-      combatEventPatches: [
+      judgementCheckPatches: localJudgementInput?.resolution
+        ? [localJudgementInput.resolution.canonicalCheck]
+        : localJudgementInput?.preflightReason
+          ? []
+          : [
+              {
+                rulesetVersion: 'v1.1-local-d100',
+                checkId: 'check_stable_id',
+                turnId: 'turn_current',
+                gameTime: {
+                  year: 1988,
+                  month: 9,
+                  day: 12,
+                  hour: 21,
+                  minute: 30
+                },
+                title: '后巷近身压制',
+                category: 'melee',
+                targetSummary: '玩家试图在后巷压制持刀嫌疑人。',
+                relatedActorIds: ['player', 'npc_suspect_id'],
+                relatedPlaceIds: ['place_stable_id'],
+                relatedCaseIds: ['case_stable_id'],
+                primaryAttribute: 'action',
+                secondaryAttribute: 'body',
+                difficultyTier: 'hard',
+                presetRoll: localJudgement.presetRoll,
+                effectiveTarget: exampleJudgementCalculation.effectiveTarget,
+                outcome: exampleJudgementOutcome,
+                shortSummary: `本地判定结果为 ${exampleJudgementOutcome}；实际正文必须按该结果写行动转折。`,
+                consequenceSummary: '按本地结果写清嫌疑人、玩家体力与现场局面的真实后果。',
+                factors: exampleJudgementFactors,
+                visibility: 'player_known'
+              }
+            ],
+      combatEventPatches:
+        localJudgementInput?.preflightReason &&
+        (!localJudgementInput.resolution ||
+          localJudgementInput.resolution.combatIntent === 'none')
+          ? []
+          : [
         {
           combatId: 'combat_stable_id',
           turnId: 'turn_current',
@@ -1762,17 +2342,18 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
               name: '嫌疑人姓名或稳定称呼',
               side: 'opponent',
               roleSummary: '持刀逃跑者',
-              conditionAfter: '右腕被压住，仍在挣扎。'
+              conditionAfter: exampleCombatPresentation.conditionAfter
             }
           ],
-          outcome: 'opponent_subdued',
+          outcome: exampleCombatPresentation.outcome,
           intensity: 70,
           animationKey: 'armed_alley',
-          combatText:
-            '窄巷里的积水被脚步踢开，嫌疑人回身挥刀，刀光贴着霓虹一闪。玩家没有硬扑，先侧身避过刀锋，再借墙面缩短距离，一手扣住对方持刀腕，一手顶住肩颈，把人压向卷闸门。铁皮震出一声闷响，对方膝盖一软，却仍想用肩撞开空隙。',
-          resultSummary: '玩家成功控制嫌疑人。',
-          consequenceSummary: '嫌疑人被压制，玩家体力下降，现场动静引来街坊围观。',
-          judgementCheckIds: ['check_stable_id'],
+          combatText: exampleCombatPresentation.combatText,
+          resultSummary: exampleCombatPresentation.resultSummary,
+          consequenceSummary: exampleCombatPresentation.consequenceSummary,
+          judgementCheckIds: [
+            localJudgementInput?.resolution?.checkId ?? 'check_stable_id'
+          ],
           relatedActorIds: ['player', 'npc_suspect_id'],
           relatedPlaceIds: ['place_stable_id'],
           relatedCaseIds: ['case_stable_id'],
@@ -1808,6 +2389,35 @@ function createTurnResponseExample(pregnancyMode: PregnancyMode = 'standard') {
       traitGains: []
     }
   };
+  if (!dramaPlanningContext) return example;
+  const planId = dramaPlan?.planId ?? `drama_plan_turn_${dramaPlanningContext.turnCounter}`;
+  return {
+    ...example,
+    ...(dramaPlan
+      ? {}
+      : {
+          dramaPlan: {
+            planId,
+            planningScope: 'turn',
+            mode: 'quiet',
+            primarySource: null,
+            supportSources: [],
+            sceneFunction: 'rest',
+            intensity: 'none',
+            playerMayIgnore: true,
+            maxNewActors: 0,
+            reasonSummary: '本回合不需要额外突出候选素材。'
+          }
+        }),
+    dramaExecutionTrace: {
+      planId,
+      status: 'not_used',
+      usedSourceRefs: [],
+      resultingWritebackRefs: [],
+      customEventProgress: [],
+      narrativeArcProgress: []
+    }
+  };
 }
 
 export function composePrompt(context: PromptContext, playerInput: string, options: ComposePromptOptions = {}): string {
@@ -1821,14 +2431,24 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
   };
   const promptSettings = options.promptSettings;
   const coreRules = resolvePromptText('turn.coreRules', promptSettings);
-  const narrativeGuide = createNarrativeStyleAndDisplayGuide(narrativeLengthProfile.level, promptSettings);
+  const narrativeGuide = createNarrativeStyleAndDisplayGuide(
+    narrativeLengthProfile.level,
+    promptSettings,
+    options.playerPortrayalMode
+  );
   const playerActor = context.presentActors.find((actor) => actor.actorId === 'player');
   const narrativePerspectiveGuide = createNarrativePerspectiveGuide(options.narrativePerspective, {
     playerName: playerActor?.name,
     playerGender: playerActor?.gender
   });
+  const playerPortrayalGuide = createPlayerPortrayalGuide(options.playerPortrayalMode);
+  const playerControlOutputRule = createPlayerControlOutputRule(options.playerPortrayalMode);
+  const playerActionLock = createPlayerActionLock(playerInput, options.playerPortrayalMode);
+  const narrativeLanguageGuide = createNarrativeLanguageGuide(options.locale);
+  const cantoneseFlavorProfile = getCantoneseFlavorProfile(context.cantoneseFlavor);
   const adultRelationshipGuide = createAdultRelationshipStyleGuide(promptSettings);
   const actors = context.actorPackets.map(formatActorPacket).join('\n\n');
+  const explicitActorReferences = formatExplicitActorReferenceProjection(context);
   const npcMemories = formatNpcMemoryProjection(context);
   const timeReference = formatTimeReferenceProjection(context);
   const recentStory = formatRecentStoryProjection(context);
@@ -1846,13 +2466,24 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
   const finance = formatFinanceProjection(context.financeProjection);
   const reputation = formatReputationProjection(context);
   const institution = formatInstitutionProjection(context);
+  const livelihood = formatLivelihoodProjection(context);
   const cityPower = formatCityPowerProjection(context);
   const citySituationTracks = formatCitySituationTrackProjection(context);
   const relationship = formatRelationshipProjection(context);
   const dynamic = formatDynamicProjection(context);
   const recentCompletedFacts = formatRecentCompletedFactProjection(context);
   const eraSeedFigures = formatEraSeedFigureProjection(context);
+  const screenCharacters = formatScreenCharacterSeedProjection(context);
   const storypack = formatStorypackProjection(context);
+  const dramaOrchestration =
+    options.dramaPlanningContext && options.dramaPlan && options.foregroundContract
+    ? formatDramaExecutionPrompt({
+        context,
+        planningContext: options.dramaPlanningContext,
+        plan: options.dramaPlan,
+        contract: options.foregroundContract
+      })
+    : '';
   const presentActorReactions = formatPresentActorReactionProjection(context);
   const remoteNpcPresence = formatRemoteNpcPresenceProjection(context);
   const backgroundEvolution = formatBackgroundEvolutionProjection(context);
@@ -1865,8 +2496,18 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
   const policeDuty = formatPoliceDutyProjection(context);
   const grayNetwork = formatGrayNetworkProjection(context);
   const identityContext = formatIdentityContextProjection(context);
+  const triadMembership = formatTriadMembershipProjection(context);
   const civilianTransitionGuidance = formatCivilianTransitionGuidance(context);
-  const exampleJson = JSON.stringify(createTurnResponseExample(pregnancyMode), null, 2);
+  const exampleJson = JSON.stringify(
+    createTurnResponseExample(
+      pregnancyMode,
+      options.dramaPlanningContext,
+      options.dramaPlan,
+      options.localJudgement
+    ),
+    null,
+    2
+  );
   const currentScenario = hk1980sOpeningScenarios.find((scenario) => scenario.time.year === context.currentTime.year);
 
   return [
@@ -1878,13 +2519,26 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
       '世界',
       `时代: ${context.currentTime.year} 年香港语境\n当前剧本: ${currentScenario?.title ?? `${context.currentTime.year} 香港城市生活`}\n时间: ${context.timeLabel}`
     ),
+    section(
+      '当前日期可用的香港历史新闻事实锚点',
+      `${formatHistoricalHongKongNewsAnchorsForPrompt(context.currentTime)}\n这些是事实背景而非逐字历史标题；不得提前使用当前日期之后的事件，也不得把玩家私人行动混入这些事实。`
+    ),
     section('时间参照框架', timeReference),
     section('警务值班节奏', policeDuty),
     section('开局节奏延续', formatOpeningPacingProjection(context)),
     section('1980s 香港警队职级资料库', hk1980sPoliceRankKnowledge),
+    section('香港警队行动单位资料库', hk1980sPoliceOperationalUnitKnowledge),
     section('香港社团行为逻辑', hk1980sTriadBehaviorKnowledge),
     section('玩家', `${context.playerSummary}\n执法身份: ${context.lawIdentitySummary || '无'}`),
+    section(
+      '本局粤语风味',
+      `当前等级：${cantoneseFlavorProfile.label}\n后续正文要求：${cantoneseFlavorProfile.promptGuide}\n这是当前存档的有效设置；只影响本回合及之后新生成的正文，不得据此改写既有剧情事实。`
+    ),
+    ...(options.localJudgement
+      ? [section('本回合本地判定合同', formatLocalJudgementContract(options.localJudgement))]
+      : []),
     section('IDENTITY_CONTEXT', identityContext),
+    ...(triadMembership ? [section('社团成员责任上下文', triadMembership)] : []),
     ...(civilianTransitionGuidance ? [section('市民身份入口', civilianTransitionGuidance)] : []),
     section(
       '地点',
@@ -1896,18 +2550,26 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
       `当前档位: ${pregnancyModeLabel[pregnancyMode]}\n规则: 模型只报告正文中确实发生的风险事件或明确结局；本地引擎独占概率、验孕、孕期和分娩日期真值。`
     ),
     section('在场 Actor', actors || '- 无'),
+    section('玩家点名人物身份锚点', explicitActorReferences),
     section('NPC 记忆投影', npcMemories),
     section('在场 NPC 反应候选', presentActorReactions),
     section('相关案件', cases),
     section('相关物品与资产', assets),
     section('金钱与收支', finance),
     section('声誉与口碑投影', reputation),
+    ...(livelihood ? [section('市民职业与营生投影', livelihood)] : []),
     section('社会机构投影', institution),
     section('城市权力锚点投影', cityPower),
     section('城市局势后台轨道投影', citySituationTracks),
     section('人脉与缘份投影', relationship),
-    section('时代种子人物资料库', eraSeedFigures),
-    section('Storypack 投影', storypack),
+    ...(!options.dramaPlanningContext
+      ? [
+          section('影视角色种子资料库', screenCharacters),
+          section('时代种子人物资料库', eraSeedFigures),
+          section('Storypack 投影', storypack)
+        ]
+      : []),
+    ...(dramaOrchestration ? [section('戏剧化前台编排', dramaOrchestration)] : []),
     section('DYNAMIC_CONTEXT', dynamic),
     section('远场演化既有事实', backgroundEvolution),
     section('远场 NPC 存在感候选', remoteNpcPresence),
@@ -1920,29 +2582,42 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
     section('过往正文向量回捞', storyVector),
     section('通用事实向量记忆', vectorMemories),
     section('相关记忆', memories),
+    section('玩家可见输出语言', narrativeLanguageGuide),
     section('正文风格与显示格式', narrativeGuide),
     section('正文叙事人称', narrativePerspectiveGuide),
+    section('正文演绎风格', playerPortrayalGuide),
     section(
       '输出原则',
       [
         '返回一个合法 JSON object，不要 Markdown，不要代码块，不要额外解释。',
         '正文优先：先完整写 narrativeText，再写结构化 JSON；不要因为 JSON 写回字段很多而压缩正文。',
+        '可选 presentationHints 只提供轻量演出语义：dialogueEmotions 按 narrativeText 中 dialogue 的出现顺序逐项填写，innerMonologueEmotions 按【内心】段落顺序填写；只使用 neutral/happy/excited/ecstatic/sad/angry/surprised/serious/worried/afraid/embarrassed/shy/tired/thinking/secretive，不复制正文、角色名或 actorId。漏项不会阻止回合。',
+        playerControlOutputRule,
         'narrativeText 结尾必须停在具体现场状态、人物动作、对方反应、局面后果或可继续互动的事实上；禁止用第二人称选择题或征询句收尾，尤其不要以“你是打算……还是……？”“是否……？”“要不要……？”“还是……？”结尾。可选行动只写 suggestedActions。',
+        '每个成功回合必须生成 2-4 个非空 suggestedActions；每项都要承接本回合正文终态，彼此有实际差异，并把下一步决定留给玩家。不得留空、复用上一回合选项，或建议重复已经完成的动作。',
         'suggestedActions 必须服从结构化事实终态；不得把 RECENT_COMPLETED_FACTS 中已经完成、签署、交付、解决或结束的同一事项重新建议为待办。',
         '每回合必须写 turnSummary：用 1-3 句中文事实摘要记录玩家已完成事项、NPC/机构知情、状态变化和已形成的后续钩子。只写已经发生的事实和结果，不复述文风，不制造悬念，不写工程词，不使用“可能、似乎、准备”等未落实表述。',
         'turnSummary 是本回合唯一的主角短期记忆来源；不要再把同一回合摘要写入 writeback.memories。writeback.memories 只用于 world/case/place/player 等独立事实，NPC 个人记忆只写 actorMemories。',
         '如果本回合确认投稿、报案、交付、换装、付款、拘捕、提交证据、完成谈话或离开地点等已完成事实，turnSummary 必须明确写“已经/已/完成/交付/提交/离开”等完成状态，后续不得再把同一动作写成待办。',
-        `常规回合 narrativeText 目标 ${narrativeLengthProfile.turnTarget} 个中文字符；复杂回合 narrativeText 目标 ${narrativeLengthProfile.complexTurnTarget} 个中文字符；过渡回合最低 ${narrativeLengthProfile.transitionMinimum} 个中文字符，除非玩家明确要求极简。`,
-        `每个常规回合至少 ${narrativeLengthProfile.paragraphTarget} 个显示段落或对白行；不能只用一两句摘要结束。`,
+        `篇幅硬合同：常规回合 narrativeText 目标 ${narrativeLengthProfile.turnTarget} 个中文字符且不得少于 ${narrativeLengthProfile.turnMinimum} 个中文字符；复杂回合目标 ${narrativeLengthProfile.complexTurnTarget} 个中文字符。简单、等待、文书和过渡回合也不得自行降档。围绕同一事务纵向展开有效行动过程、NPC 回应与对白、信息交换、现实限制和直接后果，不设固定段落数；禁止重复同一反应、换词复述、堆环境细节或新造无关钩子凑长度。`,
         '只写本回合明确产生或需要更新的结构化字段；未变化的模块可以省略或留空数组。',
         '不要通过正文暗示状态变化；正文不是写回来源。',
+        '警察玩家的正式晋升、降职、复职或职级纠正确已生效时，必须写 playerPatch.policePanel.careerPath.currentRank，并使用完整的新职级名称；同一警察身份内的职级变化不是身份转换，禁止为此写 identityContextPatch。仅获推荐、候选、面试、署任讨论或等待任命时不得更新 currentRank。',
+        '玩家仍是 police、但同一警察身份内正式调往新警署、部门或行动单位，或新岗位已经生效时，必须写 policeRoleProfilePatch，完整重写 stationOrPost、department、assignmentSummary 和 reason；不要只改 playerPatch.policePanel.unitSummary，也不要写 identityContextPatch。口头申请、等待调令、临时支援或尚未报到时不得提前更新。',
         '电话报案、上级派警、电台通报、线人报料、场方/住户/店主求助或投诉等“事件来源”一旦写进正文，必须写入 currentMatterPatches.summary/currentHook、casePatches.activityLog 或 memories；后续相关报案人、场方、店方不能完全忘记自己/本方曾经报过警，只能对报警目的、范围或后果改口。',
         'currentMatterPatches.status 必须明确表达事项生命周期：仍在发展写 active；暂时安静、等待材料、等待通知、移交他人但仍可能发展写 dormant；真正结束且无实质后续写 resolved；仅在需要保留历史记录时写 archived。不要用“初步闭环、暂时解除、告一段落、暂无后续”等正文措辞代替结构化 status。',
+        'currentMatterPatches.visibility 只能写 known 或 hidden：玩家当前已知事项写 known，尚未进入玩家认知的信息写 hidden；不要使用其他模块的 player_known/public/private 枚举。',
+        '社团成员的组织责任继续使用 currentMatterPatches：matterKind="social"、source="triad_responsibility"，relatedActorIds 必须包含实际交代人，relatedOrganizationIds 必须包含所属社团。责任必须由既有直属上线或本回合已创建的稳定 Actor 在正文中真实交代；后台组织演化不能隔空给玩家刷任务。',
+        '市民的职业事项使用 currentMatterPatches：matterKind="livelihood"。机构整体方向不等于玩家自动接到工作；只有既有人物、本回合创建的稳定 Actor、工作通知、现场安排或已确立雇佣事实把具体事情带到玩家面前，才可创建营生事项。相关人物与雇主必须使用稳定 actorId / organizationId。',
+        '同一社团同一阶段原则上只保留一项主要 active 组织责任；推进时复用原 id 更新 summary/currentHook/status。完成、拒绝、敷衍或失败都可以形成真实结果并写 resolved；等待、拖延或暂时搁置写 dormant。不要用经验值、忠诚度百分比或自动加减数值代替人物与组织的具体反馈。',
+        '组织责任产生持续影响时，按事实更新交代人/同组人物的 relationshipSummary、attitudeTowardPlayer、trustTendency、entanglementSummary，并只在未来行为确实会承接时写 actorMemories；社团整体观感或压力确实改变时才写 organizationPatches，街坊、警队、商业等圈层评价确实传播时才写 reputation。',
         '案件面板只写正式或准正式案件：已有案号/报告/口供/证据、上级交办、严重伤害或重大财损、拘捕、社团有组织犯罪、ICAC/检控/媒体风险，或明显需要多回合调查。普通巡逻求助、轻微滋扰、噪音投诉、店主/住户求助和现场调停写 currentMatterPatches 或 memories，不要写 casePatches。',
+        'casePatches 必须使用稳定 caseId。新案件至少写 title、caseType、status、playerRole、summary、currentFocus 和 activityLog；既有案件有新证据、调查进展、移交、控告、审理或归档时，复用原 caseId 更新 status/currentFocus/playerVisibleProgress/activityLog。status 只能是 intake/investigating/submitted_to_prosecutions/prosecution_review/charged/court_scheduled/tried/sentenced/returned/archived/cold；playerRole 只能是 lead/assist/execute/involved/aware。禁止使用 playerAccessLevel。',
         '已移交 CID/反黑/重案/检控或由其他单位主办的案件，如果玩家只是证人、报案人、现场参与者或知情者，写 playerRole=aware/involved；这类是相关案件，不要当作玩家当前任务反复推动。只有玩家主动追问、收到正式通知或案件进展确实牵动玩家时才带回正文。',
         'timePatch 是唯一时间来源：短动作写 elapsedMinutes；跨日、跨周、轮值、等待、养伤、旅行或任何正文明确跳到具体日期/时刻时，必须写 targetTime={year,month,day,hour,minute}。targetTime 不得早于当前时间；如果 elapsedMinutes 与 targetTime 同时存在，以 targetTime 为准。',
         '新人物必须用 actorPatches 创建。actorId 必须稳定、可复用。',
         '既有 Actor 可以只写变化字段；新 Actor 创建必须完整，至少包含姓名、性别、年龄、当前身份、公开身份、实际身份摘要、角色定位、人物简介、外貌、衣着、性格、说话风格、动机、长期目标、价值观、六维、与玩家关系、态度、往来度、信任/戒备、牵连、长期记忆、最近记忆、当前状态、在场状态、可见性和重要度。',
+        'NPC 在 narrativeText 中明确进入、离开、换到另一房间，或只通过隔门、电话、电台发声时，必须至少同步更新对应 actorPatches.presence；已知新地点/场景时再更新 currentPlaceId/currentSceneId，并按需更新 scenePatches.presentActorIds。presence=present 只用于与玩家处在同一可见场景，nearby 用于同一地点但不在同一镜头，mentioned 用于已经离开当前现场。禁止只在 statusSummary/recentInteractionMemory 写“离开”却让旧 presentActorIds 保留。',
         '往来度 interactionScore 只能是 0-100 的整数，表示接触频率/牵连深浅，不代表喜欢或讨厌；仇恨、敌意、戒备、恐惧写入 attitudeTowardPlayer、relationshipSummary、trustTendency 或 entanglementSummary，不能用负数往来度表达。',
         '新普通 NPC 的 name 必须是可长期绑定身份的完整姓名，不能只写“阿强”“红姑”“肥仔森”、单个英文名或职业称呼；外号、花名和日常称呼写入 callName/aliases。',
         '如果本回合只知道外号但该人物已经重要到必须建档，请按时代、身份和场景生成合理完整姓名，同时把原外号保留在 callName/aliases；不要照抄固定示例姓名。',
@@ -1952,44 +2627,68 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         '不要用“某人的手下/纹身男人/可疑男子”等临时描述凑 name；尚不足以建立稳定身份时不要创建 Actor 档案。',
         '输出 JSON 示例只是字段结构示例；示例里的说明性占位文本必须在实际输出中替换为具体内容，普通 NPC 姓名必须由本回合按时代、身份和场景生成或复用既有 actorId，不要照抄任何示例姓名或占位文字。',
         '普通 NPC 不要写 vitalsPatch，不要生成生命/体力数值；身体情况用 statusSummary/bodyConditionSummary。',
-        '玩家发生追逐、奔跑、搏斗、摔伤、负重、长时间巡逻、熬夜或休息恢复等明显体力变化时，必须写 actorPatches 中 actorId=player 的 vitalsPatch；不要只在正文里写疲惫、喘气、受伤或恢复。',
-        '玩家当前身份、公开身份、实际身份摘要或身份 roleProfiles 发生变化时，必须只写 writeback.identityContextPatch，完整提供 transitionId/kind/fromIdentity/toIdentity/publicIdentity/reason/targetRoleProfile/secretFactPatches；不要用 actorPatches 修改这些字段。目标身份切换为 police 时可提供 policeNumber（只能是四位数字）；当前没有警号且未提供时，由系统确定性分配，并原子同步到 Player 与 Actor。',
-        'identityContextPatch.kind 只能使用 join / leave / cover_enter / cover_exit / exposure / correction：普通市民加入警队或社团用 join，进入卧底公开身份用 cover_enter；禁止输出 status_change。transitionId 必须是本次转换独有且稳定的非空字符串。targetRoleProfile 必须严格写成 {"identity":"police|gang_member|civilian","profile":{...}}，identity 必须等于 toIdentity；禁止写成 {"police":{...}}、{"triad":{...}} 或 {"civilian":{...}}。targetRoleProfile.profile 必须使用规范字段：社团用 organizationId/societyName/roleTitle/rankSummary/territorySummary/coverIdentitySummary/obligationSummary/riskSummary，警队用 agencyId/stationOrPost/department/rank/assignmentSummary/postRole/authoritySummary/accessSummary/dutySummary。',
+        '每回合必须返回顶层 playerVitalsReview={"changed":true|false,"reason":"本回合玩家身体状态是否变化的事实依据"}；它只复核玩家，不复核 NPC。',
+        'playerVitalsReview.changed=false 时，不得为了气氛虚构玩家生命、体力或身体状态变化；changed=true 时，必须同时写 actorPatches 中 actorId=player 的 vitalsPatch，不能只在正文或 reason 中描述变化。vitalsPatch 写 conditionSummary 时必须同时写 conditionPersistence，且只允许 stable|transient|persistent|unknown。',
+        '生命/体力是稀疏的游戏状态，不是逐回合代谢模拟。只有本回合已明确形成、会影响后续行动的实际消耗、伤势、恢复或身体状况变化，playerVitalsReview.changed 才能为 true。',
+        '环境闷热、微汗、保持坐姿、普通文书、交谈、等待、情绪紧张、日常站立或短距离走动，默认 changed=false；不得凭环境、姿势或“人总会疲劳”推导微量扣点，也不得为凑 conditionSummary 发明不适。',
+        '追逐、奔跑、搏斗、受伤、长时间体力劳动、熬夜、睡眠、休息或治疗只是需要结合本回合实际结果复核的情境，不代表必然变化；changed=true 时 healthDelta/staminaDelta 至少一项应有非零变化，或存在需要延续到下一回合的明确身体状况。短期疲劳/宿醉用 transient，伤病尚未恢复用 persistent，正常稳定状态用 stable，无法判断才用 unknown。',
+        '玩家当前身份、公开身份、实际身份摘要或跨身份 roleProfiles 发生变化时，必须只写 writeback.identityContextPatch，完整提供 transitionId/kind/fromIdentity/toIdentity/publicIdentity/reason/targetRoleProfile/secretFactPatches；不要用 actorPatches 修改这些字段。目标身份切换为 police 时可提供 policeNumber（只能是四位数字）；当前没有警号且未提供时，由系统确定性分配，并原子同步到 Player 与 Actor。',
+        'identityContextPatch.kind 只能使用 join / leave / cover_enter / cover_exit / exposure / correction：普通市民加入警队或社团用 join，进入卧底公开身份用 cover_enter，卧底任务确已结束并恢复原真实身份时用 cover_exit；禁止输出 status_change。transitionId 必须是本次转换独有且稳定的非空字符串。targetRoleProfile 必须严格写成 {"identity":"police|gang_member|civilian","profile":{...}}，identity 必须等于 toIdentity；禁止写成 {"police":{...}}、{"triad":{...}} 或 {"civilian":{...}}。targetRoleProfile.profile 必须使用规范字段：社团用 organizationId/societyName/roleTitle/rankSummary/territorySummary/patronActorIds/peerActorIds/rivalActorIds/coverIdentitySummary/obligationSummary/riskSummary，警队用 agencyId/stationOrPost/department/rank/assignmentSummary/postRole/authoritySummary/accessSummary/dutySummary。',
         'identityContextPatch.secretFactPatches 只允许 {"operation":"upsert","fact":{"secretId":"...","ownerType":"player","ownerId":"player","kind":"identity|loyalty|relationship|risk|control|other","summary":"...","playerCharacterKnown":true|false,"publicKnown":true|false,"knownByActorIds":[],"revealState":"hidden|known_to_player_character|known_to_some_actors|publicly_revealed","revealConditions":[],"visibility":"hidden|player_known|public","importance":0-100}} 或 {"operation":"remove","secretId":"..."}；禁止使用 add/factId/factType/description 这类别名结构。',
-        '身份没有真正改变时不得输出 identityContextPatch。卧底不是第四种 currentIdentity：警察卧底社团写 toIdentity=gang_member，社团人员卧底警队写 toIdentity=police；真实效忠与知情边界写 secretFactPatches。',
-        '身份转换的正文如果明确发生换装、领取或更换当前随身装备，必须同步写 playerPatch.clothing / playerPatch.equipment；不得只在 narrativeText 里写换装或领装。equipment 是当前随身物品的完整列表（最多 3 项）；只有正文与结构化事实已确立变化时才更新，不得凭空清空玩家依然持有的物品。',
+        '身份没有真正改变时通常不得输出 identityContextPatch。唯一例外：社团玩家的正式职务、层级、活动区域或直属关系已由剧情明确生效时，允许写 kind="correction" 且 fromIdentity=toIdentity="gang_member"，完整重写 targetRoleProfile；普通交代、好感变化、口头赏识、候选或尚未生效的提拔不得使用。警察同身份职级变化只写 policePanel.careerPath.currentRank；警察同身份单位/岗位调动写 policeRoleProfilePatch。卧底不是第四种 currentIdentity：警察卧底社团写 toIdentity=gang_member，社团人员卧底警队写 toIdentity=police；真实效忠与知情边界写 secretFactPatches。',
+        '卧底任务结束不是 leave 或新建身份：必须写 kind="cover_exit"，fromIdentity=当前卧底公开身份，toIdentity=进入卧底前保存的真实身份。警察从社团掩护返回 police，社团成员从警察掩护返回 gang_member；本地会恢复原 roleProfile、界面和该身份已暂停的固定收支，并暂停掩护身份绑定的收支。',
+        '身份转换的正文如果明确发生换装，必须同步写 playerPatch.clothing；领取或更换当前随身装备时，必须用 assetPatch.upsertItems 建立或更新真实物品，并用 assetPatch.equippedItemIds 引用这些稳定 itemId。不得只在 narrativeText 或 playerPatch.equipment 自由文本里写领装。',
         '新增或更新秘密事实但不切换玩家身份时，写 writeback.secretFactPatches；不得只把秘密写进 narrativeText、memories、actualIdentitySummary 或 hidden roleProfiles。',
         '地点不要漂移：同一个地点必须复用既有 placeId；新地点只有在以后可复用时才写 placePatches，临时角落/一次性镜头不要创建地点。',
         '玩家当前位置或当前场景发生变化时，必须写 writeback.locationPatch.currentPlaceId/currentSceneId；不要只在正文里写“前往、回到、抵达”。currentSceneId 只在已有或本回合 scenePatches 创建的场景可用时写。',
         '时代不要穿帮：真实影视剧、歌曲、新闻、公共事件和人物公开活动必须服从当前游戏时间；不得把当前游戏时间之后才出现的真实影视剧、歌曲、新闻或公共事件写成已经发生、正在播出或正在流行。不确定年份时使用架空标题或模糊时代氛围，不要点名未来作品。',
         '新增 placePatches 必须尽量写 name/nameZh/nameEn/aliases/regionId/districtId/type/category/summary/publicKnowledge/currentState/source/canonical/confidence；能根据已知地点估计坐标时写 visualAnchor。',
         '只有 player 或未来明确拥有 vitals 的 Actor 才能写 vitalsPatch。',
-        '普通 NPC 的 roleProfiles 按身份需要填写；警察写 police，社团人物写 triad，普通市民写 civilian。玩家的身份 roleProfiles 只能通过 identityContextPatch 更新；卧底/双重身份的真实侧必须配套 SecretFact 知情边界。',
+        '普通 NPC 的 roleProfiles 按身份需要填写；警察写 police，社团人物写 triad，普通市民写 civilian。玩家跨身份的 roleProfiles 只能通过 identityContextPatch 更新；当前公开身份仍为 police 时，正式调署、调部门、调行动单位或转岗位必须写 policeRoleProfilePatch；当前公开身份仍为 civilian 时，辞职、入职、失业、升职、转部门、换工作地点或转为自营必须写 civilianRoleProfilePatch。两者都不得伪装成身份转换。卧底/双重身份的真实侧必须配套 SecretFact 知情边界。',
+        'civilianRoleProfilePatch 只在职业变化已经由正文和结构化事实明确生效时写；面试、打听、邀请、候选和口头设想不得提前改档。employerOrganizationId、workplacePlaceId、livelihoodActorIds 只能引用已有或本回合已创建的稳定 ID；清除雇主、地点、单位或摘要时显式写 null。正式固定工作的建立、暂停或结束还必须同步 financePatch 中对应的 recurring cashflow。',
         '声誉/口碑只在社会评价确实变化时写入 playerPatch.reputation；不要每回合自动增加知名度，也不要把普通互动都写成声誉变化。',
         '整体知名度 notoriety 与圈层知名度 visibility 的范围都是 0-1000，只代表传播度；整体口碑 overallReputation 与圈层口碑 standing 的范围都是 -100 到 100，代表评价倾向。',
-        '整体口碑由你根据当前事实、圈层反应和玩家行为合理判断后写回，本地不会用公式自动计算；写 reputation 时必须给 summary 和 reason。',
+        '整体口碑由本地根据各圈层 standing 与 visibility 确定性综合；不要输出 overallReputationDelta 或 overallReputationSet。你只负责写实际发生变化的 notoriety 与 circlePatches，并必须给 summary 和 reason。',
         '圈层只使用 police、neighborhoodMedia、entertainment、triad、business、politics。旧的 localPublic/mediaPublic/underworld/political/oversight 会被兼容归一，但新输出不要再使用。',
+        'newsIssuePatches 只承接已经成为公共信息的新闻事实。普通玩家的买车买楼、购物、搬家、恋爱、用餐、转职、日常执勤、普通办案步骤和一般社交都没有新闻价值，不得写入报纸。',
+        '报纸应以当时香港与世界的公共新闻为主体，包括政策、交通、劳工民生、金融地产、娱乐、国际和重大治安消息；不要把每期报纸写成玩家行动摘要或犯罪简报。',
+        '玩家尚非公众人物时，即使其参与已公开重大案件，报道也应使用匿名职业身份，不得写玩家姓名或关联 player actorId；只有结构化声誉达到区域知名以上，才允许直接以玩家为报道对象。',
         '女性 NPC 必须写 femaleProfile；femaleProfile 是女性 NPC 的扩展档案，只在 gender 为 female 时写入；它不能替代姓名、性别、年龄、身份、关系和记忆等基础字段。',
         'adultPrivateProfile 只允许写给已确认成年的女性 NPC：必须能从 birthDate 或 computedAge 判断当前年龄 >= 18；不确定或未成年时省略 adultPrivateProfile，只保留普通 femaleProfile。',
-        '确认成年女性 NPC 必须生成 adultPrivateProfile；它是成年女性的香闺秘档，用于长期关系连续性和未来文生图资料。不要省略，不要只写在正文里。',
-        'adultPrivateProfile 写稳定的香闺秘档：profileStatus / womb / partProfiles / fetishNotes / sensitivePoints；profileStatus 用 ready。partProfiles 固定包含 胸部 / 小穴 / 屁穴 三项，用 description 直接写该部位的 NSFW 外观、触感、敏感特征或可视细节，必须一次写具体内容。description 采用直白、具体、粗俗、可感的档案写法，不把关键部位写成含糊代称，也不要写成诗化、比喻化、生活化或恋爱关系总结；不要使用“甬道”这类女性器官隐喻，也不要用“巨物、坚硬”这类替代男性器官或勃起状态的词。三个部位 description 只能写对应部位，不得混入姓名、脸、气质、家务、职业、收入、求婚、恋爱保障、家庭背景、人物性格或关系总结。partProfiles 每项可以额外写 imagePromptAnchor；imagePromptAnchor 是独立的文生图可画标签，可保留如玉、细腻这类可画风格词、镜头词或质感词，但不得替代 description，也不得反灌到 description。fetishNotes 是“性癖”，只写成人性偏好、刺激偏好、支配/被支配、羞耻、挑逗、身体赞美等稳定性兴奋点，不得写价值观、恋爱态度、信任条件、收入、求婚或家人照顾。不要写英文状态占位、中文待补内容、无记录占位、元说明、工程说明或泛化一致性说明。womb 使用 { "status": "未受孕", "cervixStatus": "紧闭", "records": [] } 这类结构。不要写临时动作或当回合状态。',
-        '普通 actorPatches[].femaleProfile.adultPrivateProfile.womb 只用于人物首次建档时的稳定基线；不得写 pregnancy、lastPregnancyCheck、pregnancyHistory，不得用 status 或 records 直接判定/覆盖怀孕。概率、随机值、验孕、孕期阶段、日期、历史和孩子建档由本地引擎独占。',
+        '成年女性、首次见面或普通人物建档本身都不是生成香闺秘档的理由。只有当前结构化关系与本回合事件已经形成可长期承接的亲密边界、成人偏好或身体事实时，才写 adultPrivateProfile；没有可靠事实就完全省略，不得猜测或套用通用模板。',
+        'adultPrivateProfile 允许逐步建立：只写本回合新确认或确实变化的字段，资料尚未齐全时 profileStatus 用 developing；只有 womb、胸部/小穴/屁穴三项 partProfiles、fetishNotes 与 sensitivePoints 都已有具体稳定事实时才用 ready。description 采用直白、具体、可感的档案写法，只写对应部位，不混入姓名、脸、职业、收入、恋爱保障、家庭背景或人物性格；不要使用“甬道”等含糊器官隐喻。partProfiles 每项可以额外写 imagePromptAnchor；imagePromptAnchor 是独立的文生图可画标签，可保留如玉、细腻这类可画风格词、镜头词或质感词，但不得替代 description，也不得反灌到 description。fetishNotes 只写已经形成依据的成人性偏好，不得用价值观、信任条件或关系总结代替。不要写英文状态占位、中文待补内容、无记录占位、元说明、工程说明或泛化一致性说明，也不得用通用默认值或无依据内容补全。',
+        '已有成年香闺秘档且本回合明确形成相关即时身体变化时，可以只写 adultPrivateProfile.womb.cervixStatus；没有实际变化就省略，不得沿抄旧值。该字段只承接短期剧情反馈，本地会在 12 个游戏小时后恢复常态；不得用它创建新香闺秘档或代替怀孕生命周期。',
+        '普通人物档案补全任务禁止生成 femaleProfile.adultPrivateProfile。pregnancyRiskPatches 只报告正文中已发生的受孕风险事件；成年女性尚无香闺秘档时，本地引擎只会按需建立最小 womb 跟踪，不会因此补造部位、性癖或敏感点。不得写 pregnancy、lastPregnancyCheck、pregnancyHistory，也不得用 womb.status 或 records 自行判定/覆盖怀孕；概率、验孕、孕期和孩子建档由本地引擎独占。',
+        '每回合必须返回顶层 pregnancyLifecycleReview。changed=false 时 events=[]；正文明确发生受孕风险、医院/医学检查确认妊娠、妊娠终止或分娩时 changed=true，并为每名相关人物列出 pregnancy_risk / pregnancy_confirmed / pregnancy_ended / live_birth 事件。复核只声明本回合事实，不能替代 writeback 内的对应补丁。',
         pregnancyMode === 'off'
-          ? '当前怀孕机制已关闭：不得输出 pregnancyRiskPatches；已有孕期仍会由本地日期推进。'
-          : '正文明确发生可能导致受孕的成年行为时，必须写 pregnancyRiskPatches：unprotected=无保护风险，tryingToConceive=明确尝试受孕，reducedRisk=已采取避孕但仍有残余风险。只报告事件，不得自行宣布本次已经怀孕或未怀孕；同一人物同一回合最多写一条。',
-        '只有正文明确发生分娩或明确妊娠终止时才写 pregnancyResolutionPatches；live_birth 只能在投喂的生命周期已进入待产窗口时写。不要用 pregnancyResolutionPatches 代替验孕，也不要自行制造流产、死产或医学异常。',
+          ? '当前怀孕机制已关闭：不得输出 pregnancyRiskPatches；但已有孕期的医学确认、终止或分娩仍必须按事实写 pregnancyLifecycleReview 与 pregnancyResolutionPatches。'
+          : '正文明确发生可能导致受孕的成年行为时，必须写 pregnancyRiskPatches：unprotected=无保护风险，tryingToConceive=明确尝试受孕，reducedRisk=已采取避孕但仍有残余风险。只报告事件，不得自行宣布本次已经怀孕或未怀孕；同一人物同一回合最多写一条。即使该人物已经处于疑似、确认、待产或产后阶段，仍要写该风险事件：本地只追加接触记录，不会建立第二个妊娠。若同一事件或风险窗口涉及多名可能父亲，必须在该条 paternityCandidates 中列出全部候选，不得只保留一人；visibility 只反映玩家实际知情范围，不得猜测。同一游戏日的风险由本地引擎合并，跨游戏日分别排期；较早判定成功后，后续待判定会自动取消。',
+        '只有正文明确发生医院/医学检查确认妊娠、妊娠终止或分娩时才写 pregnancyResolutionPatches：pregnancy_confirmed 只把已有 suspected 状态提前确认为 confirmed；pregnancy_ended 只用于已经取得阳性结果后的明确终止；live_birth 只能在投喂的生命周期已进入待产窗口时写。普通阳性验孕由本地按期判定，不要自行制造流产、死产或医学异常。',
         'femaleProfile 公开字段只使用规范字段：birthday / addressToPlayer / appearanceDescription / bodyDescription / clothingStyle / personalityCore / affectionProgressionCondition / relationshipProgressionCondition / relationshipNetworkEdges。',
         'relationshipNetworkEdges 是重要女性关系网变量，格式为数组，每项 { "targetName": "人物或组织名", "relation": "关系", "note": "关系备注" }；用于记录家人、恋人、工作场所、闺蜜、保护人、债主等稳定牵连。',
         'femaleProfile 记录稳定档案真值：生日、对玩家称呼、稳定外貌、身材、常态衣着、核心性格、好感突破条件、关系突破条件和重要关系网。不要把一次性正文状态、临时恐惧、临时衣着脏污、当场动作或工程说明塞进 femaleProfile。',
         '不要使用 callSign、publicRelationship、appearanceExpansion、characterCore、relationshipAdvancementConditions、socialNetwork、emotionalBoundaries 这类别名字段；称呼写 addressToPlayer，外貌写 appearanceDescription，关系网写 relationshipNetworkEdges。',
         'NPC 记忆统一写入 actorMemories；不要再使用 actorPatches.keyMemories，也不要填写 importance。每名 NPC 每回合最多一条，也可以零条；只有该事实会在未来持续改变人物行为、关系、承诺、戒备、恩怨或对话承接时才写，普通寒暄和一次性动作不要写。',
+        'actorMemories.text 中凡是可以从 TIME_REFERENCE_FRAME 确定的“昨天、今晚、明天、后天、下周三”等时间，必须直接写绝对年月日；不得只留下会随回合漂移的相对词。只有“改天、过阵子”等本来就没有确定日期的说法可以保持模糊。',
+        '如果本回合形成了会在未来具体时间到期的约会、承诺、通知或回访，除了写人物记忆，还必须用 deferredEventPatches 建立带绝对 triggerAt 的 pending 事件；人物记忆负责“谁记得什么”，延迟事件负责“何时应重新进入上下文”。',
+        '角色链路记忆完整性：REMOTE_NPC_PRESENCE_PROJECTION 中带 actorId 的上级、同僚或既有联系人，如果本回合通过电台、电话、传呼、托话等方式实际发言、收到报告、作出指示或承诺，相关 currentMatterPatches/casePatches 等结构必须带该 actorId；只要这次互动会被后续对话或行动承接，就必须给该 actorId 写一条 actorMemories。',
+        '玩家点名人物身份锚点是人物志的稳定召回结果。若该区某项“是否存在同名歧义”为否，正文、actorMemories 及所有事项必须复用它给出的 actorId，不得用新 actorId 创建同名不同身份人物；若为是，只能在列出的候选中根据上下文消歧，不得另造第三人。',
+        '如果正文让一个已有真实姓名、以后需要继续承接的 NPC 直接发言或行动，但所有在场/远场/玩家点名身份锚点都没有对应 actorId，本回合才可以用 actorPatches 创建稳定 Actor，再用同一 actorId 写相关事项和必要的 actorMemories；普通回合最多新建 3 名长期 Actor，群体场景中的其余路人、围观者和一次性工作人员只留在正文，不得批量建档；不得只在 narrativeText 里反复使用姓名而让需要承接的人物留在状态层之外。',
+        '既有 actorId 的 birthDate 与 computedAge 是引擎保护字段，不得通过普通 actorPatches 改写。只在首次创建新 Actor 时提供年龄资料：有确切生日才写 birthDate，computedAge 必须与 currentTime 相符；只有大致年龄时可只写 computedAge，不得为了凑字段虚构生日。人物跨年或过生日后的年龄由本地引擎自动重算。',
+        'actorPatches[].presence 只能使用 present / nearby / mentioned / absent；远场人物使用 mentioned 或 absent，不得自造 remote。',
         '在场 NPC 反应候选只是未裁定建议，不是已发生事实；可以让 NPC 有动作、眼神、打断、追问、沉默或提醒，但状态变化仍必须写结构化 writeback。',
         '远场 NPC 存在感候选只是未裁定建议，不是已发生事实；只有正文自然承接后，才允许写回关系变化、NPC 记忆、当前事项、新闻、传闻或延迟事件。',
         '金钱变化以 financePatch 为准；固定收入/支出写 upsertCashflows；灰色礼物、黑钱、人情往来写 grayLedgerPatch，灰色账本不直接改变金钱。',
+        'financePatch.upsertCashflows[].kind 只能使用 salary / rent / family_support / debt_payment / asset_income / asset_expense / living_cost / other；零用、津贴等归入最贴近的规范项或 other，不得自造 allowance。',
         'Only write financePatch.upsertCashflows when a recurring monthly cashflow is explicitly created, changed, or ended; routine one-time spending/income must not be converted into cashflow items.',
+        '高优先级完整性：如果本回合 narrativeText 明确写成玩家已经完成录用、正式到职并建立持续按月发薪的工作，本回合没有对应 financePatch.upsertCashflows 就是不完整写回。不能只在正文、turnSummary、人物记忆或职业称谓里写“已入职”。反过来，仍在求职、面试、等待通知或只有短工时不得建立固定工资。下方 JSON 示例中的市民工资项只示范完整字段，当前回合没有正式建立固定工作时必须把 upsertCashflows 留空。',
+        '玩家的职业或身份固定收入必须写 identityBinding。收入金额、入账账户或工作内容改变时复用原 itemId 改写完整项；暂停发放时复用原 itemId 并写 status="paused"；彻底结束时写 removeCashflowItemIds。',
         '物品与资产统一写入 assetPatch。只记录玩家已经拥有、控制或长期可用的物品/资产；不要把他人所有的东西写进玩家物品与资产。',
         'assetPatch.upsertItems 用稳定 itemId 新增或更新物品；同一物品不要重复造新 itemId。物品仍由玩家持有但内容变化时，复用原 itemId 更新完整对象，例如小说手稿从前三章推进到前四章。',
         'assetPatch.removeItems 用于物品离开玩家持有或控制：交给别人、寄出、提交到案件或证物袋、卖掉、丢失、销毁、消耗、归还或转入案件系统。提交案件时填写 movedToCaseId；如果玩家保留副本，必须在 summary/detail 里写清副本关系。',
+        '可直接花用的现金、港币、钞票和零钱只能通过 financePatch 改变余额，绝不能写成物品。支票、本票、汇票、存单、债券、欠条、借据、收据、礼券等有独立凭据的金融工具可以作为物品；兑现、存入或交付后应移除凭据，并由 financePatch 结算。',
+        '不得把钱包、钥匙串、证件等多个独立实体拼成一件组合物品。同一小说、手稿、档案、账簿或持续变化的文件必须复用稳定 itemId 更新；只有确实存在两个物理实体时才可以分别建档。',
+        '当前装备必须使用 assetPatch.equippedItemIds 表达，最多三项，并且只能引用本回合应用后仍存在的真实物品 ID。playerPatch.equipment 只作旧兼容输入，不得用它创建新物品或组合物品。',
         '衣着是玩家/Actor 状态，不是装备槽。普通衣着变化只写 playerPatch.clothing；有特殊意义且玩家拥有的衣物可以写成 assetPatch 物品，并在 wearable 中说明穿着摘要和意义。',
         'playerPatch.clothing 必须写成对象，currentSummary 与 mode 都必填；可再写 sourceItemId/sourceItemSignificance/lastChangedReason。不要返回纯字符串，也不要把衣物写进 playerPatch.equipment。',
         'playerPatch.clothing.mode 只能使用 duty_uniform / off_duty_plain / formal / disguise / special / sleepwear / other；不能使用 uniform、casual 等自造值。',
@@ -1997,25 +2696,48 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         '当前身份是警察不等于当前穿军装；如果玩家已明确换成便服，后续应按便服续写，直到再次通过 playerPatch.clothing 写回换装。',
         '不要按上下班时间自动换衣；只有玩家明确换装、剧情明确要求换装，或身份伪装需要时才写衣着变化。下班、轮休或离开警署本身不是自动换装依据。',
         '物品分类只使用 equipment/general/document/valuable/fixedAsset/vehicle。不要额外发明灰色、危险、需归还、已提交、待核验等标签；这些语义写入 summary/detail/evidence 或后续案件系统。',
+        VEHICLE_ASSET_WRITEBACK_CONTRACT,
         '证据规则：剧情中被打上 evidence 的物品默认是有效证据；只有正文明确出现程序瑕疵、来源污染、伪造嫌疑或口径冲突时，才设置 evidence.disputed=true 并写 disputeSummary。',
         '社会机构变化写 organizationPatches；人物与机构的任职、供职、会员、老板、联络等关系写 actorPatches[].organizationRelations，不要只写在正文里。',
+        '已有机构、玩家雇主或玩家持有企业发生变化时，必须逐字复用提示词中已有的 organizationId；名称增加“家族”“集团”“公司”“企业”等修饰，或改用已知别名，都不代表新机构。只有剧情明确成立了独立法律/经营实体时才允许创建新 organizationId。',
         '大社团对玩家的态度、当前状态、组织压力或半公开结构变化写 organizationPatches；组织架构必须写 organizationPatches[].structureTree，未知职位或未知人员写“未知”；地区传闻、街面关系、关键场所和可尝试行动仍写 grayNetworkPatches。',
+        '社团资料中的 triadProfile 是只读世界包事实，不得改写。玩家已经合理获知的权力阶段或既有活动区域状态变化可写 organizationPatches[].triadState；只能使用提示词中已有的 actorId/placeId，不得凭空新增地盘、候选人或全知内部事实。',
         'hidden 的机构关系不能在普通正文、普通 Prompt 投影和玩家 UI 中泄露；只有当玩家在剧情中合理获知后，才能改为 player_known 或 public。',
         '不要因为机构投影里出现 ICAC、律政司、法院或政府部门，就自动定罪、自动检控、自动判决、自动处分或自动结案；这些只能由明确剧情和结构化写回推动。',
         '人脉/缘份长期关系变化必须写入 relationshipThreadPatches；不要只写在正文、NPC 记忆或当前事项里。',
+        'relationshipThreadPatches 是人物长期关系画像的规范来源：关系总体判断改变时更新 summary；亲密、信任、冲突、承诺、风险或当前牵引改变时更新对应的 intimacySummary / trustSummary / conflictSummary / promiseSummary / riskSummary / currentPull。人物志会从已通过门禁的关系线程对账这些画像，不能只改 actorPatches 或只写一条记忆。',
+        '人脉与缘份是同一人物关系线的不同层级，不是两套并行人物档案。已有 network 在本回合形成明确、持续的亲密或伴侣事实时，复用原 threadId 并把 kind 升级为 fate；已有 fate 不得降级；同一核心人物不得同时新建另一条 network/fate。',
         '新建 relationshipThreadPatches 必须填写 creationBasis 与 evidenceRefs；repeated_contact / sustained_conflict 至少引用两项不同的有效依据。一次见面、单次盘问、普通同事、同地点出现、单条记忆或高 importance 都不能建线。更新既有 threadId 时无需重复创建依据。',
+        'relationshipThreadPatches[].creationBasis 只能使用 family / formal_partner / formal_informant / debt_or_promise / protection / ongoing_joint_matter / repeated_contact / sustained_conflict；不得自造 financial_dependency 等值。',
         'relationshipThread.importance 是旧数据兼容字段，不得作为创建、心跳、升温或推进依据。',
         '远场关系心跳候选只是未裁定建议，不是已发生事实；只有正文自然承接后，才允许写回关系变化、NPC 记忆、当前事项、新闻或声誉。',
+        'REMOTE_NPC_PRESENCE_PROJECTION 与 BACKGROUND_EVOLUTION_FACTS 中出现的 actorId 都是既有人物的稳定身份。若正文或写回承接这些人物，必须逐字复用该 actorId；不得因玩家本轮未点名人物而另造新 actorId。',
         '不要把人脉/缘份关系线当成任务系统，不要生成好感度、进度条、奖励或本地完成判定。',
-        '重大判定必须写 judgementCheckPatches；重大追捕、格斗、持械、枪械、人群冲突、拘捕或逃脱必须写 combatEventPatches。普通日常互动不要写判定或战斗记录。',
+        '结果确有不确定性且失败会形成实际差异的观察、推理、谈判、行动、体力、意志或对抗，应按本回合本地判定合同写 judgementCheckPatches；每回合最多一次。纯例行、无阻力或事实已保证的动作不要判定。重大追捕、格斗、持械、枪械、人群冲突、拘捕或逃脱还必须写 combatEventPatches。',
         'combatEventPatches.combatText 必须是过程化精彩描写，目标 180-260 字左右，写场地、光线/天气/声音、双方站位、动作反应、判定转折和现场后果；不要写成摘要、报告、参战名单或结果列表。',
+        'combatEventPatches[].outcome 只能使用 player_advantage / opponent_advantage / player_wounded / opponent_subdued / opponent_escaped / stalemate / interrupted / escalated / other；不得自造 wounded_grappling、opponent_advantaged 等近义值。',
         '社团与灰色网络只通过 grayNetworkPatches 更新区域灰色网络投影；不要用它替代 actorPatches/placePatches/organizationPatches 创建正式人物、地点或组织档案。',
         'grayNetworkPatches 只能记录当前身份合理可见的传闻、关系、风险和行动提示；不要把 hidden 信息、全知社团层级或未确认传闻写成确定事实。',
         '城市局势后台发展只写 citySituationTrackPatches；不要把传闻提升为确定事实，不要每回合强行新增城市压力。',
-        '可以在 writeback 下追加未来模块；未知模块会被系统保留兼容或忽略，但不得替代现有字段。'
+        'JSON 顶层只放 writebackVersion、narrativeText、可选 presentationHints、turnSummary、suggestedActions、playerVitalsReview、pregnancyLifecycleReview、timePatch，以及按要求出现的 dramaExecutionTrace。playerPatch、locationPatch、placePatches、currentMatterPatches、memories、actorMemories 等所有状态模块必须放进顶层 writeback 对象，禁止与 writeback 并列。',
+        '可以在 writeback 下追加未来模块；未知模块会被系统保留兼容或忽略，但不得替代现有字段。',
+        options.dramaPlanningContext
+          ? `戏剧化回合的顶层 JSON 必须包含 dramaExecutionTrace；planId 必须是 "${
+              options.dramaPlan?.planId ??
+              `drama_plan_turn_${options.dramaPlanningContext.turnCounter}`
+            }"。未采用计划也必须返回 not_used 空回执，不得省略。`
+          : ''
       ].join('\n')
     ),
     section('玩家输入', playerInput),
+    section(
+      '本回合玩家动作锁（最高优先级）',
+      playerActionLock
+    ),
+    section(
+      '本回合场景事实锁（高优先级）',
+      '纯等待、过渡、文书、核对、整理或休息等简单行动，只使用上文已经投喂的人物、物件和事务，最多选择一个真正有用的环境锚点。所选篇幅应来自同一事务内部的具体步骤、信息、既有 NPC 回应、程序或现实限制和直接后果，不得轮流罗列视觉、听觉、嗅觉、触觉等感官细节。除非玩家行动本身直接需要且现有资料没有可复用对象，否则不得新造进门的人、同事、电话、传呼、案件、证物、秘密、危险或突发钩子来填充篇幅。'
+    ),
     section('成人段落输出前复核', adultRelationshipGuide),
     section('近期已完成事实（结构化权威）', recentCompletedFacts),
     `TURN_OUTPUT_JSON_EXAMPLE\n${exampleJson}`

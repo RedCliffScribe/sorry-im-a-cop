@@ -4,9 +4,10 @@ import { RelationshipThreadPanelModal } from './RelationshipThreadPanelModal';
 interface FatePanelModalProps {
   state: RuntimeState;
   onClose: () => void;
+  onDeleteThread?: (threadId: string) => void | Promise<void>;
 }
 
-export function FatePanelModal({ state, onClose }: FatePanelModalProps) {
+export function FatePanelModal({ state, onClose, onDeleteThread }: FatePanelModalProps) {
   return (
     <RelationshipThreadPanelModal
       state={state}
@@ -15,6 +16,7 @@ export function FatePanelModal({ state, onClose }: FatePanelModalProps) {
       subtitle="Fate"
       emptyText="暂无已知缘份"
       onClose={onClose}
+      onDeleteThread={onDeleteThread}
     />
   );
 }

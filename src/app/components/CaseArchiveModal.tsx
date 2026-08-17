@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { isNpcEvolutionTrackProjectable } from '../../domain/backgroundEvolution/trackVisibility';
 import { submitAssetEvidenceToCase } from '../../domain/cases/submitEvidence';
+import { resolveCaseLeadDisplayName } from '../../domain/cases/caseLeadContract';
 import { gameTimeToEpochMinutes } from '../../domain/backgroundEvolution/time';
 import type { AssetItem, CaseEvidenceType, CaseFile, GameTime, RuntimeState } from '../../domain/runtime/types';
 
@@ -290,7 +291,13 @@ export function CaseArchiveModal({ state, onClose, onStateChange, onDraftPlayerA
                   </section>
                   <section className="case-detail-owner">
                     <h4>主办者</h4>
-                    <p>{selectedCase.leadActorName ?? selectedCase.leadActorId ?? '未明确'}</p>
+                    <p>
+                      {resolveCaseLeadDisplayName({
+                        caseFile: selectedCase,
+                        actors: state.actors,
+                        playerActorId: state.player.actorId
+                      })}
+                    </p>
                   </section>
                 </div>
 

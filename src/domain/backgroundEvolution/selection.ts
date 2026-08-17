@@ -22,7 +22,8 @@ export interface BackgroundNpcCandidate {
   actorId: ActorId;
   trackId?: string;
   reviewKey: string;
-  trigger: 'due' | 'foreground-impact' | 'case-lead' | 'relationship';
+  trigger: 'due' | 'foreground-impact' | 'case-lead' | 'relationship' | 'important-actor';
+  visibilityHint: NpcEvolutionTrack['visibility'];
   allowMaterialProgress: boolean;
   relatedCaseIds: string[];
   relatedRelationshipThreadIds: string[];
@@ -153,9 +154,44 @@ function relationshipIdsForActor(state: RuntimeState, actorId: string): string[]
   return Object.values(state.relationshipThreads)
     .filter((thread) => thread.status === 'active' || thread.status === 'strained')
     .filter((thread) => thread.primaryActorId === actorId || thread.relatedActorIds.includes(actorId))
-    .filter((thread) => Boolean(thread.currentPull || thread.promiseSummary || thread.conflictSummary || thread.riskSummary || thread.nextNaturalBeatHint))
     .sort((left, right) => compareGameTimes(right.updatedAt, left.updatedAt) || left.threadId.localeCompare(right.threadId))
     .map((thread) => thread.threadId);
+}
+
+function relationshipEvolutionActorIds(
+  state: RuntimeState,
+  thread: RuntimeState['relationshipThreads'][string],
+  excludedActors: Set<string>
+): string[] {
+  return [thread.primaryActorId, ...thread.relatedActorIds]
+    .filter((actorId): actorId is string => Boolean(actorId))
+    .filter(
+      (actorId) =>
+        actorId !== 'player' &&
+        actorId !== state.player.actorId &&
+        isRemoteActor(state, actorId, excludedActors)
+    )
+    .filter((actorId, index, actorIds) => actorIds.indexOf(actorId) === index);
+}
+
+function actorReviewReady(state: RuntimeState, actorId: string): boolean {
+  const cooldownUntil = state.backgroundEvolution.npcReviewCooldownUntil?.[actorId];
+  return !cooldownUntil || isDue(cooldownUntil, state.time);
+}
+
+function hasDurableActorBasis(state: RuntimeState, actorId: string): boolean {
+  const actor = state.actors[actorId];
+  if (!actor) return false;
+  return Boolean(
+    actor.relationshipSummary.trim() ||
+      actor.recentInteractionMemory.trim() ||
+      actor.longTermMemorySummary.trim() ||
+      actor.statusSummary.trim() ||
+      actor.motivation.trim() ||
+      actor.longTermGoal.trim() ||
+      actor.interactionScore > 0 ||
+      relationshipIdsForActor(state, actorId).length > 0
+  );
 }
 
 function scheduledReviewTime(track: Pick<NpcEvolutionTrack, 'nextReviewAt'>, now: GameTime): GameTime {
@@ -209,13 +245,63 @@ function visibleGrayNetworkOrganizationIds(state: RuntimeState): Set<string> {
   );
 }
 
+function currentPublicTriadProfile(state: RuntimeState) {
+  if (state.player.currentIdentity !== 'gang_member') return undefined;
+  const profile = state.actors[state.player.actorId]?.roleProfiles.triad;
+  if (!profile || (profile.status !== 'active' && profile.status !== 'cover')) return undefined;
+  return profile;
+}
+
+function currentPublicCivilianProfile(state: RuntimeState) {
+  if (state.player.currentIdentity !== 'civilian') return undefined;
+  const profile = state.actors[state.player.actorId]?.roleProfiles.civilian;
+  if (!profile || (profile.status !== 'active' && profile.status !== 'cover')) {
+    return undefined;
+  }
+  return profile;
+}
+
 function organizationCandidateContext(state: RuntimeState, organizationId: string) {
   const organization = state.organizations[organizationId];
+  const playerTriadProfile = currentPublicTriadProfile(state);
+  const playerCivilianProfile = currentPublicCivilianProfile(state);
+  const playerTriadActorIds =
+    playerTriadProfile?.organizationId === organizationId
+      ? [...playerTriadProfile.patronActorIds, ...playerTriadProfile.peerActorIds]
+      : [];
+  const playerLivelihoodActorIds =
+    playerCivilianProfile?.employerOrganizationId === organizationId
+      ? playerCivilianProfile.livelihoodActorIds ?? []
+      : [];
+  const responsibilityActorIds = Object.values(state.dynamicEvents.currentMatters)
+    .filter(
+      (matter) =>
+        matter.source === 'triad_responsibility' &&
+        (matter.status === 'active' || matter.status === 'dormant') &&
+        matter.relatedOrganizationIds.includes(organizationId)
+    )
+    .flatMap((matter) => matter.relatedActorIds);
+  const livelihoodActorIds = Object.values(state.dynamicEvents.currentMatters)
+    .filter(
+      (matter) =>
+        matter.matterKind === 'livelihood' &&
+        (matter.status === 'active' || matter.status === 'dormant') &&
+        matter.relatedOrganizationIds.includes(organizationId)
+    )
+    .flatMap((matter) => matter.relatedActorIds);
   const relationshipActorIds = relationshipActorIdsForOrganization(state, organizationId);
   const relationActorIds = Object.values(state.actors)
     .filter((actor) => visibleOrganizationRelation(state, actor.actorId, organizationId))
     .map((actor) => actor.actorId);
-  const relatedActorIds = [...new Set([...(organization?.relatedActorIds ?? []), ...relationshipActorIds, ...relationActorIds])]
+  const relatedActorIds = [...new Set([
+    ...playerTriadActorIds,
+    ...playerLivelihoodActorIds,
+    ...responsibilityActorIds,
+    ...livelihoodActorIds,
+    ...(organization?.relatedActorIds ?? []),
+    ...relationshipActorIds,
+    ...relationActorIds
+  ])]
     .filter((actorId) => actorId !== state.player.actorId && actorId !== 'player' && Boolean(state.actors[actorId]))
     .slice(0, 4);
   const relatedCaseIds = [...new Set([...(organization?.relatedCaseIds ?? []), ...activeCaseIdsForOrganization(state, organizationId)])]
@@ -279,6 +365,7 @@ export function selectBackgroundEvolutionCandidates({
       trackId: track.trackId,
       reviewKey: createReviewKey('npc', track.trackId, scheduledReviewTime(track, state.time), foregroundTurnId),
       trigger: due ? 'due' : 'foreground-impact',
+      visibilityHint: track.visibility,
       allowMaterialProgress:
         due &&
         !caseAlreadyAdvancedToday &&
@@ -295,6 +382,7 @@ export function selectBackgroundEvolutionCandidates({
     const actorId = caseFile.leadActorId;
     if (!actorId || inactiveCaseStatuses.has(caseFile.status) || trackByActor.has(actorId)) continue;
     if (!isRemoteActor(state, actorId, excludedActors)) continue;
+    if (!manual && !touchedCases.has(caseFile.caseId) && !actorReviewReady(state, actorId)) continue;
     if (!allowNewActorReview && !touchedCases.has(caseFile.caseId)) continue;
     const existing = npcCandidates.get(actorId);
     const relatedCaseIds = [...new Set([...(existing?.relatedCaseIds ?? []), ...caseIdsForActor(state, actorId)])];
@@ -302,6 +390,7 @@ export function selectBackgroundEvolutionCandidates({
       actorId,
       reviewKey: existing?.reviewKey ?? createReviewKey('npc', actorId, state.time, foregroundTurnId),
       trigger: touchedCases.has(caseFile.caseId) ? 'foreground-impact' : 'case-lead',
+      visibilityHint: caseFile.visibility === 'hidden' ? 'hidden' : 'player_known',
       allowMaterialProgress: false,
       relatedCaseIds,
       relatedRelationshipThreadIds: relationshipIdsForActor(state, actorId)
@@ -309,25 +398,64 @@ export function selectBackgroundEvolutionCandidates({
   }
 
   for (const thread of Object.values(state.relationshipThreads)) {
-    if ((thread.status !== 'active' && thread.status !== 'strained') || !thread.primaryActorId) continue;
-    if (!thread.currentPull && !thread.promiseSummary && !thread.conflictSummary && !thread.riskSummary && !thread.nextNaturalBeatHint) continue;
-    const actorId = thread.primaryActorId;
-    if (trackByActor.has(actorId) || npcCandidates.has(actorId) || !isRemoteActor(state, actorId, excludedActors)) continue;
+    if (thread.status !== 'active' && thread.status !== 'strained') continue;
     const cooldownDue = !thread.heartbeatCooldownUntil || isDue(thread.heartbeatCooldownUntil, state.time);
-    if (!cooldownDue || (!allowNewActorReview && !touchedRelationships.has(thread.threadId))) continue;
-    npcCandidates.set(actorId, {
-      actorId,
-      reviewKey: createReviewKey('npc', actorId, thread.heartbeatCooldownUntil ?? state.time, foregroundTurnId),
-      trigger: touchedRelationships.has(thread.threadId) ? 'foreground-impact' : 'relationship',
+    if (!cooldownDue) continue;
+    for (const actorId of relationshipEvolutionActorIds(state, thread, excludedActors)) {
+      if (trackByActor.has(actorId) || npcCandidates.has(actorId)) continue;
+      if (
+        (!manual && !touchedRelationships.has(thread.threadId) && !actorReviewReady(state, actorId)) ||
+        (!allowNewActorReview && !touchedRelationships.has(thread.threadId))
+      ) continue;
+      npcCandidates.set(actorId, {
+        actorId,
+        reviewKey: createReviewKey('npc', actorId, thread.heartbeatCooldownUntil ?? state.time, foregroundTurnId),
+        trigger: touchedRelationships.has(thread.threadId) ? 'foreground-impact' : 'relationship',
+        visibilityHint: thread.visibility === 'hidden' ? 'hidden' : 'player_known',
+        allowMaterialProgress: false,
+        relatedCaseIds: caseIdsForActor(state, actorId),
+        relatedRelationshipThreadIds: relationshipIdsForActor(state, actorId)
+      });
+    }
+  }
+
+  for (const actor of Object.values(state.actors)) {
+    if (
+      actor.importance < 60 ||
+      actor.visibility === 'hidden' ||
+      trackByActor.has(actor.actorId) ||
+      npcCandidates.has(actor.actorId) ||
+      !isRemoteActor(state, actor.actorId, excludedActors) ||
+      !hasDurableActorBasis(state, actor.actorId) ||
+      (!manual && !actorReviewReady(state, actor.actorId)) ||
+      (!allowNewActorReview && !manual)
+    ) {
+      continue;
+    }
+    npcCandidates.set(actor.actorId, {
+      actorId: actor.actorId,
+      reviewKey: createReviewKey('npc', actor.actorId, state.time, foregroundTurnId),
+      trigger: 'important-actor',
+      visibilityHint: actor.visibility === 'public' ? 'public' : 'rumor',
       allowMaterialProgress: false,
-      relatedCaseIds: caseIdsForActor(state, actorId),
-      relatedRelationshipThreadIds: relationshipIdsForActor(state, actorId)
+      relatedCaseIds: caseIdsForActor(state, actor.actorId),
+      relatedRelationshipThreadIds: relationshipIdsForActor(state, actor.actorId)
     });
   }
 
   const sortedNpcCandidates = [...npcCandidates.values()].sort((left, right) => {
-    const triggerOrder = { due: 0, 'foreground-impact': 1, 'case-lead': 2, relationship: 3 } as const;
-    return triggerOrder[left.trigger] - triggerOrder[right.trigger] || left.reviewKey.localeCompare(right.reviewKey);
+    const triggerOrder = {
+      due: 0,
+      'foreground-impact': 1,
+      'case-lead': 2,
+      relationship: 3,
+      'important-actor': 4
+    } as const;
+    return (
+      triggerOrder[left.trigger] - triggerOrder[right.trigger] ||
+      (state.actors[right.actorId]?.importance ?? 0) - (state.actors[left.actorId]?.importance ?? 0) ||
+      left.reviewKey.localeCompare(right.reviewKey)
+    );
   });
   const selectedNpcCandidates = sortedNpcCandidates.slice(0, MAX_BACKGROUND_NPC_CANDIDATES);
 
@@ -345,11 +473,21 @@ export function selectBackgroundEvolutionCandidates({
   const organizationTracks = organizationTrackByOrganization(state);
   const visibleGrayOrganizations = visibleGrayNetworkOrganizationIds(state);
   const playerActor = state.actors[state.player.actorId];
+  const playerTriadProfile = currentPublicTriadProfile(state);
+  const currentPlayerTriadOrganizationId = playerTriadProfile?.organizationId;
+  const currentPlayerCivilianEmployerId =
+    currentPublicCivilianProfile(state)?.employerOrganizationId;
+  const currentPlayerPrimaryOrganizationId =
+    currentPlayerTriadOrganizationId ?? currentPlayerCivilianEmployerId;
   const playerOrganizationIds = new Set(
     (playerActor?.organizationRelations ?? [])
       .filter((relation) => relation.visibility !== 'hidden')
       .map((relation) => relation.organizationId)
   );
+  if (currentPlayerTriadOrganizationId) playerOrganizationIds.add(currentPlayerTriadOrganizationId);
+  if (currentPlayerCivilianEmployerId) {
+    playerOrganizationIds.add(currentPlayerCivilianEmployerId);
+  }
   const currentPlaceOrganizationId = state.places[state.location.currentPlaceId]?.owningOrganizationId;
   const allowNewOrganizationReview =
     !state.backgroundEvolution.lastOrganizationReviewAt ||
@@ -380,7 +518,7 @@ export function selectBackgroundEvolutionCandidates({
         !track.relatedCaseIds.some((id) => touchedCases.has(id)) &&
         !track.relatedCityTrackIds.some((id) => touchedCityTracks.has(id)),
       allowPlayerStanceChange: playerOrganizationIds.has(track.organizationId) || touchedOrganizations.has(track.organizationId),
-      relatedActorIds: [...new Set([...track.relatedActorIds, ...context.relatedActorIds])].slice(0, 4),
+      relatedActorIds: [...new Set([...context.relatedActorIds, ...track.relatedActorIds])].slice(0, 4),
       relatedPlaceIds: [...new Set([...track.relatedPlaceIds, ...context.relatedPlaceIds])].slice(0, 3),
       relatedCaseIds: [...new Set([...track.relatedCaseIds, ...context.relatedCaseIds])].slice(0, 2),
       relatedCityTrackIds: [...new Set([...track.relatedCityTrackIds, ...context.relatedCityTrackIds])].slice(0, 2)
@@ -432,7 +570,17 @@ export function selectBackgroundEvolutionCandidates({
     'gray-network': 6
   };
   const sortedOrganizationCandidates = [...organizationCandidates.values()].sort(
-    (left, right) => organizationTriggerOrder[left.trigger] - organizationTriggerOrder[right.trigger] || left.reviewKey.localeCompare(right.reviewKey)
+    (left, right) => {
+      const leftOwnOrganization =
+        left.organizationId === currentPlayerPrimaryOrganizationId ? 0 : 1;
+      const rightOwnOrganization =
+        right.organizationId === currentPlayerPrimaryOrganizationId ? 0 : 1;
+      return (
+        leftOwnOrganization - rightOwnOrganization ||
+        organizationTriggerOrder[left.trigger] - organizationTriggerOrder[right.trigger] ||
+        left.reviewKey.localeCompare(right.reviewKey)
+      );
+    }
   );
   const selectedOrganizationCandidates = sortedOrganizationCandidates.slice(0, MAX_BACKGROUND_ORGANIZATION_CANDIDATES);
 

@@ -1,8 +1,11 @@
 import { APP_VERSION } from '../releaseIdentity';
 
-const visitorStorageKey = 'sorry-im-a-cop-v2-anonymous-visitor';
-const sessionStorageKey = 'sorry-im-a-cop-v2-anonymous-session';
-const heartbeatIntervalMs = 45_000;
+export const ANALYTICS_VISITOR_STORAGE_KEY = 'sorry-im-a-cop-v2-anonymous-visitor';
+export const ANALYTICS_SESSION_STORAGE_KEY = 'sorry-im-a-cop-v2-anonymous-session';
+export const ANALYTICS_PRESENCE_LEASE_STORAGE_KEY = 'sorry-im-a-cop-v2-analytics-presence-lease';
+export const ANALYTICS_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
+export const ANALYTICS_HEARTBEAT_MIN_GAP_MS = 4 * 60_000;
+export const ANALYTICS_PRESENCE_LEASE_MS = 6 * 60_000;
 
 export type AnalyticsDeviceClass = 'mobile' | 'tablet' | 'desktop';
 
@@ -52,8 +55,19 @@ export function resolveReferrerHost(referrer: string, currentHost: string): stri
   }
 }
 
+export function resolveOperationalAnalyticsEnabled(
+  isProduction: boolean,
+  configuredValue?: string
+): boolean {
+  if (configuredValue === 'false') return false;
+  return isProduction || configuredValue === 'true';
+}
+
 function isOperationalAnalyticsEnabled(): boolean {
-  return import.meta.env.PROD || import.meta.env.VITE_ENABLE_ANALYTICS === 'true';
+  return resolveOperationalAnalyticsEnabled(
+    import.meta.env.PROD,
+    import.meta.env.VITE_ENABLE_ANALYTICS
+  );
 }
 
 function sendPayload(payload: OperationalAnalyticsPayload): void {
@@ -68,6 +82,70 @@ function sendPayload(payload: OperationalAnalyticsPayload): void {
   });
 }
 
+interface AnalyticsPresenceLease {
+  ownerId: string;
+  expiresAt: number;
+}
+
+function parsePresenceLease(value: string | null): AnalyticsPresenceLease | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<AnalyticsPresenceLease>;
+    if (
+      typeof parsed.ownerId !== 'string' ||
+      !parsed.ownerId ||
+      !Number.isFinite(parsed.expiresAt)
+    ) {
+      return null;
+    }
+    return { ownerId: parsed.ownerId, expiresAt: Number(parsed.expiresAt) };
+  } catch {
+    return null;
+  }
+}
+
+export function tryAcquireAnalyticsPresenceLease(
+  storage: Storage,
+  ownerId: string,
+  now: number,
+  leaseMs = ANALYTICS_PRESENCE_LEASE_MS
+): boolean {
+  try {
+    const existing = parsePresenceLease(storage.getItem(ANALYTICS_PRESENCE_LEASE_STORAGE_KEY));
+    if (existing && existing.ownerId !== ownerId && existing.expiresAt > now) return false;
+
+    storage.setItem(
+      ANALYTICS_PRESENCE_LEASE_STORAGE_KEY,
+      JSON.stringify({ ownerId, expiresAt: now + leaseMs } satisfies AnalyticsPresenceLease)
+    );
+    return parsePresenceLease(storage.getItem(ANALYTICS_PRESENCE_LEASE_STORAGE_KEY))?.ownerId === ownerId;
+  } catch {
+    // Storage-disabled browsers cannot coordinate tabs; analytics must remain non-blocking.
+    return true;
+  }
+}
+
+export function releaseAnalyticsPresenceLease(storage: Storage, ownerId: string): void {
+  try {
+    const existing = parsePresenceLease(storage.getItem(ANALYTICS_PRESENCE_LEASE_STORAGE_KEY));
+    if (existing?.ownerId === ownerId) storage.removeItem(ANALYTICS_PRESENCE_LEASE_STORAGE_KEY);
+  } catch {
+    // Analytics cleanup must never interrupt navigation or local play.
+  }
+}
+
+export function shouldDispatchOperationalHeartbeat({
+  now,
+  lastDispatchedAt,
+  visibilityState
+}: {
+  now: number;
+  lastDispatchedAt: number;
+  visibilityState: DocumentVisibilityState;
+}): boolean {
+  return visibilityState === 'visible' && now - lastDispatchedAt >= ANALYTICS_HEARTBEAT_MIN_GAP_MS;
+}
+
 export function startOperationalAnalytics(): () => void {
   if (
     !isOperationalAnalyticsEnabled() ||
@@ -77,8 +155,9 @@ export function startOperationalAnalytics(): () => void {
     return () => undefined;
   }
 
-  const visitorId = getOrCreateId(window.localStorage, visitorStorageKey, 'visitor');
-  const sessionId = getOrCreateId(window.sessionStorage, sessionStorageKey, 'session');
+  const visitorId = getOrCreateId(window.localStorage, ANALYTICS_VISITOR_STORAGE_KEY, 'visitor');
+  const sessionId = getOrCreateId(window.sessionStorage, ANALYTICS_SESSION_STORAGE_KEY, 'session');
+  const presenceOwnerId = createAnonymousId('tab');
   const appVersion = import.meta.env.VITE_APP_VERSION || APP_VERSION;
 
   const createPayload = (event: OperationalAnalyticsPayload['event']): OperationalAnalyticsPayload => ({
@@ -92,17 +171,29 @@ export function startOperationalAnalytics(): () => void {
     appVersion
   });
 
+  let lastHeartbeatDispatchedAt = Date.now();
   sendPayload(createPayload('page_view'));
 
   const sendHeartbeat = () => {
-    if (document.visibilityState === 'visible') {
-      sendPayload(createPayload('heartbeat'));
-    }
+    const now = Date.now();
+    if (!shouldDispatchOperationalHeartbeat({
+      now,
+      lastDispatchedAt: lastHeartbeatDispatchedAt,
+      visibilityState: document.visibilityState
+    })) return;
+    if (!tryAcquireAnalyticsPresenceLease(window.localStorage, presenceOwnerId, now)) return;
+
+    lastHeartbeatDispatchedAt = now;
+    sendPayload(createPayload('heartbeat'));
   };
 
-  const intervalId = window.setInterval(sendHeartbeat, heartbeatIntervalMs);
+  const intervalId = window.setInterval(sendHeartbeat, ANALYTICS_HEARTBEAT_INTERVAL_MS);
   const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') sendHeartbeat();
+    if (document.visibilityState === 'visible') {
+      sendHeartbeat();
+    } else {
+      releaseAnalyticsPresenceLease(window.localStorage, presenceOwnerId);
+    }
   };
   window.addEventListener('focus', sendHeartbeat);
   document.addEventListener('visibilitychange', onVisibilityChange);
@@ -111,5 +202,6 @@ export function startOperationalAnalytics(): () => void {
     window.clearInterval(intervalId);
     window.removeEventListener('focus', sendHeartbeat);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    releaseAnalyticsPresenceLease(window.localStorage, presenceOwnerId);
   };
 }

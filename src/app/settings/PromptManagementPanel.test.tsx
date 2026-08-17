@@ -22,6 +22,7 @@ describe('PromptManagementPanel', () => {
     expect(onChange).toHaveBeenCalledWith({
       ...settings,
       prompts: {
+        ...settings.prompts,
         overrides: {
           'narrative.styleAndDisplay': 'CUSTOM_PROMPT_TEXT'
         }
@@ -46,8 +47,10 @@ describe('PromptManagementPanel', () => {
     expect(onChange).toHaveBeenCalledWith({
       ...settings,
       prompts: {
+        ...settings.prompts,
         overrides: {}
       }
     });
   });
+
 });

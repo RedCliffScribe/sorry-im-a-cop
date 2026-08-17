@@ -17,7 +17,120 @@ function createTrack(
   };
 }
 
+interface EraAwareTrackText {
+  title: string;
+  summary: string;
+  currentBeat: string;
+  possibleDevelopments: string[];
+}
+
+function isBefore(time: GameTime, year: number, month = 1, day = 1): boolean {
+  if (time.year !== year) return time.year < year;
+  if (time.month !== month) return time.month < month;
+  return time.day < day;
+}
+
+function stockMarketTrackText(time: GameTime): EraAwareTrackText {
+  if (isBefore(time, 1986, 4, 2)) {
+    return {
+      title: '香港股市与融资压力',
+      summary: '四间证券交易所并存，股票、地产与融资消息在不同经纪网络之间快速流动。',
+      currentBeat: '经纪行和财经记者都在追逐上市、供股与地产融资消息，市场传闻多于确定结论。',
+      possibleDevelopments: ['财经新闻', '融资争议', '经纪网络风声']
+    };
+  }
+  if (isBefore(time, 1987, 10, 19)) {
+    return {
+      title: '香港股市与融资压力',
+      summary: '证券交易统一后，股票、地产和融资活动升温，市场情绪与家庭借贷压力同时累积。',
+      currentBeat: '经纪行、银行和财经版正在追问升温的成交、融资与保证金风险。',
+      possibleDevelopments: ['财经新闻', '融资争议', '家庭借贷压力']
+    };
+  }
+  if (isBefore(time, 1991, 1, 1)) {
+    return {
+      title: '香港股市与融资压力',
+      summary: '八七股灾留下的债务、保证金与信心余波仍影响券商、散户家庭和地下钱庄。',
+      currentBeat: '财经版继续追踪股灾后的债务重整、市场信心与融资收紧。',
+      possibleDevelopments: ['财经新闻', '家庭债务纠纷', '地下钱庄收数风声']
+    };
+  }
+  return {
+    title: '香港股市与融资压力',
+    summary: '股票、地产和跨境资金流动持续牵动银行、经纪行、上市公司与普通家庭。',
+    currentBeat: '财经版正在追踪市场波动、地产融资与上市公司资金安排。',
+    possibleDevelopments: ['财经新闻', '地产融资争议', '上市公司风声']
+  };
+}
+
+function televisionProductionTrackText(time: GameTime): EraAwareTrackText {
+  if (isBefore(time, 1988, 1, 1)) {
+    return {
+      title: '电视制作与片场迁移压力',
+      summary: '电视制作规模扩大，片场、人手、艺员与媒体流动正在增加。',
+      currentBeat: '制作组在现有片场与新增设施之间调配人手，娱乐记者也在追逐节目消息。',
+      possibleDevelopments: ['娱乐新闻', '片场探访', '艺员饭局风声']
+    };
+  }
+  if (isBefore(time, 1991, 1, 1)) {
+    return {
+      title: '清水湾电视城启用压力',
+      summary: '清水湾电视城启用后，片场、人手、艺员和媒体流动都比过去更密。',
+      currentBeat: '娱乐记者和制作组都在适应新片场节奏。',
+      possibleDevelopments: ['娱乐新闻', '片场探访', '艺员饭局风声']
+    };
+  }
+  return {
+    title: '清水湾电视制作压力',
+    summary: '清水湾片场的节目生产、人手调配、艺员行程和媒体采访持续交织。',
+    currentBeat: '制作组正在协调棚期、外景与艺员行程，娱乐记者继续追逐片场消息。',
+    possibleDevelopments: ['娱乐新闻', '片场调度', '艺员饭局风声']
+  };
+}
+
+function walledCityTrackText(time: GameTime): EraAwareTrackText {
+  if (isBefore(time, 1987, 1, 1)) {
+    return {
+      title: '九龙城寨秩序与周边压力',
+      summary: '九龙城寨的居住、边缘行业、治安与周边街区关系长期处于复杂平衡。',
+      currentBeat: '居民、街坊和执法部门仍在应付拥挤环境、灰色行业与周边治安压力。',
+      possibleDevelopments: ['社区压力', '治安风声', '边缘行业迁移']
+    };
+  }
+  if (isBefore(time, 1994, 1, 1)) {
+    return {
+      title: '九龙城寨清拆压力',
+      summary: '九龙城寨清拆计划推进，居民、边缘行业和社团关系正在迁移。',
+      currentBeat: '街坊谈论搬迁赔偿，也有人担心旧关系散到别区。',
+      possibleDevelopments: ['政策新闻', '社区压力', '边缘势力迁移']
+    };
+  }
+  return {
+    title: '九龙城寨清拆后的安置与重建',
+    summary: '城寨清拆后的安置、旧行业迁移和周边重建继续影响居民与附近街区。',
+    currentBeat: '居民安置、旧关系转移和重建安排仍在留下新的社区压力。',
+    possibleDevelopments: ['安置争议', '重建新闻', '旧关系迁移']
+  };
+}
+
+const managedSeedTitles: Record<string, Set<string>> = {
+  track_1988_stock_crash_finance_aftershock: new Set(['八七股灾余波', '香港股市与融资压力']),
+  track_1988_clear_water_bay_tv_studio_pressure: new Set([
+    '清水湾电视城启用压力',
+    '电视制作与片场迁移压力',
+    '清水湾电视制作压力'
+  ]),
+  track_1988_kowloon_walled_city_clearance_pressure: new Set([
+    '九龙城寨清拆压力',
+    '九龙城寨秩序与周边压力',
+    '九龙城寨清拆后的安置与重建'
+  ])
+};
+
 export function createInitialCitySituationTrackSeeds(startedAt: GameTime): RuntimeState['citySituationTracks'] {
+  const stockMarketText = stockMarketTrackText(startedAt);
+  const televisionProductionText = televisionProductionTrackText(startedAt);
+  const walledCityText = walledCityTrackText(startedAt);
   const tracks: CitySituationTrack[] = [
     createTrack(startedAt, 7, {
       trackId: 'track_1988_mong_kok_nightlife_society_pressure',
@@ -37,7 +150,7 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
     }),
     createTrack(startedAt, 16, {
       trackId: 'track_1988_stock_crash_finance_aftershock',
-      title: '八七股灾余波',
+      title: stockMarketText.title,
       trackType: 'market_pressure',
       status: 'active',
       pressureLevel: 2,
@@ -47,13 +160,13 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
       relatedPowerFigureIds: [],
       relatedPlaceIds: [],
       relatedActorIds: [],
-      summary: '股灾余波仍压着券商、散户家庭和地下钱庄。',
-      currentBeat: '财经版继续追问保证金和债务压力。',
-      possibleDevelopments: ['财经新闻', '家庭债务纠纷', '地下钱庄收数风声']
+      summary: stockMarketText.summary,
+      currentBeat: stockMarketText.currentBeat,
+      possibleDevelopments: stockMarketText.possibleDevelopments
     }),
     createTrack(startedAt, 17, {
       trackId: 'track_1988_clear_water_bay_tv_studio_pressure',
-      title: '清水湾电视城启用压力',
+      title: televisionProductionText.title,
       trackType: 'media_campaign',
       status: 'active',
       pressureLevel: 1,
@@ -63,9 +176,9 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
       relatedPowerFigureIds: [],
       relatedPlaceIds: ['place_tv_city_clear_water_bay'],
       relatedActorIds: [],
-      summary: '清水湾电视城启用后，片场、人手、艺员和媒体流动都比过去更密。',
-      currentBeat: '娱乐记者和制作组都在适应新片场节奏。',
-      possibleDevelopments: ['娱乐新闻', '片场探访', '艺员饭局风声']
+      summary: televisionProductionText.summary,
+      currentBeat: televisionProductionText.currentBeat,
+      possibleDevelopments: televisionProductionText.possibleDevelopments
     }),
     createTrack(startedAt, 14, {
       trackId: 'track_1988_golden_harvest_police_film_wrap',
@@ -149,7 +262,7 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
     }),
     createTrack(startedAt, 30, {
       trackId: 'track_1988_kowloon_walled_city_clearance_pressure',
-      title: '九龙城寨清拆压力',
+      title: walledCityText.title,
       trackType: 'government_policy',
       status: 'active',
       pressureLevel: 2,
@@ -159,9 +272,9 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
       relatedPowerFigureIds: [],
       relatedPlaceIds: [],
       relatedActorIds: [],
-      summary: '九龙城寨清拆计划推进，居民、边缘行业和社团关系正在迁移。',
-      currentBeat: '街坊谈论搬迁赔偿，也有人担心旧关系散到别区。',
-      possibleDevelopments: ['政策新闻', '社区压力', '边缘势力迁移']
+      summary: walledCityText.summary,
+      currentBeat: walledCityText.currentBeat,
+      possibleDevelopments: walledCityText.possibleDevelopments
     }),
     createTrack(startedAt, 23, {
       trackId: 'track_1988_vietnamese_refugee_camp_pressure',
@@ -182,4 +295,30 @@ export function createInitialCitySituationTrackSeeds(startedAt: GameTime): Runti
   ];
 
   return Object.fromEntries(tracks.map((track) => [track.trackId, track]));
+}
+
+export function refreshPristineCitySituationTrackSeeds(
+  tracks: RuntimeState['citySituationTracks'],
+  currentTime: GameTime
+): RuntimeState['citySituationTracks'] {
+  const currentSeeds = createInitialCitySituationTrackSeeds(currentTime);
+  return Object.fromEntries(
+    Object.entries(tracks).map(([trackId, track]) => {
+      const expected = currentSeeds[trackId];
+      const knownTitles = managedSeedTitles[trackId];
+      if (!expected || track.lastOutputTurnId || !knownTitles?.has(track.title)) {
+        return [trackId, track];
+      }
+      return [
+        trackId,
+        {
+          ...track,
+          title: expected.title,
+          summary: expected.summary,
+          currentBeat: expected.currentBeat,
+          possibleDevelopments: [...expected.possibleDevelopments]
+        }
+      ];
+    })
+  ) as RuntimeState['citySituationTracks'];
 }

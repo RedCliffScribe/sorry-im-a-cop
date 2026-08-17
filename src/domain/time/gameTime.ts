@@ -75,6 +75,11 @@ export function formatTimeReferenceFrame(now: GameTime): string {
   const dayBeforeYesterday = shiftGameDate(now, -2);
   const yesterday = shiftGameDate(now, -1);
   const tomorrow = shiftGameDate(now, 1);
+  const dayAfterTomorrow = shiftGameDate(now, 2);
+  const currentWeekday = new Date(Date.UTC(now.year, now.month - 1, now.day)).getUTCDay();
+  const daysSinceMonday = currentWeekday === 0 ? 6 : currentWeekday - 1;
+  const nextWeekStart = shiftGameDate(now, 7 - daysSinceMonday);
+  const nextWeekEnd = shiftGameDate(nextWeekStart, 6);
 
   return [
     `current=${formatGameTimeWithWeekday(now)}`,
@@ -82,6 +87,8 @@ export function formatTimeReferenceFrame(now: GameTime): string {
     `dayBeforeYesterday=${formatDateKey(dayBeforeYesterday)}`,
     `yesterday=${formatDateKey(yesterday)}`,
     `tomorrow=${formatDateKey(tomorrow)}`,
+    `dayAfterTomorrow=${formatDateKey(dayAfterTomorrow)}`,
+    `nextWeek=${formatDateKey(nextWeekStart)}..${formatDateKey(nextWeekEnd)}`,
     `tonight=${formatDateKey(now)} 夜间`,
     `nightBeforeLast=${formatDateKey(dayBeforeYesterday)} 夜间`,
     `lastNight=${formatDateKey(yesterday)} 夜间`,

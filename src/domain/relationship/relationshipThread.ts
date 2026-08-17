@@ -9,6 +9,7 @@ import type {
   RelationshipThreadKind,
   RelationshipThreadMilestone,
   RelationshipThreadStatus,
+  RuntimeState,
   Visibility
 } from '../runtime/types';
 
@@ -124,7 +125,9 @@ export function applyRelationshipThreadPatch(
 ): ApplyRelationshipThreadResult {
   const existing = existingThreads[patch.threadId];
   const diagnostics: string[] = [];
-  const relatedActorIds = uniqueActorIds(patch.relatedActorIds ?? existing?.relatedActorIds);
+  const relatedActorIds = existing
+    ? uniqueActorIds([...existing.relatedActorIds, ...(patch.relatedActorIds ?? [])])
+    : uniqueActorIds(patch.relatedActorIds);
   const missingActors = missingActorIds(relatedActorIds, actors);
   if (missingActors.length > 0) {
     diagnostics.push(`Relationship thread "${patch.threadId}" references missing actors: ${missingActors.join(', ')}.`);
@@ -146,10 +149,31 @@ export function applyRelationshipThreadPatch(
     }
   }
 
-  const primaryActorId = patch.primaryActorId ?? existing?.primaryActorId ?? relatedActorIds[0];
+  if (existing?.primaryActorId && patch.primaryActorId && patch.primaryActorId !== existing.primaryActorId) {
+    diagnostics.push(
+      `Relationship thread "${patch.threadId}" kept its existing primary actor "${existing.primaryActorId}" instead of "${patch.primaryActorId}".`
+    );
+  }
+  if (existing?.kind === 'network' && patch.kind === 'fate') {
+    diagnostics.push(
+      `Relationship thread "${patch.threadId}" was promoted from network to fate without creating a parallel thread.`
+    );
+  } else if (existing?.kind === 'fate' && patch.kind === 'network') {
+    diagnostics.push(
+      `Relationship thread "${patch.threadId}" remained fate instead of being downgraded to network.`
+    );
+  }
+  const visibility = existing?.visibility !== 'hidden' && patch.visibility === 'hidden'
+    ? existing.visibility
+    : patch.visibility ?? existing?.visibility ?? 'player_known';
+  if (existing?.visibility !== 'hidden' && patch.visibility === 'hidden') {
+    diagnostics.push(`Relationship thread "${patch.threadId}" remained player-visible instead of being hidden.`);
+  }
+  const primaryActorId = existing?.primaryActorId ?? patch.primaryActorId ?? relatedActorIds[0];
+  const kind = existing?.kind === 'fate' || patch.kind === 'fate' ? 'fate' : 'network';
   const thread: RelationshipThread = {
     threadId: patch.threadId,
-    kind: patch.kind ?? existing?.kind ?? 'network',
+    kind,
     title: patch.title ?? existing?.title ?? patch.threadId,
     summary: patch.summary ?? existing?.summary ?? '',
     relatedActorIds,
@@ -172,7 +196,7 @@ export function applyRelationshipThreadPatch(
         ? cloneTime(existing.heartbeatCooldownUntil)
         : undefined,
     milestones: mergeMilestones(existing?.milestones ?? [], patch.milestoneUpdates, now),
-    visibility: patch.visibility ?? existing?.visibility ?? 'player_known',
+    visibility,
     importance: clampImportance(patch.importance, existing?.importance ?? 50),
     createdAt: existing?.createdAt ? cloneTime(existing.createdAt) : cloneTime(now),
     updatedAt: cloneTime(now)
@@ -238,4 +262,19 @@ function sortRelationshipThreads(left: RelationshipThread, right: RelationshipTh
 
 export function sortRelationshipThreadsForPanel(threads: RelationshipThread[]): RelationshipThread[] {
   return [...threads].filter((thread) => thread.visibility !== 'hidden').sort(sortRelationshipThreads);
+}
+
+export function removeRelationshipThreadFromState(
+  state: RuntimeState,
+  threadId: string
+): RuntimeState {
+  if (!state.relationshipThreads[threadId]) return state;
+
+  const relationshipThreads = { ...state.relationshipThreads };
+  delete relationshipThreads[threadId];
+
+  return {
+    ...state,
+    relationshipThreads
+  };
 }

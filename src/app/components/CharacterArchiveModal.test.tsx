@@ -1,5 +1,8 @@
+import 'fake-indexeddb/auto';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { IndexedDbCustomContentRepository } from '../../domain/customContent/IndexedDbCustomContentRepository';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
 import { createActorDefaults } from '../../domain/runtime/actorFactory';
 import type { ActorMemory, MemoryItem } from '../../domain/runtime/types';
@@ -34,6 +37,81 @@ function createRuntimeMemory(memoryId: string, text: string, actorId: string, mi
 }
 
 describe('CharacterArchiveModal', () => {
+  it('copies an encountered NPC into the custom character library after confirmation', async () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_import = createActorDefaults({
+      actorId: 'npc_import',
+      name: '阿玲',
+      aliases: ['玲姐'],
+      gender: 'female',
+      currentIdentity: 'civilian',
+      publicIdentity: '电影公司场务',
+      actualIdentitySummary: '熟悉片场人脉的资深场务。',
+      positionSummary: '片场协调人员',
+      profileSummary: '说话爽快，做事利落。',
+      appearance: '短发，目光敏锐。',
+      clothing: '便于工作的衬衫长裤。',
+      personality: '爽快、谨慎',
+      speechStyle: '直截了当。',
+      motivation: '保护片场同事',
+      longTermGoal: '成为独当一面的制片主任',
+      values: '义气、专业',
+      presence: 'present',
+      interactionScore: 12,
+      importance: 70,
+      visibility: 'player_known',
+      relationshipSummary: '与玩家逐渐熟悉。',
+      recentInteractionMemory: '刚带玩家看过摄影棚。'
+    });
+    const repository = new IndexedDbCustomContentRepository(
+      `character-archive-import-${Date.now()}`
+    );
+
+    render(
+      <CharacterArchiveModal
+        state={state}
+        onClose={vi.fn()}
+        customContentRepository={repository}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '导入自定义人物库' }));
+    expect(screen.getByText(/不会带入本局关系、记忆、位置或当前状态/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '确认导入' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '已将“阿玲”保存为待审核草稿'
+      );
+    });
+
+    const assets = await repository.listCharacterAssets();
+    expect(assets).toHaveLength(1);
+    const revision = await repository.getCharacterRevision(
+      assets[0].characterAssetId,
+      assets[0].latestRevision
+    );
+    expect(revision).toMatchObject({
+      displayName: '阿玲',
+      aliases: ['玲姐'],
+      lifecycle: {
+        reviewStatus: 'needs_review',
+        availabilityStatus: 'disabled'
+      }
+    });
+    expect(JSON.stringify(revision)).not.toContain('与玩家逐渐熟悉');
+    expect(JSON.stringify(revision)).not.toContain('刚带玩家看过摄影棚');
+
+    fireEvent.click(screen.getByRole('button', { name: '导入自定义人物库' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认导入' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '已经在自定义人物库中'
+      );
+    });
+    expect(await repository.listCharacterAssets()).toHaveLength(1);
+  });
+
   it('renders a player-facing NPC archive and hides zero-contact mentioned actors', () => {
     const state = createInitialRuntimeState();
     state.actors.npc_station_sergeant = createActorDefaults({
@@ -361,7 +439,24 @@ describe('CharacterArchiveModal', () => {
                 { actorId: 'player', name: '王Sir', visibility: 'player_known' },
                 { actorId: 'npc_hidden', name: '隐藏候选人', visibility: 'hidden' }
               ]
-            }
+            },
+            pendingPregnancyChecks: [
+              {
+                pregnancyId: 'preg_lily_19880913_private',
+                status: 'pending_check',
+                registeredAt: { year: 1988, month: 9, day: 13, hour: 21, minute: 15 },
+                checkDueAt: { year: 1988, month: 10, day: 6, hour: 21, minute: 15 },
+                confirmationDueAt: { year: 1988, month: 10, day: 28, hour: 21, minute: 15 },
+                deliveryWindowAt: { year: 1989, month: 5, day: 31, hour: 21, minute: 15 },
+                dueAt: { year: 1989, month: 6, day: 10, hour: 21, minute: 15 },
+                deliveryDeadlineAt: { year: 1989, month: 6, day: 20, hour: 21, minute: 15 },
+                chancePercent: 20,
+                rollPercent: 65,
+                riskTypes: ['unprotected'],
+                riskSummaries: ['第二天再次登记风险。'],
+                paternityCandidates: [{ actorId: 'player', name: '王Sir', visibility: 'player_known' }]
+              }
+            ]
           },
           partProfiles: {
             胸部: { description: '乳房饱满柔软，乳晕色泽自然，乳头敏感。' },
@@ -426,7 +521,20 @@ describe('CharacterArchiveModal', () => {
           womb: {
             status: '待验孕',
             cervixStatus: '紧闭',
-            records: [],
+            records: [
+              {
+                date: '1988-09-12',
+                description: '同一风险窗口涉及多名可能父亲。',
+                pregnancyCheckDate: '1988-10-05',
+                pregnancyId: 'preg_lily_previous_negative',
+                pregnancyCheckResult: 'negative',
+                paternityCandidates: [
+                  { actorId: 'player', name: '王Sir', visibility: 'player_known' },
+                  { actorId: 'npc_known_other', name: '陈先生', visibility: 'player_known' },
+                  { actorId: 'npc_hidden', name: '隐藏候选人', visibility: 'hidden' }
+                ]
+              }
+            ],
             pregnancy: {
               pregnancyId: 'preg_lily_19880912_private',
               status: 'pending_check',
@@ -442,9 +550,29 @@ describe('CharacterArchiveModal', () => {
               riskSummaries: ['已登记风险。'],
               paternityCandidates: [
                 { actorId: 'player', name: '王Sir', visibility: 'player_known' },
+                { actorId: 'npc_known_other', name: '陈先生', visibility: 'player_known' },
                 { actorId: 'npc_hidden', name: '隐藏候选人', visibility: 'hidden' }
               ]
-            }
+            },
+            pendingPregnancyChecks: [
+              {
+                pregnancyId: 'preg_lily_19880913_private_followup',
+                status: 'pending_check',
+                registeredAt: { year: 1988, month: 9, day: 13, hour: 21, minute: 15 },
+                checkDueAt: { year: 1988, month: 10, day: 6, hour: 21, minute: 15 },
+                confirmationDueAt: { year: 1988, month: 10, day: 28, hour: 21, minute: 15 },
+                deliveryWindowAt: { year: 1989, month: 5, day: 31, hour: 21, minute: 15 },
+                dueAt: { year: 1989, month: 6, day: 10, hour: 21, minute: 15 },
+                deliveryDeadlineAt: { year: 1989, month: 6, day: 20, hour: 21, minute: 15 },
+                chancePercent: 20,
+                rollPercent: 65,
+                riskTypes: ['unprotected'],
+                riskSummaries: ['第二天再次登记风险。'],
+                paternityCandidates: [
+                  { actorId: 'npc_queued_candidate', name: '李先生', visibility: 'player_known' }
+                ]
+              }
+            ]
           },
           partProfiles: {
             胸部: {
@@ -475,7 +603,7 @@ describe('CharacterArchiveModal', () => {
     expect(screen.getByText('小穴描述')).toBeVisible();
     expect(screen.getByText('屁穴描述')).toBeVisible();
     expect(screen.getByText('乳房饱满柔软，乳晕色泽自然，乳头敏感。')).toBeVisible();
-    expect(screen.getAllByText('生图锚点')).toHaveLength(3);
+    expect(screen.getAllByText('生图锚点')).toHaveLength(1);
     expect(screen.getByText('jade-like skin texture, delicate close-up')).toBeVisible();
     expect(screen.getByText('阴唇紧致细嫩，穴口收敛，阴蒂敏感。')).toBeVisible();
     expect(screen.getByText('臀缝紧窄，屁穴小而紧闭，周围皱褶细密。')).toBeVisible();
@@ -487,11 +615,16 @@ describe('CharacterArchiveModal', () => {
     expect(screen.getByText('宫口状态')).toBeVisible();
     expect(screen.getAllByText('待验孕').length).toBeGreaterThan(0);
     expect(screen.getByText('1988年10月5日 21:15')).toBeVisible();
+    expect(screen.getByText('后续待判定')).toBeVisible();
+    expect(screen.getByText(/1 项：1988年10月6日 21:15（父系候选：李先生）/)).toBeVisible();
     expect(screen.getAllByText('王Sir').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/王Sir、陈先生/).length).toBeGreaterThan(0);
+    expect(screen.getByText('父系记录')).toBeVisible();
+    expect(screen.getByText(/1988-09-12：王Sir、陈先生（验孕阴性）/)).toBeVisible();
     expect(screen.queryByText('隐藏候选人')).not.toBeInTheDocument();
-    expect(screen.getByText('结果尚未揭晓，存档与读档不会重新掷骰。')).toBeVisible();
+    expect(screen.getByText(/同日风险合并，跨日风险分别排期/)).toBeVisible();
     expect(screen.queryByText('9.75')).not.toBeInTheDocument();
-    expect(screen.getByText('无接触记录。')).toBeVisible();
+    expect(screen.getByText('同一风险窗口涉及多名可能父亲。')).toBeVisible();
     expect(screen.queryByText('NO RECORDS')).not.toBeInTheDocument();
     expect(screen.queryByText('摘要')).not.toBeInTheDocument();
     expect(screen.queryByText('偏好备注')).not.toBeInTheDocument();
@@ -569,5 +702,80 @@ describe('CharacterArchiveModal', () => {
 
     expect(onStateChange).toHaveBeenCalledTimes(1);
     expect(onStateChange.mock.calls[0][0].actors.npc_delete).toBeUndefined();
+  });
+
+  it('edits a current-save actor through a safe form without exposing structural fields', async () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_edit = createActorDefaults({
+      actorId: 'npc_edit',
+      name: '错误姓名',
+      aliases: ['旧称呼'],
+      currentIdentity: 'civilian',
+      publicIdentity: '公司职员',
+      positionSummary: '普通职员',
+      profileSummary: '需要玩家修正。',
+      personality: '谨慎',
+      presence: 'present',
+      visibility: 'player_known',
+      importance: 70,
+      interactionScore: 10
+    });
+    const onUpdateActorProfile = vi.fn(async () => undefined);
+
+    render(
+      <CharacterArchiveModal
+        state={state}
+        onClose={vi.fn()}
+        onUpdateActorProfile={onUpdateActorProfile}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '修改资料' }));
+    const form = screen.getByRole('form', { name: '修改人物资料' });
+    expect(within(form).getByText(/不会改动人物ID、身份结构、组织、历史正文、记忆、案件/)).toBeVisible();
+    expect(within(form).getByText(/结构身份：普通市民/)).toBeVisible();
+    expect(within(form).queryByLabelText('人物ID')).not.toBeInTheDocument();
+
+    fireEvent.change(within(form).getByLabelText('姓名 *'), { target: { value: '正确姓名' } });
+    fireEvent.change(within(form).getByLabelText('别名（每行一项）'), { target: { value: '新称呼\n阿正' } });
+    fireEvent.click(within(form).getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(onUpdateActorProfile).toHaveBeenCalledTimes(1));
+    expect(onUpdateActorProfile).toHaveBeenCalledWith(
+      'npc_edit',
+      expect.objectContaining({ name: '正确姓名', aliases: ['新称呼', '阿正'] })
+    );
+    expect(screen.queryByRole('form', { name: '修改人物资料' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the editor open and shows a player-facing error when persistence fails', async () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_edit_failure = createActorDefaults({
+      actorId: 'npc_edit_failure',
+      name: '待修人物',
+      currentIdentity: 'civilian',
+      presence: 'present',
+      visibility: 'player_known',
+      importance: 70,
+      interactionScore: 10
+    });
+    const onUpdateActorProfile = vi.fn(async () => {
+      throw new Error('自动保存失败，人物资料没有被修改。请稍后重试。');
+    });
+
+    render(
+      <CharacterArchiveModal
+        state={state}
+        onClose={vi.fn()}
+        onUpdateActorProfile={onUpdateActorProfile}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '修改资料' }));
+    fireEvent.change(screen.getByLabelText('姓名 *'), { target: { value: '新名字' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('自动保存失败');
+    expect(screen.getByRole('form', { name: '修改人物资料' })).toBeInTheDocument();
   });
 });

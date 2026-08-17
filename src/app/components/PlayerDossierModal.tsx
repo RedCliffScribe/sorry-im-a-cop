@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   ATTRIBUTE_POINT_CAP,
   PLAYER_ATTRIBUTE_KEYS,
@@ -5,12 +6,41 @@ import {
   normalizePlayerProgression,
   spendPlayerAttributePoint
 } from '../../domain/progression/playerProgression';
+import { deriveActorAgeAt } from '../../domain/runtime/actorAge';
 import type { Actor, AttributeBlock, GameTime, MemoryItem, RuntimeState, SecretFact } from '../../domain/runtime/types';
+import type { VisualRepository } from '../../domain/imageGeneration/visualRepository';
+import type { ImagePromptConversionProbe } from '../../domain/imageGeneration/promptConversion';
+import { CharacterVisualPanel, CharacterVisualThumbnail } from './CharacterVisualPanel';
+import type { AvgVisualOverrideRepository } from '../../domain/avgVisualOverride';
+import { AvgPortraitOverrideControl } from './avg/AvgVisualOverrideControls';
+import {
+  buildAvgPortraitGenerationContext,
+  type AvgImageGenerationService
+} from '../../domain/avgImageGeneration';
+import type { AvgPresentationResourceRuntime } from './avg/avgPresentationResourceRuntime';
+
+const PLAYER_PORTRAIT_PURPOSE_ORDER = [
+  'avatar-close-up',
+  'half-body-medium',
+  'knee-up-medium-full',
+  'full-body'
+] as const;
 
 interface PlayerDossierModalProps {
   state: RuntimeState;
   onClose: () => void;
   onStateChange: (state: RuntimeState) => void;
+  visualSaveId?: string;
+  visualRepository?: VisualRepository;
+  createPromptConversion?: () => ImagePromptConversionProbe | null;
+  onOpenImageSettings?: () => void;
+  onVisualRepositoryChanged?: () => void;
+  initialVisualEditorOpen?: boolean;
+  avgOverrideRepository?: AvgVisualOverrideRepository;
+  avgOverrideRevision?: number;
+  avgImageGenerationService?: AvgImageGenerationService;
+  avgResourceRuntime?: AvgPresentationResourceRuntime;
+  onAvgOverrideChanged?: () => void;
 }
 
 const attributeLabels: Record<keyof AttributeBlock, string> = {
@@ -91,7 +121,7 @@ function getCurrentIdentityRows(
 ): Array<[string, string | number | undefined]> {
   const commonRows: Array<[string, string | number | undefined]> = [
     ['性别', formatGender(state.player.gender)],
-    ['年龄', age ? `${age}岁` : undefined],
+    ['年龄', typeof age === 'number' ? `${age}岁` : undefined],
     ['生日', state.player.birthDate],
     ['当前身份', playerActor?.publicIdentity ?? state.player.currentIdentity]
   ];
@@ -101,7 +131,7 @@ function getCurrentIdentityRows(
     return [
       ...commonRows,
       ['警员编号', state.player.policeNumber],
-      ['职级', profile?.rank ?? state.lawIdentity.rank],
+      ['职级', state.lawIdentity.rank ?? profile?.rank],
       ['警署', profile?.stationOrPost ?? state.lawIdentity.stationOrPost],
       ['部门', profile?.department ?? state.lawIdentity.department],
       ['岗位', profile?.assignmentSummary ?? state.lawIdentity.assignmentSummary],
@@ -146,14 +176,39 @@ function getPlayerKnownPrivateFacts(state: RuntimeState): SecretFact[] {
     .sort((left, right) => right.importance - left.importance || left.secretId.localeCompare(right.secretId));
 }
 
-export function PlayerDossierModal({ state, onClose, onStateChange }: PlayerDossierModalProps) {
+export function PlayerDossierModal({
+  state,
+  onClose,
+  onStateChange,
+  visualSaveId,
+  visualRepository,
+  createPromptConversion,
+  onOpenImageSettings,
+  onVisualRepositoryChanged,
+  initialVisualEditorOpen = false,
+  avgOverrideRepository,
+  avgOverrideRevision,
+  avgImageGenerationService,
+  avgResourceRuntime,
+  onAvgOverrideChanged
+}: PlayerDossierModalProps) {
   const playerActor = state.actors[state.player.actorId];
-  const age = playerActor?.computedAge;
+  const [visualRefreshKey, setVisualRefreshKey] = useState(0);
+  const [visualEditorOpen, setVisualEditorOpen] = useState(initialVisualEditorOpen);
+  const visualEditorRef = useRef<HTMLDetailsElement>(null);
+  const age = playerActor ? deriveActorAgeAt(playerActor, state.time) : undefined;
   const records = getPlayerRecords(state);
   const privateFacts = getPlayerKnownPrivateFacts(state);
   const progression = normalizePlayerProgression(state.player.progression);
   const nextLevelExperience = experienceNeededForNextLevel(progression.level);
   const experienceProgress = Math.min(100, (progression.experience / nextLevelExperience) * 100);
+
+  useEffect(() => {
+    if (!initialVisualEditorOpen) return;
+    const visualEditor = visualEditorRef.current;
+    if (!visualEditor) return;
+    visualEditor.scrollIntoView?.({ block: 'start' });
+  }, [initialVisualEditorOpen]);
 
   const addAttributePoint = (attribute: keyof AttributeBlock) => {
     const result = spendPlayerAttributePoint(state.player, attribute);
@@ -194,8 +249,20 @@ export function PlayerDossierModal({ state, onClose, onStateChange }: PlayerDoss
 
         <div className="player-dossier-body">
           <section className="player-dossier-identity" aria-label="身份头部">
-            <div className="player-dossier-photo" aria-hidden="true">
-              {(state.player.name || playerActor?.name || '主').slice(0, 1)}
+            <div className="player-dossier-photo">
+              {playerActor && visualSaveId && visualRepository ? (
+                <CharacterVisualThumbnail
+                  repository={visualRepository}
+                  visualSaveId={visualSaveId}
+                  actorId={playerActor.actorId}
+                  actorName={playerActor.name}
+                  refreshKey={visualRefreshKey}
+                  purposeOrder={PLAYER_PORTRAIT_PURPOSE_ORDER}
+                  emptyLabel={(state.player.name || playerActor.name || '主').slice(0, 1)}
+                />
+              ) : (
+                (state.player.name || playerActor?.name || '主').slice(0, 1)
+              )}
             </div>
             <div className="player-dossier-title">
               <h3>{state.player.name || playerActor?.name || '未命名'}</h3>
@@ -271,6 +338,53 @@ export function PlayerDossierModal({ state, onClose, onStateChange }: PlayerDoss
                 })}
               </div>
             </section>
+            {playerActor && visualSaveId && (visualRepository || avgOverrideRepository) ? (
+              <details
+                ref={visualEditorRef}
+                className="player-dossier-visuals"
+                open={visualEditorOpen}
+                onToggle={(event) => setVisualEditorOpen(event.currentTarget.open)}
+              >
+                <summary>生成、导入或更换主角头像</summary>
+                <p>普通头像与 AVG 全身立绘分别保存，互不覆盖。</p>
+                {visualEditorOpen ? (
+                  <>
+                    {avgOverrideRepository && onAvgOverrideChanged ? (
+                      <AvgPortraitOverrideControl
+                        actor={playerActor}
+                        visualPartitionId={visualSaveId}
+                        worldpackId={state.world.worldpackId}
+                        repository={avgOverrideRepository}
+                        revision={avgOverrideRevision}
+                        imageGeneration={avgImageGenerationService ? {
+                          kind: 'portrait',
+                          service: avgImageGenerationService,
+                          saveId: visualSaveId,
+                          context: buildAvgPortraitGenerationContext(state, playerActor),
+                          onOpenSettings: onOpenImageSettings
+                        } : undefined}
+                        resourceRuntime={avgResourceRuntime}
+                        onChanged={onAvgOverrideChanged}
+                      />
+                    ) : null}
+                    {visualRepository ? (
+                      <CharacterVisualPanel
+                        actor={playerActor}
+                        visualSaveId={visualSaveId}
+                        worldYear={state.time.year}
+                        repository={visualRepository}
+                        createPromptConversion={createPromptConversion}
+                        onOpenSettings={onOpenImageSettings}
+                        onRepositoryChanged={() => {
+                          setVisualRefreshKey((value) => value + 1);
+                          onVisualRepositoryChanged?.();
+                        }}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+              </details>
+            ) : null}
           </section>
 
           <section className="player-dossier-card player-dossier-card--records" aria-label="长期记录">

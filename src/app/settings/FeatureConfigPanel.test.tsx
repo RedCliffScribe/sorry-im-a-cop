@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { createDefaultAiSettings } from '../../domain/settings/defaultSettings';
 import type { AiSettings } from '../../domain/settings/types';
@@ -90,6 +90,49 @@ describe('FeatureConfigPanel API capabilities', () => {
     expect(screen.getByRole('heading', { name: '远场演化' })).toBeInTheDocument();
     expect(screen.getByText(/主剧情结算后/)).toBeInTheDocument();
     expect(screen.getByText('主回合优先')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '固定运行边界' })).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: '主回合优先：固定规则' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+  });
+
+  it('keeps real memory settings interactive and reports their persisted value through onChange', () => {
+    const settings = createDefaultAiSettings();
+    const onChange = vi.fn();
+    render(
+      <FeatureConfigPanel
+        page="memorySummary"
+        settings={settings}
+        onChange={onChange}
+        onOpenApiConfig={vi.fn()}
+      />
+    );
+
+    const autoCompression = screen.getByRole('checkbox', { name: /自动分层压缩/ });
+    expect(autoCompression).toBeChecked();
+    fireEvent.click(autoCompression);
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memory: expect.objectContaining({ autoCompressionEnabled: false })
+      })
+    );
+  });
+
+  it('renders writeback invariants as fixed rules instead of disposable form controls', () => {
+    render(
+      <FeatureConfigPanel
+        page="writebackRepair"
+        settings={createDefaultAiSettings()}
+        onChange={vi.fn()}
+        onOpenApiConfig={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('heading', { name: '固定修复边界' })).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: '只修复结构协议：固定规则' })).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: '最大修复次数：固定值 1' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: '最大修复次数' })).not.toBeInTheDocument();
   });
 });

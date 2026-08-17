@@ -59,7 +59,15 @@ export type ActorFemaleProfilePatch = Partial<
   关系网变量?: unknown;
 };
 
-type NormalizedActorAdultPrivateProfilePatch = Partial<Omit<ActorAdultPrivateProfile, 'updatedAt' | 'source'>>;
+type NormalizedActorAdultPrivateWombPatch = Partial<
+  Pick<ActorAdultPrivateWombProfile, 'status' | 'cervixStatus' | 'records'>
+>;
+
+type NormalizedActorAdultPrivateProfilePatch = Partial<
+  Omit<ActorAdultPrivateProfile, 'updatedAt' | 'source' | 'womb'>
+> & {
+  womb?: NormalizedActorAdultPrivateWombPatch;
+};
 
 type NormalizedActorFemaleProfilePatch = Partial<
   Omit<ActorFemaleProfile, 'adultPrivateProfile' | 'relationshipNetwork' | 'relationshipNetworkEdges' | 'updatedAt' | 'source'>
@@ -175,7 +183,12 @@ function cloneWombRecord(record: ActorAdultPrivateWombRecord): ActorAdultPrivate
   return {
     ...(record.date ? { date: record.date } : {}),
     description: record.description,
-    ...(record.pregnancyCheckDate ? { pregnancyCheckDate: record.pregnancyCheckDate } : {})
+    ...(record.pregnancyCheckDate ? { pregnancyCheckDate: record.pregnancyCheckDate } : {}),
+    ...(record.pregnancyId ? { pregnancyId: record.pregnancyId } : {}),
+    ...(record.pregnancyCheckResult ? { pregnancyCheckResult: record.pregnancyCheckResult } : {}),
+    ...(record.paternityCandidates
+      ? { paternityCandidates: record.paternityCandidates.map((candidate) => ({ ...candidate })) }
+      : {})
   };
 }
 
@@ -213,7 +226,8 @@ function clonePregnancyHistory(records: ActorPregnancyHistoryRecord[] | undefine
   return records?.map((record) => ({
     ...record,
     startedAt: cloneTime(record.startedAt),
-    endedAt: cloneTime(record.endedAt)
+    endedAt: cloneTime(record.endedAt),
+    paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
   }));
 }
 
@@ -224,45 +238,6 @@ function createDefaultWombProfile(): ActorAdultPrivateWombProfile {
     status: '未受孕',
     cervixStatus: '紧闭',
     records: []
-  };
-}
-
-function createDefaultPartProfiles(
-  actor: Actor | undefined,
-  profile: ActorFemaleProfile | undefined
-): NonNullable<ActorAdultPrivateProfile['partProfiles']> {
-  return {
-    胸部: {
-      description: '乳房饱满柔软，乳晕色泽自然，乳头敏感，受触碰时容易挺起。',
-      imagePromptAnchor: 'breasts close-up, soft skin, natural areola, sensitive nipples, jade-like skin texture, delicate detail'
-    },
-    小穴: {
-      description: '阴唇紧致细嫩，穴口收敛，阴蒂敏感，受挑逗时容易湿润。',
-      imagePromptAnchor: 'vulva close-up, tight labia, small entrance, sensitive clitoris, glistening moisture, delicate skin texture'
-    },
-    屁穴: {
-      description: '臀缝紧窄，屁穴小而紧闭，周围皱褶细密，受触碰时反应明显。',
-      imagePromptAnchor: 'anus close-up, tight opening, narrow cleft, fine folds, soft shadows, delicate skin texture'
-    }
-  };
-}
-
-function createAdultPrivateProfileFallback(
-  currentTime: GameTime,
-  source: NonNullable<ActorFemaleProfile['source']>,
-  actor?: Actor,
-  profile?: ActorFemaleProfile
-): ActorAdultPrivateProfile {
-  return {
-    enabled: true,
-    ageConfirmedAdult: true,
-    profileStatus: 'ready',
-    womb: createDefaultWombProfile(),
-    partProfiles: createDefaultPartProfiles(actor, profile),
-    fetishNotes: '偏好强势但有分寸的挑逗、贴身掌控和身体赞美；在私密空间里容易被羞耻感与被占有感激起欲望。',
-    sensitivePoints: '敏感点集中在乳尖、阴蒂、颈侧、腰侧、大腿内侧和臀缝。',
-    updatedAt: cloneTime(currentTime),
-    source
   };
 }
 
@@ -312,16 +287,16 @@ function normalizeWombRecords(value: unknown): ActorAdultPrivateWombRecord[] | u
   return records.length > 0 ? records : [];
 }
 
-function normalizeWombProfile(value: unknown): ActorAdultPrivateWombProfile | undefined {
+function normalizeWombProfile(value: unknown): NormalizedActorAdultPrivateWombPatch | undefined {
   if (!isRecord(value)) return undefined;
   const status = firstText(value.status, value.状态);
   const cervixStatus = firstText(value.cervixStatus, value.宫口状态);
   const records = normalizeWombRecords(value.records ?? value.内射记录);
   if (!status && !cervixStatus && records === undefined) return undefined;
   return {
-    status: status ?? '未受孕',
-    cervixStatus: cervixStatus ?? '紧闭',
-    records: records ?? []
+    ...(status ? { status } : {}),
+    ...(cervixStatus ? { cervixStatus } : {}),
+    ...(records !== undefined ? { records } : {})
   };
 }
 
@@ -365,19 +340,35 @@ function normalizePartProfiles(patch: ActorAdultPrivateProfilePatch): ActorAdult
 
 function mergeWombProfile(
   existing: ActorAdultPrivateWombProfile | undefined,
-  patch: ActorAdultPrivateWombProfile | undefined
+  patch: NormalizedActorAdultPrivateWombPatch | undefined,
+  cervixStatusUpdatedAt: GameTime | undefined
 ): ActorAdultPrivateWombProfile {
   const fallback = createDefaultWombProfile();
   const hasEngineTruth = Boolean(
-    existing?.pregnancy || existing?.lastPregnancyCheck || (existing?.pregnancyHistory?.length ?? 0) > 0
+    existing?.pregnancy ||
+      (existing?.pendingPregnancyChecks?.length ?? 0) > 0 ||
+      existing?.lastPregnancyCheck ||
+      (existing?.pregnancyHistory?.length ?? 0) > 0
   );
+  const patchedCervixStatus = firstPrivateText(patch?.cervixStatus);
+  const nextCervixStatusUpdatedAt = patchedCervixStatus
+    ? cloneOptionalTime(cervixStatusUpdatedAt)
+    : cloneOptionalTime(existing?.cervixStatusUpdatedAt);
   return {
     status: firstPrivateText(hasEngineTruth ? existing?.status : patch?.status, existing?.status) ?? fallback.status,
-    cervixStatus: firstPrivateText(patch?.cervixStatus, existing?.cervixStatus) ?? fallback.cervixStatus,
+    cervixStatus: patchedCervixStatus ?? firstPrivateText(existing?.cervixStatus) ?? fallback.cervixStatus,
+    ...(nextCervixStatusUpdatedAt ? { cervixStatusUpdatedAt: nextCervixStatusUpdatedAt } : {}),
     records: (hasEngineTruth ? existing?.records ?? fallback.records : patch?.records ?? existing?.records ?? fallback.records).map(
       cloneWombRecord
     ),
     ...(clonePregnancyState(existing?.pregnancy) ? { pregnancy: clonePregnancyState(existing?.pregnancy) } : {}),
+    ...(existing?.pendingPregnancyChecks?.length
+      ? {
+          pendingPregnancyChecks: existing.pendingPregnancyChecks
+            .map((pregnancy) => clonePregnancyState(pregnancy))
+            .filter((pregnancy): pregnancy is ActorPregnancyState => Boolean(pregnancy))
+        }
+      : {}),
     ...(clonePregnancyCheck(existing?.lastPregnancyCheck)
       ? { lastPregnancyCheck: clonePregnancyCheck(existing?.lastPregnancyCheck) }
       : {}),
@@ -389,32 +380,88 @@ function mergeWombProfile(
 
 function mergePartProfile(
   existing: ActorAdultPrivateProfilePart | undefined,
-  patch: ActorAdultPrivateProfilePart | undefined,
-  fallback: ActorAdultPrivateProfilePart
-): ActorAdultPrivateProfilePart {
+  patch: ActorAdultPrivateProfilePart | undefined
+): ActorAdultPrivateProfilePart | undefined {
+  const description = firstPrivateText(patch?.description, existing?.description);
+  const imagePromptAnchor = firstPrivateText(patch?.imagePromptAnchor, existing?.imagePromptAnchor);
+  const updatedAt = cloneOptionalTime(patch?.updatedAt ?? existing?.updatedAt);
+  if (!description && !imagePromptAnchor && !updatedAt) return undefined;
   return {
-    description: firstPrivateText(patch?.description, existing?.description, fallback.description) ?? fallback.description,
-    ...(firstPrivateText(patch?.imagePromptAnchor, existing?.imagePromptAnchor, fallback.imagePromptAnchor)
-      ? { imagePromptAnchor: firstPrivateText(patch?.imagePromptAnchor, existing?.imagePromptAnchor, fallback.imagePromptAnchor) }
+    ...(description ? { description } : {}),
+    ...(imagePromptAnchor
+      ? { imagePromptAnchor }
       : {}),
-    ...(cloneOptionalTime(patch?.updatedAt ?? existing?.updatedAt) ? { updatedAt: cloneOptionalTime(patch?.updatedAt ?? existing?.updatedAt) } : {})
+    ...(updatedAt ? { updatedAt } : {})
   };
 }
 
 function mergePartProfiles(
   existing: ActorAdultPrivateProfile['partProfiles'] | undefined,
-  patch: ActorAdultPrivateProfile['partProfiles'] | undefined,
-  fallbackProfiles: NonNullable<ActorAdultPrivateProfile['partProfiles']> = createDefaultPartProfiles(undefined, undefined)
-): NonNullable<ActorAdultPrivateProfile['partProfiles']> {
-  const genericFallbackProfiles = createDefaultPartProfiles(undefined, undefined);
-  return ADULT_PRIVATE_PART_KEYS.reduce<NonNullable<ActorAdultPrivateProfile['partProfiles']>>((profiles, key) => {
-    profiles[key] = mergePartProfile(
-      existing?.[key],
-      patch?.[key],
-      fallbackProfiles[key] ?? genericFallbackProfiles[key] ?? { description: `${key}已有具体私密档案记录。` }
-    );
-    return profiles;
+  patch: ActorAdultPrivateProfile['partProfiles'] | undefined
+): ActorAdultPrivateProfile['partProfiles'] | undefined {
+  const profiles = ADULT_PRIVATE_PART_KEYS.reduce<NonNullable<ActorAdultPrivateProfile['partProfiles']>>((result, key) => {
+    const profile = mergePartProfile(existing?.[key], patch?.[key]);
+    if (profile) result[key] = profile;
+    return result;
   }, {});
+  return Object.keys(profiles).length > 0 ? profiles : undefined;
+}
+
+function adultPrivateProfileIsReady(profile: ActorAdultPrivateProfile): boolean {
+  return Boolean(
+    profile.womb &&
+      ADULT_PRIVATE_PART_KEYS.every((key) => cleanPrivatePartDescription(key, profile.partProfiles?.[key]?.description)) &&
+      cleanFetishNotes(profile.fetishNotes) &&
+      cleanSensitivePoints(profile.sensitivePoints)
+  );
+}
+
+function mergeAdultPrivateProfile(
+  existing: ActorAdultPrivateProfile | undefined,
+  patch: NormalizedActorAdultPrivateProfilePatch | undefined,
+  options: {
+    ageConfirmedAdult: boolean;
+    updatedAt?: GameTime;
+    cervixStatusUpdatedAt?: GameTime;
+    source?: ActorAdultPrivateProfile['source'];
+  }
+): ActorAdultPrivateProfile | undefined {
+  if (!existing && !patch) return undefined;
+  const womb =
+    existing?.womb || patch?.womb
+      ? mergeWombProfile(existing?.womb, patch?.womb, options.cervixStatusUpdatedAt)
+      : undefined;
+  const partProfiles = mergePartProfiles(existing?.partProfiles, patch?.partProfiles);
+  const profile: ActorAdultPrivateProfile = {
+    enabled: patch?.enabled ?? existing?.enabled ?? true,
+    ageConfirmedAdult: options.ageConfirmedAdult,
+    ...(womb ? { womb } : {}),
+    ...(partProfiles ? { partProfiles } : {}),
+    ...(firstFetishNotes(patch?.fetishNotes, existing?.fetishNotes)
+      ? { fetishNotes: firstFetishNotes(patch?.fetishNotes, existing?.fetishNotes) }
+      : {}),
+    ...(firstSensitivePoints(patch?.sensitivePoints, existing?.sensitivePoints)
+      ? { sensitivePoints: firstSensitivePoints(patch?.sensitivePoints, existing?.sensitivePoints) }
+      : {}),
+    ...(firstText(patch?.summary, existing?.summary) ? { summary: firstText(patch?.summary, existing?.summary) } : {}),
+    ...(firstText(patch?.preferenceNotes, existing?.preferenceNotes)
+      ? { preferenceNotes: firstText(patch?.preferenceNotes, existing?.preferenceNotes) }
+      : {}),
+    ...(firstText(patch?.boundaryNotes, existing?.boundaryNotes)
+      ? { boundaryNotes: firstText(patch?.boundaryNotes, existing?.boundaryNotes) }
+      : {}),
+    ...(firstText(patch?.sensitiveNotes, existing?.sensitiveNotes)
+      ? { sensitiveNotes: firstText(patch?.sensitiveNotes, existing?.sensitiveNotes) }
+      : {}),
+    ...(firstText(patch?.relationshipRiskNotes, existing?.relationshipRiskNotes)
+      ? { relationshipRiskNotes: firstText(patch?.relationshipRiskNotes, existing?.relationshipRiskNotes) }
+      : {}),
+    ...(options.updatedAt ?? existing?.updatedAt ? { updatedAt: cloneOptionalTime(options.updatedAt ?? existing?.updatedAt) } : {}),
+    ...(options.source ?? existing?.source ? { source: options.source ?? existing?.source } : {})
+  };
+  const requestedStatus = firstPrivateText(patch?.profileStatus, existing?.profileStatus);
+  profile.profileStatus = adultPrivateProfileIsReady(profile) ? requestedStatus ?? 'ready' : 'developing';
+  return profile;
 }
 
 function normalizeRelationshipEdge(value: unknown): ActorFemaleRelationshipEdge | undefined {
@@ -464,7 +511,8 @@ function hasPatchContent(patch: Record<string, unknown>): boolean {
 }
 
 function normalizeAdultPrivateProfilePatch(
-  patch: ActorAdultPrivateProfilePatch | undefined
+  patch: ActorAdultPrivateProfilePatch | undefined,
+  allowCervixStatusOnly: boolean
 ): NormalizedActorAdultPrivateProfilePatch | undefined {
   if (!patch) return undefined;
 
@@ -494,15 +542,37 @@ function normalizeAdultPrivateProfilePatch(
     ...(cleanText(patch.relationshipRiskNotes) ? { relationshipRiskNotes: cleanText(patch.relationshipRiskNotes) } : {})
   };
 
-  return hasPatchContent(normalized as Record<string, unknown>) ? normalized : undefined;
+  const hasSubstantiveWombFact = Boolean(
+    womb &&
+      ((womb.records?.length ?? 0) > 0 || (allowCervixStatusOnly && womb.cervixStatus))
+  );
+  const hasSubstantivePrivateFact = Boolean(
+    hasSubstantiveWombFact ||
+      partProfiles ||
+      normalized.fetishNotes ||
+      normalized.sensitivePoints ||
+      normalized.summary ||
+      normalized.preferenceNotes ||
+      normalized.boundaryNotes ||
+      normalized.sensitiveNotes ||
+      normalized.relationshipRiskNotes
+  );
+
+  // Metadata alone must not create an empty private dossier. Pregnancy tracking
+  // is initialized by the deterministic lifecycle only after a real risk event.
+  return hasSubstantivePrivateFact && hasPatchContent(normalized as Record<string, unknown>) ? normalized : undefined;
 }
 
 export function normalizeActorFemaleProfilePatch(
-  patch: ActorFemaleProfilePatch | undefined
+  patch: ActorFemaleProfilePatch | undefined,
+  options: { allowCervixStatusOnly?: boolean } = {}
 ): NormalizedActorFemaleProfilePatch | undefined {
   if (!patch) return undefined;
 
-  const adultPrivateProfile = normalizeAdultPrivateProfilePatch(patch.adultPrivateProfile);
+  const adultPrivateProfile = normalizeAdultPrivateProfilePatch(
+    patch.adultPrivateProfile,
+    options.allowCervixStatusOnly === true
+  );
   const relationshipNetwork = compactListFromUnknown(patch.relationshipNetwork) ?? compactListFromUnknown(patch.socialNetwork);
   const relationshipNetworkEdges =
     compactRelationshipEdgesFromUnknown(patch.relationshipNetworkEdges) ?? compactRelationshipEdgesFromUnknown(patch.关系网变量);
@@ -555,7 +625,9 @@ export function normalizeActorFemaleProfilePatch(
 }
 
 export function normalizeActorFemaleProfile(profile: ActorFemaleProfile | undefined): ActorFemaleProfile | undefined {
-  const normalizedPatch = normalizeActorFemaleProfilePatch(profile as ActorFemaleProfilePatch | undefined);
+  const normalizedPatch = normalizeActorFemaleProfilePatch(profile as ActorFemaleProfilePatch | undefined, {
+    allowCervixStatusOnly: Boolean(profile?.adultPrivateProfile)
+  });
   if (!normalizedPatch) return undefined;
 
   const { adultPrivateProfile, relationshipNetwork, relationshipNetworkEdges, source, ...publicProfile } = normalizedPatch;
@@ -568,37 +640,20 @@ export function normalizeActorFemaleProfile(profile: ActorFemaleProfile | undefi
   };
 
   if (adultPrivateProfile || profile?.adultPrivateProfile) {
-    const existingPrivateProfile = profile?.adultPrivateProfile;
-    normalizedProfile.adultPrivateProfile = {
-      enabled: adultPrivateProfile?.enabled ?? existingPrivateProfile?.enabled ?? true,
-      ageConfirmedAdult: adultPrivateProfile?.ageConfirmedAdult ?? existingPrivateProfile?.ageConfirmedAdult ?? false,
-      profileStatus: firstPrivateText(adultPrivateProfile?.profileStatus, existingPrivateProfile?.profileStatus) ?? 'ready',
-      womb: mergeWombProfile(existingPrivateProfile?.womb, adultPrivateProfile?.womb),
-      partProfiles: mergePartProfiles(existingPrivateProfile?.partProfiles, adultPrivateProfile?.partProfiles),
-      ...(firstFetishNotes(adultPrivateProfile?.fetishNotes, existingPrivateProfile?.fetishNotes)
-        ? { fetishNotes: firstFetishNotes(adultPrivateProfile?.fetishNotes, existingPrivateProfile?.fetishNotes) }
-        : { fetishNotes: '偏好强势但有分寸的挑逗、贴身掌控和身体赞美；在私密空间里容易被羞耻感与被占有感激起欲望。' }),
-      ...(firstSensitivePoints(adultPrivateProfile?.sensitivePoints, existingPrivateProfile?.sensitivePoints)
-        ? { sensitivePoints: firstSensitivePoints(adultPrivateProfile?.sensitivePoints, existingPrivateProfile?.sensitivePoints) }
-        : { sensitivePoints: '敏感点集中在乳尖、阴蒂、颈侧、腰侧、大腿内侧和臀缝。' }),
-      ...(firstText(adultPrivateProfile?.summary, existingPrivateProfile?.summary)
-        ? { summary: firstText(adultPrivateProfile?.summary, existingPrivateProfile?.summary) }
-        : {}),
-      ...(firstText(adultPrivateProfile?.preferenceNotes, existingPrivateProfile?.preferenceNotes)
-        ? { preferenceNotes: firstText(adultPrivateProfile?.preferenceNotes, existingPrivateProfile?.preferenceNotes) }
-        : {}),
-      ...(firstText(adultPrivateProfile?.boundaryNotes, existingPrivateProfile?.boundaryNotes)
-        ? { boundaryNotes: firstText(adultPrivateProfile?.boundaryNotes, existingPrivateProfile?.boundaryNotes) }
-        : {}),
-      ...(firstText(adultPrivateProfile?.sensitiveNotes, existingPrivateProfile?.sensitiveNotes)
-        ? { sensitiveNotes: firstText(adultPrivateProfile?.sensitiveNotes, existingPrivateProfile?.sensitiveNotes) }
-        : {}),
-      ...(firstText(adultPrivateProfile?.relationshipRiskNotes, existingPrivateProfile?.relationshipRiskNotes)
-        ? { relationshipRiskNotes: firstText(adultPrivateProfile?.relationshipRiskNotes, existingPrivateProfile?.relationshipRiskNotes) }
-        : {}),
-      ...(cloneOptionalTime(existingPrivateProfile?.updatedAt) ? { updatedAt: cloneOptionalTime(existingPrivateProfile?.updatedAt) } : {}),
-      ...(existingPrivateProfile?.source ?? profile?.source ? { source: existingPrivateProfile?.source ?? profile?.source } : {})
-    };
+    normalizedProfile.adultPrivateProfile = mergeAdultPrivateProfile(
+      profile?.adultPrivateProfile,
+      adultPrivateProfile,
+      {
+        ageConfirmedAdult:
+          adultPrivateProfile?.ageConfirmedAdult ?? profile?.adultPrivateProfile?.ageConfirmedAdult ?? false,
+        updatedAt: profile?.adultPrivateProfile?.updatedAt,
+        cervixStatusUpdatedAt:
+          profile?.adultPrivateProfile?.womb?.cervixStatusUpdatedAt ??
+          profile?.adultPrivateProfile?.updatedAt ??
+          profile?.updatedAt,
+        source: profile?.adultPrivateProfile?.source ?? profile?.source
+      }
+    );
   }
 
   return normalizedProfile;
@@ -611,7 +666,9 @@ export function applyActorFemaleProfilePatch(
   source: NonNullable<ActorFemaleProfile['source']>
 ): Actor {
   if (!patch || actor.gender !== 'female') return actor;
-  const normalizedPatch = normalizeActorFemaleProfilePatch(patch);
+  const normalizedPatch = normalizeActorFemaleProfilePatch(patch, {
+    allowCervixStatusOnly: Boolean(actor.femaleProfile?.adultPrivateProfile)
+  });
   if (!normalizedPatch) return actor;
 
   const existingProfile = normalizeActorFemaleProfile(actor.femaleProfile);
@@ -625,31 +682,62 @@ export function applyActorFemaleProfilePatch(
     source: patchSource ?? source
   };
 
-  if (isAdultFemaleActorAt(actor, currentTime)) {
-    const fallbackPrivateProfile = createAdultPrivateProfileFallback(currentTime, patchSource ?? source, actor, nextProfile);
-    const basePrivateProfile = existingProfile?.adultPrivateProfile ?? fallbackPrivateProfile;
-    nextProfile.adultPrivateProfile = {
-      ...basePrivateProfile,
-      ...(adultPrivateProfile ?? {}),
-      profileStatus: firstPrivateText(adultPrivateProfile?.profileStatus, basePrivateProfile.profileStatus, fallbackPrivateProfile.profileStatus) ?? 'ready',
-      womb: mergeWombProfile(basePrivateProfile.womb, adultPrivateProfile?.womb),
-      partProfiles: mergePartProfiles(basePrivateProfile.partProfiles, adultPrivateProfile?.partProfiles, fallbackPrivateProfile.partProfiles),
-      fetishNotes:
-        firstFetishNotes(adultPrivateProfile?.fetishNotes, basePrivateProfile.fetishNotes, fallbackPrivateProfile.fetishNotes) ??
-        fallbackPrivateProfile.fetishNotes,
-      sensitivePoints:
-        firstSensitivePoints(adultPrivateProfile?.sensitivePoints, basePrivateProfile.sensitivePoints, fallbackPrivateProfile.sensitivePoints) ??
-        fallbackPrivateProfile.sensitivePoints,
-      enabled: true,
-      ageConfirmedAdult: true,
-      updatedAt: adultPrivateProfile ? cloneTime(currentTime) : existingProfile?.adultPrivateProfile?.updatedAt ?? cloneTime(currentTime),
-      source: adultPrivateProfile ? patchSource ?? source : existingProfile?.adultPrivateProfile?.source ?? patchSource ?? source
-    };
+  if (!isAdultFemaleActorAt(actor, currentTime)) {
+    delete nextProfile.adultPrivateProfile;
+  } else if (adultPrivateProfile || existingProfile?.adultPrivateProfile) {
+    nextProfile.adultPrivateProfile = mergeAdultPrivateProfile(
+      existingProfile?.adultPrivateProfile,
+      adultPrivateProfile,
+      {
+        ageConfirmedAdult: true,
+        updatedAt: adultPrivateProfile ? currentTime : existingProfile?.adultPrivateProfile?.updatedAt,
+        cervixStatusUpdatedAt: adultPrivateProfile?.womb?.cervixStatus ? currentTime : undefined,
+        source: adultPrivateProfile ? patchSource ?? source : existingProfile?.adultPrivateProfile?.source
+      }
+    );
   }
 
   return {
     ...actor,
     femaleProfile: nextProfile
+  };
+}
+
+export const CERVIX_STATUS_RECOVERY_HOURS = 12;
+
+function gameTimeValue(time: GameTime): number {
+  return Date.UTC(time.year, time.month - 1, time.day, time.hour, time.minute);
+}
+
+export function settleTransientCervixStatus(actor: Actor, currentTime: GameTime): Actor {
+  const femaleProfile = actor.femaleProfile;
+  const adultPrivateProfile = femaleProfile?.adultPrivateProfile;
+  const womb = adultPrivateProfile?.womb;
+  if (!femaleProfile || !adultPrivateProfile || !womb || womb.cervixStatus === '紧闭') return actor;
+
+  const observedAt = womb.cervixStatusUpdatedAt ?? adultPrivateProfile.updatedAt ?? femaleProfile.updatedAt;
+  if (
+    !observedAt ||
+    gameTimeValue(currentTime) - gameTimeValue(observedAt) < CERVIX_STATUS_RECOVERY_HOURS * 60 * 60 * 1000
+  ) {
+    return actor;
+  }
+
+  return {
+    ...actor,
+    femaleProfile: {
+      ...femaleProfile,
+      updatedAt: cloneTime(currentTime),
+      adultPrivateProfile: {
+        ...adultPrivateProfile,
+        updatedAt: cloneTime(currentTime),
+        womb: {
+          ...womb,
+          cervixStatus: '紧闭',
+          cervixStatusUpdatedAt: cloneTime(currentTime)
+        }
+      }
+    }
   };
 }
 
@@ -666,7 +754,7 @@ export function projectFemaleProfileForPrompt(actor: Actor, currentTime: GameTim
       adultPrivateProfile: normalizedProfile.adultPrivateProfile
         ? {
             ...normalizedProfile.adultPrivateProfile,
-            womb: mergeWombProfile(normalizedProfile.adultPrivateProfile.womb, undefined),
+            womb: mergeWombProfile(normalizedProfile.adultPrivateProfile.womb, undefined, undefined),
             partProfiles: normalizedProfile.adultPrivateProfile.partProfiles
               ? Object.fromEntries(
                   Object.entries(normalizedProfile.adultPrivateProfile.partProfiles).map(([key, part]) => [

@@ -1,4 +1,5 @@
 import type { CombatEvent, RuntimeState } from '../domain/runtime/types';
+import { isPoliceCommandRank } from '../domain/police/policeRankCatalog';
 
 const bgBustlingStreet = new URL('../assets/combat/backgrounds/combat-bg-001-01-bustling-commercial-street.webp', import.meta.url).href;
 const bgQuietStreet = new URL('../assets/combat/backgrounds/combat-bg-001-02-quiet-old-street.webp', import.meta.url).href;
@@ -242,9 +243,10 @@ function selectBackground(combat: CombatEvent, clue: string): CombatVisualLayerA
 function selectPlayer(combat: CombatEvent, state: RuntimeState, clue: string): CombatVisualLayerAsset {
   const weapon = selectPlayerWeapon(combat, clue);
   const clothing = `${state.player.clothingState?.mode ?? ''} ${state.player.clothingState?.currentSummary ?? ''} ${state.player.clothing}`.toLowerCase();
-  const rank = `${state.lawIdentity.rank ?? ''} ${state.policePanel.careerPath.currentRank}`.toLowerCase();
   const isPlainclothes = hasAny(clothing, ['off_duty_plain', 'formal', 'disguise', '便装', '西装', '夹克', '私服']);
-  const isCommand = hasAny(rank, ['sergeant', '警长', '督察', 'inspector']);
+  const isCommand =
+    isPoliceCommandRank(state.lawIdentity.rank) ||
+    isPoliceCommandRank(state.policePanel.careerPath.currentRank);
 
   if (isPlainclothes) {
     if (weapon === 'gun') return selectStableCandidate([playerAssets.plainclothes_a_gun, playerAssets.plainclothes_b_gun], combat.combatId);
@@ -321,7 +323,13 @@ function selectWeather(combat: CombatEvent, state: RuntimeState, clue: string): 
 
 function selectResultTone(combat: CombatEvent): CombatVisualResultTone {
   if (combat.outcome === 'player_advantage' || combat.outcome === 'opponent_subdued') return 'success';
-  if (combat.outcome === 'player_wounded' || combat.outcome === 'opponent_escaped') return 'failure';
+  if (
+    combat.outcome === 'opponent_advantage' ||
+    combat.outcome === 'player_wounded' ||
+    combat.outcome === 'opponent_escaped'
+  ) {
+    return 'failure';
+  }
   return 'neutral';
 }
 

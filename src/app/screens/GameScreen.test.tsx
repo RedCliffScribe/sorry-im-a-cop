@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { applyGrayNetworkPatch } from '../../domain/grayNetwork/grayNetwork';
 import { applyPlayerIdentityContextPatch } from '../../domain/identity/playerIdentityContext';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
-import type { CaseFile, CombatEvent, GameTime } from '../../domain/runtime/types';
+import { createActorDefaults } from '../../domain/runtime/actorFactory';
+import type { CaseFile, CombatEvent, GameTime, RuntimeState } from '../../domain/runtime/types';
 import { GameScreen, findNewVisibleCombatEventId } from './GameScreen';
 
 const caseTime: GameTime = {
@@ -68,6 +69,70 @@ function createCombatEvent(overrides: Partial<CombatEvent> = {}): CombatEvent {
 }
 
 describe('GameScreen right panel', () => {
+  it('does not expose the new-game custom content workshop during play', () => {
+    const state = createInitialRuntimeState();
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+        saveId="save id/phase6"
+      />
+    );
+
+    expect(
+      screen.queryByRole('button', { name: '自定义内容' })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('自定义')).not.toBeInTheDocument();
+  });
+
+  it('clears stale suggested actions when the newest narrator turn has no actions', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog = [
+      {
+        turnId: 'turn_1',
+        speaker: 'narrator',
+        text: '旧正文。',
+        gameTime: { ...state.time },
+        suggestedActions: ['沿用上一回合的旧行动。']
+      },
+      {
+        turnId: 'turn_2',
+        speaker: 'player',
+        text: '执行新行动。',
+        gameTime: { ...state.time }
+      },
+      {
+        turnId: 'turn_2',
+        speaker: 'narrator',
+        text: '新正文。',
+        gameTime: { ...state.time },
+        suggestedActions: []
+      }
+    ];
+
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByLabelText('建议行动')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '沿用上一回合的旧行动。' })).not.toBeInTheDocument();
+  });
+
   it('selects the newest visible combat event created by a turn', () => {
     const previous = createInitialRuntimeState();
     previous.time = caseTime;
@@ -117,11 +182,61 @@ describe('GameScreen right panel', () => {
     const gameActions = screen.getByRole('group', { name: '游戏操作' });
 
     expect(featureNav).toContainElement(within(featureNav).getByRole('button', { name: '物品与资产' }));
+    expect(within(gameActions).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
+      '导出剧情',
+      '诊断导出',
+      '保存',
+      '读取',
+      '设置'
+    ]);
+    expect(gameActions).toContainElement(within(gameActions).getByRole('button', { name: '导出剧情' }));
     expect(gameActions).toContainElement(within(gameActions).getByRole('button', { name: '保存进度' }));
     expect(gameActions).toContainElement(within(gameActions).getByRole('button', { name: '读取进度' }));
     expect(gameActions).toContainElement(within(gameActions).getByRole('button', { name: '设置' }));
     expect(featureNav).not.toContainElement(within(gameActions).getByRole('button', { name: '保存进度' }));
     expect(rightRail).not.toHaveTextContent('保存进度');
+  });
+
+  it('opens the AI process trace from the brain button beside the turn counter', () => {
+    render(
+      <GameScreen
+        state={createInitialRuntimeState()}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole('region', { name: 'AI 处理轨迹' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 AI 处理轨迹' }));
+    expect(screen.getByRole('region', { name: 'AI 处理轨迹' })).toBeInTheDocument();
+    expect(screen.getByText('尚未执行普通剧情回合。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(screen.queryByRole('region', { name: 'AI 处理轨迹' })).not.toBeInTheDocument();
+  });
+
+  it('opens the player-facing story export without building a diagnostic payload', () => {
+    render(
+      <GameScreen
+        state={createInitialRuntimeState()}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '导出剧情' }));
+
+    expect(screen.getByRole('dialog', { name: '导出剧情' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '诊断导出' })).not.toBeInTheDocument();
   });
 
   it('groups feature panel entries by player workflow', () => {
@@ -140,7 +255,7 @@ describe('GameScreen right panel', () => {
 
     const featureNav = screen.getByRole('navigation', { name: '功能面板' });
     const groups = within(featureNav).getAllByRole('group');
-    const groupNames = ['城市位置', '风险冲突', '个人资源', '当前事务', '人物关系', '组织网络', '回忆'];
+    const groupNames = ['城市位置', '风险冲突', '个人资源', '视觉资料', '当前事务', '人物关系', '组织网络', '回忆'];
 
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(groupNames);
     for (const groupName of groupNames) {
@@ -150,15 +265,179 @@ describe('GameScreen right panel', () => {
     expect(within(groups[0]).getAllByRole('button').map((button) => button.textContent)).toEqual(['地图']);
     expect(within(groups[1]).getAllByRole('button').map((button) => button.textContent)).toEqual(['战斗']);
     expect(within(groups[2]).getAllByRole('button').map((button) => button.textContent)).toEqual(['物品与资产', '金钱与收支']);
-    expect(within(groups[3]).getAllByRole('button').map((button) => button.textContent)).toEqual(['动态', '案件', '新闻']);
-    expect(within(groups[4]).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    expect(within(groups[3]).getAllByRole('button').map((button) => button.textContent)).toEqual(['图册']);
+    expect(within(groups[4]).getAllByRole('button').map((button) => button.textContent)).toEqual(['动态', '案件', '新闻']);
+    expect(within(groups[5]).getAllByRole('button').map((button) => button.textContent)).toEqual([
       '人物志',
       '人脉',
       '缘份',
       '口碑'
     ]);
-    expect(within(groups[5]).getAllByRole('button').map((button) => button.textContent)).toEqual(['警队', '社团', '机构']);
-    expect(within(groups[6]).getAllByRole('button').map((button) => button.textContent)).toEqual(['回忆']);
+    expect(within(groups[6]).getAllByRole('button').map((button) => button.textContent)).toEqual(['警队', '社团', '机构']);
+    expect(within(groups[7]).getAllByRole('button').map((button) => button.textContent)).toEqual(['回忆']);
+  });
+
+  it('opens the unified image gallery from the visual group and returns to the mobile feature context', async () => {
+    const onSettings = vi.fn();
+    const loadSnapshot = vi.fn(async (saveId: string) => ({
+      schemaVersion: 1 as const,
+      saveId,
+      characterAnchors: {},
+      scenePlans: {},
+      tasks: {},
+      characterBatches: {},
+      assets: {},
+      bindings: {},
+      storySceneDisplayStates: {}
+    }));
+    const visualRepository = {
+      loadSnapshot,
+      getStorageSummary: vi.fn(async (saveId: string) => ({
+        saveId,
+        metadataAssetCount: 0,
+        storedBlobCount: 0,
+        storedBytes: 0,
+        missingBlobCount: 0,
+        missingImageIds: [],
+        corruptBlobCount: 0,
+        corruptImageIds: [],
+        orphanBlobCount: 0
+      })),
+      inspectStorageIntegrity: vi.fn(async () => { throw new Error('not used'); }),
+      cleanupStorageIssues: vi.fn(async () => ({ removedBlobCount: 0, removedBytes: 0, affectedImageIds: [] })),
+      restoreAssetBlob: vi.fn(async () => { throw new Error('not used'); }),
+      saveCharacterAnchor: vi.fn(async () => undefined),
+      saveScenePlan: vi.fn(async () => undefined),
+      saveCharacterBatchWithTasks: vi.fn(async () => undefined),
+      saveScenePlanWithTasks: vi.fn(async () => undefined),
+      saveTask: vi.fn(async () => undefined),
+      saveCharacterBatch: vi.fn(async () => undefined),
+      saveStorySceneDisplayState: vi.fn(async () => undefined),
+      bindAsset: vi.fn(async () => undefined),
+      unbindAsset: vi.fn(async () => undefined),
+      restoreSceneAssetToStory: vi.fn(async () => undefined),
+      completeTaskWithImages: vi.fn(async () => []),
+      persistLateTaskImages: vi.fn(async () => []),
+      importUserImage: vi.fn(async () => { throw new Error('not used'); }),
+      getBlob: vi.fn(async () => null),
+      getAssetDeletionImpact: vi.fn(async (_saveId: string, imageId: string) => ({
+        imageId,
+        bindingIds: []
+      })),
+      deleteAsset: vi.fn(async () => undefined),
+      exportSave: vi.fn(async () => { throw new Error('not used'); }),
+      replaceSaveFromArchive: vi.fn(async () => undefined),
+      clearSave: vi.fn(async () => undefined)
+    };
+    render(
+      <GameScreen
+        state={createInitialRuntimeState()}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={onSettings}
+        onHome={vi.fn()}
+        rollbackChainId="visual_chain"
+        visualRepository={visualRepository}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '功能' }));
+    fireEvent.click(within(screen.getByRole('group', { name: '视觉资料' })).getByRole('button', { name: '图册' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '图片管理' });
+    expect(await within(dialog).findByRole('heading', { name: '当前存档还没有图片' })).toBeInTheDocument();
+    expect(loadSnapshot).toHaveBeenCalledWith('visual_chain');
+    expect(within(screen.getByRole('group', { name: '游戏操作' })).queryByRole('button', { name: '图册' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭图片管理' }));
+    expect(screen.queryByRole('dialog', { name: '图片管理' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '功能' })).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(within(screen.getByRole('group', { name: '视觉资料' })).getByRole('button', { name: '图册' }));
+    const reopenedDialog = await screen.findByRole('dialog', { name: '图片管理' });
+    fireEvent.click(within(reopenedDialog).getByRole('button', { name: '前往文生图设置' }));
+    expect(onSettings).toHaveBeenCalledWith('imageGeneration');
+    expect(screen.queryByRole('dialog', { name: '图片管理' })).not.toBeInTheDocument();
+  });
+
+  it('does not expose writable image management to a partial visual repository', () => {
+    const loadSnapshot = vi.fn(async (saveId: string) => ({
+      schemaVersion: 1 as const,
+      saveId,
+      characterAnchors: {},
+      scenePlans: {},
+      tasks: {},
+      characterBatches: {},
+      assets: {},
+      bindings: {},
+      storySceneDisplayStates: {}
+    }));
+    render(
+      <GameScreen
+        state={createInitialRuntimeState()}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+        rollbackChainId="visual_chain"
+        visualRepository={{ loadSnapshot }}
+      />
+    );
+
+    fireEvent.click(within(screen.getByRole('group', { name: '视觉资料' })).getByRole('button', { name: '图册' }));
+    expect(screen.queryByRole('dialog', { name: '图片管理' })).not.toBeInTheDocument();
+    expect(loadSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('shows livelihood only for the current civilian public identity', () => {
+    const civilianState = createInitialRuntimeState({
+      currentIdentity: 'civilian',
+      civilianProfileId: 'hospital_nurse'
+    });
+    const civilianRender = render(
+      <GameScreen
+        state={civilianState}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    const civilianNav = screen.getByRole('navigation', { name: '功能面板' });
+    const livelihoodButton = within(civilianNav).getByRole('button', { name: '营生' });
+    expect(livelihoodButton).toBeInTheDocument();
+    fireEvent.click(livelihoodButton);
+    expect(screen.getByRole('dialog', { name: '职业与营生' })).toBeInTheDocument();
+    civilianRender.unmount();
+
+    render(
+      <GameScreen
+        state={createInitialRuntimeState({ currentIdentity: 'gang_member' })}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+    expect(
+      within(screen.getByRole('navigation', { name: '功能面板' })).queryByRole(
+        'button',
+        { name: '营生' }
+      )
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the footer focused on turn count and scrolling city notices', () => {
@@ -272,7 +551,7 @@ describe('GameScreen right panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '回忆' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '回忆' });
+    const dialog = await screen.findByRole('dialog', { name: '回忆' }, { timeout: 5_000 });
     fireEvent.click(within(dialog).getByRole('tab', { name: /短期记忆/ }));
 
     expect(dialog).toHaveTextContent('你记得已经把小说初稿投给报社');
@@ -350,7 +629,11 @@ describe('GameScreen right panel', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '地图' }));
-    const dialog = await screen.findByRole('dialog', { name: '地图' });
+    const dialog = await screen.findByRole(
+      'dialog',
+      { name: '地图' },
+      { timeout: 5_000 }
+    );
     const placeList = within(dialog).getByLabelText('地点列表');
     fireEvent.click(within(placeList).getByRole('button', { name: /油麻地警署/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: '前往此处' }));
@@ -489,6 +772,48 @@ describe('GameScreen right panel', () => {
     expect(screen.getByRole('dialog', { name: '新闻' })).toBeInTheDocument();
   });
 
+  it('archives a wind signal from the dynamic panel and force-saves the new state', async () => {
+    const state = createInitialRuntimeState();
+    state.dynamicEvents.signals.signal_street = {
+      id: 'signal_street',
+      title: '街口旧风声',
+      summary: '这条消息已经没有继续追踪的价值。',
+      signalType: 'street',
+      reliability: 'low',
+      status: 'active',
+      visibility: 'known',
+      relatedActorIds: [],
+      relatedPlaceIds: [],
+      relatedCaseIds: [],
+      relatedOrganizationIds: [],
+      createdAt: { ...state.time },
+      updatedAt: { ...state.time }
+    };
+    const onStateChange = vi.fn();
+    const onAutoSave = vi.fn(async () => undefined);
+
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={onStateChange}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={onAutoSave}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '动态' }));
+    fireEvent.click(screen.getByRole('button', { name: '归档风声 街口旧风声' }));
+    await Promise.resolve();
+
+    const nextState = onStateChange.mock.calls[0]?.[0] as ReturnType<typeof createInitialRuntimeState>;
+    expect(nextState.dynamicEvents.signals.signal_street.status).toBe('archived');
+    expect(onAutoSave).toHaveBeenCalledWith(nextState, true);
+  });
+
   it('opens the combat archive from the right panel', async () => {
     const state = createInitialRuntimeState();
     state.combatEvents.combat_alley_1 = createCombatEvent();
@@ -532,6 +857,142 @@ describe('GameScreen right panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '缘份' }));
     expect(screen.getByRole('dialog', { name: '缘份' })).toHaveTextContent('暂无已知缘份');
+  });
+
+  it('persists a confirmed relationship deletion before updating the live state', async () => {
+    const state = createInitialRuntimeState();
+    state.relationshipThreads.thread_contact = {
+      threadId: 'thread_contact',
+      kind: 'network',
+      title: '待删除人脉',
+      summary: '这条关系将由玩家手动删除。',
+      relatedActorIds: [],
+      relationshipRole: '普通联系',
+      status: 'active',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 30,
+      createdAt: state.time,
+      updatedAt: state.time
+    };
+    const callOrder: string[] = [];
+    const onAutoSave = vi.fn(async (_stateToSave: RuntimeState, _force?: boolean) => {
+      callOrder.push('save');
+    });
+    const onStateChange = vi.fn(() => {
+      callOrder.push('state');
+    });
+
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={onStateChange}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={onAutoSave}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '人脉' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除人脉：待删除人脉' }));
+    fireEvent.click(
+      within(screen.getByRole('alertdialog', { name: '确认删除人脉' })).getByRole('button', {
+        name: '确认删除'
+      })
+    );
+
+    await waitFor(() => expect(onStateChange).toHaveBeenCalledTimes(1));
+    const savedState = onAutoSave.mock.calls[0]?.[0];
+    expect(savedState?.relationshipThreads.thread_contact).toBeUndefined();
+    expect(onAutoSave).toHaveBeenCalledWith(savedState, true);
+    expect(onStateChange).toHaveBeenCalledWith(savedState);
+    expect(callOrder).toEqual(['save', 'state']);
+  });
+
+  it('persists a character archive profile edit before updating the live state', async () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_profile_edit = createActorDefaults({
+      actorId: 'npc_profile_edit',
+      name: '错误姓名',
+      currentIdentity: 'civilian',
+      profileSummary: '原人物资料。',
+      presence: 'present',
+      visibility: 'player_known',
+      importance: 70,
+      interactionScore: 10
+    });
+    const callOrder: string[] = [];
+    const onAutoSave = vi.fn(async (_stateToSave: RuntimeState, _force?: boolean) => { callOrder.push('save'); });
+    const onStateChange = vi.fn(() => { callOrder.push('state'); });
+
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={onStateChange}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={onAutoSave}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '人物志' }));
+    const dialog = await screen.findByRole('dialog', { name: '人物志' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '修改资料' }));
+    fireEvent.change(within(dialog).getByLabelText('姓名 *'), { target: { value: '正确姓名' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(onStateChange).toHaveBeenCalledTimes(1));
+    const savedState = onAutoSave.mock.calls[0]?.[0];
+    expect(savedState?.actors.npc_profile_edit.name).toBe('正确姓名');
+    expect(savedState?.actors.npc_profile_edit.manualProfileOverride?.lockedFields).toContain('name');
+    expect(onAutoSave).toHaveBeenCalledWith(savedState, true);
+    expect(onStateChange).toHaveBeenCalledWith(savedState);
+    expect(callOrder).toEqual(['save', 'state']);
+  });
+
+  it('does not update live character data when character profile autosave fails', async () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_profile_failure = createActorDefaults({
+      actorId: 'npc_profile_failure',
+      name: '原姓名',
+      currentIdentity: 'civilian',
+      presence: 'present',
+      visibility: 'player_known',
+      importance: 70,
+      interactionScore: 10
+    });
+    const onStateChange = vi.fn();
+    const onAutoSave = vi.fn(async (_stateToSave: RuntimeState, _force?: boolean) => { throw new Error('disk full'); });
+
+    render(
+      <GameScreen
+        state={state}
+        onStateChange={onStateChange}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={onAutoSave}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '人物志' }));
+    const dialog = await screen.findByRole('dialog', { name: '人物志' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '修改资料' }));
+    fireEvent.change(within(dialog).getByLabelText('姓名 *'), { target: { value: '不应生效' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('自动保存失败');
+    expect(onAutoSave).toHaveBeenCalledTimes(1);
+    expect(onStateChange).not.toHaveBeenCalled();
+    expect(state.actors.npc_profile_failure.name).toBe('原姓名');
   });
 
   it('shows police-only panels for police identity', () => {
@@ -702,7 +1163,7 @@ describe('GameScreen right panel', () => {
     fireEvent.click(screen.getByRole('button', { name: '机构' }));
 
     const dialog = screen.getByRole('dialog', { name: '机构' });
-    expect(dialog).toHaveTextContent('皇家香港警察');
+    expect(dialog).not.toHaveTextContent('皇家香港警察');
     expect(dialog).toHaveTextContent('廉政公署');
   });
 
@@ -865,7 +1326,11 @@ describe('GameScreen right panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '物品与资产' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '物品与资产' });
+    const dialog = await screen.findByRole(
+      'dialog',
+      { name: '物品与资产' },
+      { timeout: 5_000 }
+    );
     expect(dialog).toHaveTextContent('Gold watch');
     expect(dialog).toHaveTextContent('贵重物品');
   });

@@ -6,6 +6,90 @@ import {
   type PlayerAttributeKey
 } from '../../domain/progression/playerProgression';
 import { formatCurrencyAmount } from '../../domain/worldpack/economyConfig';
+import { deriveActorAgeAt } from '../../domain/runtime/actorAge';
+import {
+  normalizePoliceRankDisplay,
+  type PoliceRankDisplay
+} from '../../domain/police/policeRankCatalog';
+import { projectPoliceDutyContext } from '../../domain/police/policeDutyContext';
+import { projectCivilianWorkSchedule } from '../../domain/livelihood/civilianWorkSchedule';
+import type { VisualRepository } from '../../domain/imageGeneration/visualRepository';
+import { CharacterVisualThumbnail } from './CharacterVisualPanel';
+
+const PLAYER_PORTRAIT_PURPOSE_ORDER = [
+  'avatar-close-up',
+  'half-body-medium',
+  'knee-up-medium-full',
+  'full-body'
+] as const;
+
+interface PlayerPortraitProps {
+  className: string;
+  state: RuntimeState;
+  visualSaveId?: string;
+  visualRepository?: Pick<VisualRepository, 'loadSnapshot' | 'getBlob'>;
+  visualRefreshKey?: number;
+  onOpenVisualEditor?: () => void;
+}
+
+function PlayerPortrait({
+  className,
+  state,
+  visualSaveId,
+  visualRepository,
+  visualRefreshKey,
+  onOpenVisualEditor
+}: PlayerPortraitProps) {
+  if (visualSaveId && visualRepository) {
+    const portrait = (
+      <CharacterVisualThumbnail
+        repository={visualRepository}
+        visualSaveId={visualSaveId}
+        actorId={state.player.actorId}
+        actorName={state.player.name}
+        refreshKey={visualRefreshKey}
+        purposeOrder={PLAYER_PORTRAIT_PURPOSE_ORDER}
+        emptyLabel={(state.player.name || '主').slice(0, 1)}
+      />
+    );
+    if (onOpenVisualEditor) {
+      return (
+        <button
+          type="button"
+          className={`${className} player-portrait-trigger`}
+          onClick={onOpenVisualEditor}
+          aria-label="打开主角头像设置"
+          title="生成、导入或更换主角头像"
+        >
+          {portrait}
+        </button>
+      );
+    }
+    return (
+      <div className={className}>
+        {portrait}
+      </div>
+    );
+  }
+  if (onOpenVisualEditor) {
+    return (
+      <button
+        type="button"
+        className={`${className} player-portrait-trigger`}
+        onClick={onOpenVisualEditor}
+        aria-label="打开主角头像设置"
+        title="生成、导入或更换主角头像"
+      >
+        <span aria-hidden="true">{(state.player.name || '主').slice(0, 1)}</span>
+      </button>
+    );
+  }
+  return (
+    <div className={className} role="img" aria-label="玩家照片预留位">
+      <span aria-hidden="true">{(state.player.name || '主').slice(0, 1)}</span>
+    </div>
+  );
+}
 
 const attributeLabels: Array<[keyof AttributeBlock, string]> = [
   ['body', '体魄'],
@@ -15,72 +99,6 @@ const attributeLabels: Array<[keyof AttributeBlock, string]> = [
   ['negotiation', '交涉'],
   ['will', '意志']
 ];
-
-type PoliceRankCode =
-  | 'cp'
-  | 'dcp'
-  | 'sacp'
-  | 'acp'
-  | 'csp'
-  | 'ssp'
-  | 'sp'
-  | 'cip'
-  | 'sip'
-  | 'ip'
-  | 'pi'
-  | 'ssgt'
-  | 'sgt'
-  | 'spc'
-  | 'pc'
-  | 'unknown';
-
-interface PoliceRankDisplay {
-  code: PoliceRankCode;
-  zh: string;
-  en: string;
-  label: string;
-}
-
-const policeRankDisplays: Array<PoliceRankDisplay & { patterns: RegExp[] }> = [
-  { code: 'cp', zh: '警务处长', en: 'Commissioner of Police', label: '', patterns: [/\bcommissioner of police\b/i, /警务处长|警務處處長/] },
-  { code: 'dcp', zh: '副处长', en: 'Deputy Commissioner', label: '', patterns: [/\bdeputy commissioner\b/i, /副处长|副處長/] },
-  {
-    code: 'sacp',
-    zh: '高级助理处长',
-    en: 'Senior Assistant Commissioner',
-    label: '',
-    patterns: [/\bsenior assistant commissioner\b/i, /\bsacp\b/i, /高级助理处长|高級助理處長/]
-  },
-  {
-    code: 'acp',
-    zh: '助理处长',
-    en: 'Assistant Commissioner',
-    label: '',
-    patterns: [/\bassistant commissioner\b/i, /\bacp\b/i, /助理处长|助理處長/]
-  },
-  { code: 'csp', zh: '总警司', en: 'Chief Superintendent', label: '', patterns: [/\bchief superintendent\b/i, /\bcsp\b/i, /总警司|總警司/] },
-  { code: 'ssp', zh: '高级警司', en: 'Senior Superintendent', label: '', patterns: [/\bsenior superintendent\b/i, /\bssp\b/i, /高级警司|高級警司/] },
-  { code: 'sp', zh: '警司', en: 'Superintendent', label: '', patterns: [/\bsuperintendent\b/i, /\bsp\b/i, /警司/] },
-  { code: 'cip', zh: '总督察', en: 'Chief Inspector', label: '', patterns: [/\bchief inspector\b/i, /\bcip\b/i, /\bci\b/i, /总督察|總督察/] },
-  { code: 'sip', zh: '高级督察', en: 'Senior Inspector', label: '', patterns: [/\bsenior inspector\b/i, /\bsip\b/i, /高级督察|高級督察/] },
-  { code: 'pi', zh: '见习督察', en: 'Probationary Inspector', label: '', patterns: [/\bprobationary inspector\b/i, /\bpi\b/i, /见习督察|見習督察/] },
-  { code: 'ip', zh: '督察', en: 'Inspector', label: '', patterns: [/\binspector\b/i, /\bip\b/i, /督察/] },
-  { code: 'ssgt', zh: '警署警长', en: 'Station Sergeant', label: '', patterns: [/\bstation sergeant\b/i, /\bssgt\b/i, /警署警长|警署警長/] },
-  { code: 'sgt', zh: '警长', en: 'Sergeant', label: '', patterns: [/\bsergeant\b/i, /\bsgt\b/i, /警长|警長/] },
-  {
-    code: 'spc',
-    zh: '高级警员',
-    en: 'Senior Police Constable',
-    label: '',
-    patterns: [/\bsenior police constable\b/i, /\bsenior constable\b/i, /\bspc\b/i, /高级警员|高級警員/]
-  },
-  { code: 'pc', zh: '警员', en: 'Police Constable', label: '', patterns: [/\bpolice constable\b/i, /\bconstable\b/i, /\bpc\b/i, /警员|警員/] }
-];
-
-const policeRankDisplayDefaults = policeRankDisplays.map((rank) => ({
-  ...rank,
-  label: `${rank.zh} / ${rank.en}`
-}));
 
 function formatGender(gender: RuntimeState['player']['gender']) {
   if (gender === 'male') return '男';
@@ -106,13 +124,6 @@ function isInternalAssetId(value: string): boolean {
   return /^asset_[a-z0-9_:-]+$/i.test(value.trim());
 }
 
-function normalizePoliceRank(rank: string | undefined): PoliceRankDisplay {
-  const source = rank?.trim() || '警员';
-  const display = policeRankDisplayDefaults.find(({ patterns }) => patterns.some((pattern) => pattern.test(source)));
-  if (display) return display;
-  return { code: 'unknown', zh: source, en: source, label: source };
-}
-
 function extractLocalLabel(value: string | undefined) {
   const source = value?.trim();
   if (!source) return undefined;
@@ -123,12 +134,14 @@ function extractLocalLabel(value: string | undefined) {
 
 function formatPoliceUnit(state: RuntimeState) {
   const station = extractLocalLabel(state.lawIdentity.stationOrPost);
+  const department = extractLocalLabel(state.lawIdentity.department);
   const assignment = extractLocalLabel(state.lawIdentity.assignmentSummary);
-  const unitParts = [station, assignment].filter(Boolean);
+  const unitParts = Array.from(new Set([station, department, assignment].filter(Boolean)));
   return {
     station,
+    department,
     assignment,
-    label: unitParts.length > 0 ? unitParts.join(' · ') : (extractLocalLabel(state.lawIdentity.department) ?? '待定单位')
+    label: unitParts.length > 0 ? unitParts.join(' · ') : '待定单位'
   };
 }
 
@@ -232,6 +245,7 @@ function PoliceRankInsignia({ rank, badgeNumber }: { rank: PoliceRankDisplay; ba
       <svg
         viewBox="0 0 156 50"
         aria-hidden="true"
+        data-rank-code={code}
         data-orientation="horizontal"
         data-direction="right"
         data-badge-number-end="left"
@@ -286,9 +300,9 @@ function PoliceRankInsignia({ rank, badgeNumber }: { rank: PoliceRankDisplay; ba
         ) : null}
         {code === 'cip' ? (
           <>
-            <RankBathStar x={74} y={14} scale={0.88} />
-            <RankBathStar x={74} y={36} scale={0.88} />
-            <RankBathStar x={104} y={25} scale={0.92} />
+            <RankBathStar x={58} y={25} scale={0.88} />
+            <RankBathStar x={84} y={25} scale={0.88} />
+            <RankBathStar x={110} y={25} scale={0.88} />
           </>
         ) : null}
         {code === 'sp' ? <RankCrownRight x={88} scale={0.82} /> : null}
@@ -359,11 +373,19 @@ function PlayerNameHeading({
 function TriadIdentityCard({
   state,
   identityLine,
-  onOpenDossier
+  onOpenDossier,
+  onOpenVisualEditor,
+  visualSaveId,
+  visualRepository,
+  visualRefreshKey
 }: {
   state: RuntimeState;
   identityLine: string;
   onOpenDossier?: () => void;
+  onOpenVisualEditor?: () => void;
+  visualSaveId?: string;
+  visualRepository?: Pick<VisualRepository, 'loadSnapshot' | 'getBlob'>;
+  visualRefreshKey?: number;
 }) {
   const actor = state.actors[state.player.actorId];
   const profile = actor?.roleProfiles.triad;
@@ -382,7 +404,14 @@ function TriadIdentityCard({
         </div>
       </header>
       <div className="identity-route-person">
-        <div className="identity-route-photo" role="img" aria-label="玩家照片预留位" />
+        <PlayerPortrait
+          className="identity-route-photo"
+          state={state}
+          visualSaveId={visualSaveId}
+          visualRepository={visualRepository}
+          visualRefreshKey={visualRefreshKey}
+          onOpenVisualEditor={onOpenVisualEditor}
+        />
         <div className="identity-route-person-copy">
           <PlayerNameHeading state={state} onOpenDossier={onOpenDossier} />
           {identityLine ? <span>{identityLine}</span> : null}
@@ -413,16 +442,29 @@ function TriadIdentityCard({
 function CivilianIdentityCard({
   state,
   identityLine,
-  onOpenDossier
+  onOpenDossier,
+  onOpenVisualEditor,
+  visualSaveId,
+  visualRepository,
+  visualRefreshKey
 }: {
   state: RuntimeState;
   identityLine: string;
   onOpenDossier?: () => void;
+  onOpenVisualEditor?: () => void;
+  visualSaveId?: string;
+  visualRepository?: Pick<VisualRepository, 'loadSnapshot' | 'getBlob'>;
+  visualRefreshKey?: number;
 }) {
   const actor = state.actors[state.player.actorId];
   const profile = actor?.roleProfiles.civilian;
   const workplace = profile?.workplacePlaceId ? state.places[profile.workplacePlaceId]?.name : undefined;
   const occupation = profile?.publicOccupation ?? actor?.publicIdentity ?? '普通市民';
+  const workSchedule = projectCivilianWorkSchedule({
+    time: state.time,
+    currentIdentity: state.player.currentIdentity,
+    profile
+  });
 
   return (
     <section className="identity-route-card civilian-id-card" aria-label="市民公开身份卡">
@@ -434,7 +476,14 @@ function CivilianIdentityCard({
         </div>
       </header>
       <div className="identity-route-person">
-        <div className="identity-route-photo" role="img" aria-label="玩家照片预留位" />
+        <PlayerPortrait
+          className="identity-route-photo"
+          state={state}
+          visualSaveId={visualSaveId}
+          visualRepository={visualRepository}
+          visualRefreshKey={visualRefreshKey}
+          onOpenVisualEditor={onOpenVisualEditor}
+        />
         <div className="identity-route-person-copy">
           <PlayerNameHeading state={state} onOpenDossier={onOpenDossier} />
           {identityLine ? <span>{identityLine}</span> : null}
@@ -447,7 +496,12 @@ function CivilianIdentityCard({
         </div>
         <div>
           <dt>工作地点</dt>
-          <dd>{workplace ?? '日常地点尚未登记'}</dd>
+          <dd>
+            {workplace ?? '日常地点尚未登记'}
+            <small className="identity-schedule-line">
+              上班：{workSchedule.label} · {workSchedule.scheduleLabel} {workSchedule.scheduleWindow}
+            </small>
+          </dd>
         </div>
         <div className="identity-route-grid-wide">
           <dt>社区关系</dt>
@@ -462,17 +516,25 @@ interface PlayerPanelProps {
   state: RuntimeState;
   onOpenEquipment?: () => void;
   onOpenDossier?: () => void;
+  onOpenVisualEditor?: () => void;
   onSpendAttributePoint?: (attribute: PlayerAttributeKey) => void;
+  visualSaveId?: string;
+  visualRepository?: Pick<VisualRepository, 'loadSnapshot' | 'getBlob'>;
+  visualRefreshKey?: number;
 }
 
 export function PlayerPanel({
   state,
   onOpenEquipment,
   onOpenDossier,
-  onSpendAttributePoint
+  onOpenVisualEditor,
+  onSpendAttributePoint,
+  visualSaveId,
+  visualRepository,
+  visualRefreshKey
 }: PlayerPanelProps) {
   const playerActor = state.actors[state.player.actorId];
-  const age = playerActor?.computedAge;
+  const age = playerActor ? deriveActorAgeAt(playerActor, state.time) : undefined;
   const equippedItems = (state.assets.equippedItemIds ?? [])
     .map((itemId) => state.assets.items[itemId])
     .filter(isEquipmentAsset);
@@ -485,12 +547,17 @@ export function PlayerPanel({
     }
   );
   const genderLabel = formatGender(state.player.gender);
-  const identityLine = [genderLabel, age ? `${age}岁` : ''].filter(Boolean).join(' · ');
+  const identityLine = [genderLabel, typeof age === 'number' ? `${age}岁` : ''].filter(Boolean).join(' · ');
   const sexValue = genderLabel ?? '未录入';
-  const ageValue = age ? `${age}岁` : '未录入';
+  const ageValue = typeof age === 'number' ? `${age}岁` : '未录入';
   const isPoliceIdentity = state.player.currentIdentity === 'police';
-  const policeRank = normalizePoliceRank(state.lawIdentity.rank);
+  const policeRank = normalizePoliceRankDisplay(state.lawIdentity.rank);
   const policeUnit = formatPoliceUnit(state);
+  const policeDuty = projectPoliceDutyContext({
+    time: state.time,
+    currentIdentity: state.player.currentIdentity,
+    lawIdentity: state.lawIdentity
+  });
   const progression = normalizePlayerProgression(state.player.progression);
   const nextLevelExperience = experienceNeededForNextLevel(progression.level);
   const experienceProgress = vitalsPercent(progression.experience, nextLevelExperience);
@@ -510,7 +577,14 @@ export function PlayerPanel({
           </header>
 
           <div className="police-id-main">
-            <div className="police-id-photo" aria-hidden="true" />
+            <PlayerPortrait
+              className="police-id-photo"
+              state={state}
+              visualSaveId={visualSaveId}
+              visualRepository={visualRepository}
+              visualRefreshKey={visualRefreshKey}
+              onOpenVisualEditor={onOpenVisualEditor}
+            />
             <div className="police-id-person">
               <PlayerNameHeading state={state} onOpenDossier={onOpenDossier} />
               <div className="police-id-demographics">
@@ -548,22 +622,34 @@ export function PlayerPanel({
                 所属单位 / Station / Unit
               </dt>
               <dd>
-                {policeUnit.station ? (
-                  <>
-                    <span>{policeUnit.station}</span>
-                    {policeUnit.assignment ? ` · ${policeUnit.assignment}` : ''}
-                  </>
-                ) : (
-                  policeUnit.label
-                )}
+                {policeUnit.label}
+                <small className="identity-schedule-line">
+                  值班：{policeDuty.label} · {policeDuty.shiftLabel} {policeDuty.scheduleWindow}
+                </small>
               </dd>
             </div>
           </dl>
         </section>
       ) : state.player.currentIdentity === 'gang_member' ? (
-        <TriadIdentityCard state={state} identityLine={identityLine} onOpenDossier={onOpenDossier} />
+        <TriadIdentityCard
+          state={state}
+          identityLine={identityLine}
+          onOpenDossier={onOpenDossier}
+          onOpenVisualEditor={onOpenVisualEditor}
+          visualSaveId={visualSaveId}
+          visualRepository={visualRepository}
+          visualRefreshKey={visualRefreshKey}
+        />
       ) : (
-        <CivilianIdentityCard state={state} identityLine={identityLine} onOpenDossier={onOpenDossier} />
+        <CivilianIdentityCard
+          state={state}
+          identityLine={identityLine}
+          onOpenDossier={onOpenDossier}
+          onOpenVisualEditor={onOpenVisualEditor}
+          visualSaveId={visualSaveId}
+          visualRepository={visualRepository}
+          visualRefreshKey={visualRefreshKey}
+        />
       )}
 
       <section className="player-other-info" aria-label="玩家其他信息">

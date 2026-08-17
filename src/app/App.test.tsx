@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App } from './App';
+import { App, resolveGameVisualPartitionId } from './App';
 import { runPlayerTurn } from '../domain/turn/TurnEngine';
 import { createTurnRollbackSnapshot } from '../domain/turn/TurnRollback';
 import { createInitialRuntimeState } from '../domain/runtime/initialState';
@@ -15,6 +15,21 @@ import {
   OPENING_LEGAL_ACCEPTANCE_STORAGE_KEY,
   OPENING_LEGAL_DISCLAIMER_VERSION
 } from './legal/openingLegalDisclaimer';
+import { CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY } from './opening/customOriginStorage';
+import { recordDailyChangelogView } from './changelog/releaseNotes';
+import { APP_VERSION_LABEL } from './releaseIdentity';
+import { createPortableSaveZip } from '../domain/persistence/portableSaveZipArchive';
+import {
+  createPortableVisualArchive,
+  IndexedDbVisualRepository
+} from '../domain/imageGeneration/visualRepository';
+import { createImageInput, createPersistingTask } from '../domain/imageGeneration/visualRepository/testFixtures';
+import type { CustomCharacterRevision } from '../domain/customContent/assetTypes';
+import { bindCustomCharacterRevisionToState } from '../domain/customContent/saveBinding';
+import { createNativeCustomSaveAdaptationBundle } from '../domain/customContent/saveAdaptation';
+import { createDefaultCustomCharacterAdaptationPolicy } from '../domain/customContent/worldAdaptation';
+import { HK_1988_ADAPTATION_DESCRIPTOR } from '../domain/worldpack/adaptationRegistry';
+import { IndexedDbAvgGenericPortraitBindingRepository } from '../domain/avgPresentation';
 
 vi.mock('../domain/turn/TurnEngine', () => ({
   runPlayerTurn: vi.fn()
@@ -36,6 +51,56 @@ function createStoredSave(saveId: string, rollbackChainId: string, saveKind: Run
     playerName: runtimeState.player.name,
     worldpackId: runtimeState.world.worldpackId,
     gameDateLabel: '1988-09-12 星期一 21:15',
+    turnCounter: runtimeState.turnCounter,
+    runtimeState
+  };
+}
+
+function createCustomContentStoredSave(): RuntimeSaveRecord {
+  const character: CustomCharacterRevision = {
+    characterAssetId: 'character-settings-reporter',
+    revision: 3,
+    checksum: 'checksum-character-settings-reporter-v3',
+    displayName: '设置页记者',
+    aliases: [],
+    gender: 'female',
+    profileSummary: '一名等待与玩家建立合理交集的独立记者。',
+    backgroundSummary: '长期追查警政与社区新闻。',
+    corePersonality: ['谨慎'],
+    values: ['事实'],
+    coreMotivations: ['查清新闻背后的事实'],
+    majorRelationships: [],
+    entryMode: 'asap_contact',
+    adaptationPolicy: createDefaultCustomCharacterAdaptationPolicy(),
+    deployments: [
+      {
+        worldpackId: 'hk_1988',
+        mode: 'native',
+        defaultEnabledForNewGame: true
+      }
+    ],
+    sourceSpans: [],
+    lifecycle: {
+      generationStatus: 'ready',
+      reviewStatus: 'approved',
+      availabilityStatus: 'enabled'
+    }
+  };
+  const initialState = createInitialRuntimeState();
+  const runtimeState = bindCustomCharacterRevisionToState({
+    state: initialState,
+    character,
+    adaptationBundle: createNativeCustomSaveAdaptationBundle({
+      state: initialState,
+      descriptor: HK_1988_ADAPTATION_DESCRIPTOR,
+      source: { characters: [character] }
+    }),
+    now: '2026-07-27T10:00:00.000Z'
+  });
+  return {
+    ...createStoredSave('save_custom_content_settings', 'chain_custom_content_settings'),
+    playerName: runtimeState.player.name,
+    worldpackId: runtimeState.world.worldpackId,
     turnCounter: runtimeState.turnCounter,
     runtimeState
   };
@@ -141,6 +206,7 @@ function seedMainNarratorSettings(gameOverrides: Partial<AiSettings['game']> = {
       storyRenderLimit: 30,
       narrativeLengthLevel: 'standard',
       narrativePerspective: 'second_person',
+      playerPortrayalMode: 'player_led',
       autoSaveLimit: 20,
       autoSaveIntervalTurns: 1,
       ...gameOverrides,
@@ -153,81 +219,283 @@ function seedMainNarratorSettings(gameOverrides: Partial<AiSettings['game']> = {
   localStorage.setItem(aiSettingsStorageKey, JSON.stringify(settings));
 }
 
+const APP_OPENING_SESSION_ID = 'opening_app_test';
+const APP_OPENING_ACTOR_ID = 'opening_actor_police_relation_1';
+const APP_OPENING_PLACE_ID = 'place_mong_kok_police_station';
+const APP_OPENING_SCENE_ID = 'scene_report_room';
+
+function createAppOpeningBlueprint() {
+  return {
+    openingSessionId: APP_OPENING_SESSION_ID,
+    openingFacts: {
+      placeId: APP_OPENING_PLACE_ID,
+      sceneId: APP_OPENING_SCENE_ID,
+      situationSummary: '旺角警署完成早班交接，值日警长准备交代辖区近况。',
+      centralMatter: '确认今天需要优先处理的街面事务。',
+      playerDecisionBoundary: '玩家自行决定先查阅交更记录还是直接向上级询问。'
+    },
+    playerPresentationPatch: {
+      name: '陈启明',
+      englishName: 'Michael Chan',
+      policeNumber: '9527',
+      clothing: '夏季军装制服，皮鞋擦得很亮。',
+      equipment: ['警察委任证', '警棍', '点三八左轮'],
+      statusSummary: '完成早班交接，精神清醒。'
+    },
+    initialActors: [
+      {
+        actorId: APP_OPENING_ACTOR_ID,
+        name: '梁志强',
+        englishName: 'Tony Leung',
+        aliases: [],
+        gender: 'male',
+        birthDate: '1942-06-15',
+        computedAge: 42,
+        visualAgeAnchor: '四十岁出头，眼角有长期夜班留下的细纹。',
+        currentIdentity: 'police',
+        publicIdentity: '旺角警署值日警长',
+        actualIdentitySummary: '皇家香港警察旺角警署当值警长。',
+        roleProfiles: {
+          police: {
+            status: 'active',
+            agencyId: 'org_hk_police',
+            stationOrPost: '旺角警署',
+            department: '军装部',
+            rank: '警长',
+            assignmentSummary: '值日警长',
+            postRole: 'station_duty_sergeant',
+            supervisorActorIds: [],
+            peerActorIds: [],
+            authoritySummary: '负责当值警署日常协调。',
+            accessSummary: '可接触交更记录与当值调派。',
+            dutySummary: '交更、报案室和街面事务协调。',
+            institutionalReputation: '经验老到。',
+            disciplinePressureSummary: '重视程序和书面记录。'
+          }
+        },
+        playerRoleRelation: 'police_supervisor',
+        organizationIds: ['org_hk_police'],
+        positionSummary: '旺角警署值日警长',
+        profileSummary: '熟悉辖区街面和报案室人情的老资格军装警长。',
+        appearance: '身材结实，眼神沉稳，留着整齐短发。',
+        clothing: '旧式短袖军装，肩章边缘略有磨损。',
+        equipment: ['值日簿', '警棍', '口哨'],
+        personality: '谨慎务实，重视程序，但不刻意刁难新人。',
+        speechStyle: '粤语短句为主，交代事情直接，偶尔用警署行话。',
+        motivation: '让当值警力平稳交接，避免小事演变成投诉。',
+        longTermGoal: '守住辖区秩序并带出一批可靠的年轻警员。',
+        values: '规矩、可靠、现场判断与同僚互相照应。',
+        attributes: {
+          body: 55,
+          action: 51,
+          perception: 68,
+          thinking: 62,
+          negotiation: 64,
+          will: 70
+        },
+        relationshipSummary: '作为当值上级，刚开始观察玩家是否可靠。',
+        attitudeTowardPlayer: '公事公办，但愿意给新人说明机会。',
+        interactionScore: 18,
+        trustTendency: '看重按程序汇报和实际办事结果。',
+        entanglementSummary: '玩家当值表现会直接影响他之后分派的事务。',
+        longTermMemorySummary: '记得玩家是刚调来旺角警署的年轻警员。',
+        recentInteractionMemory: '刚在交更桌前核对玩家的警员编号。',
+        statusSummary: '正在值日室整理早班交接事项。',
+        bodyConditionSummary: '精神清醒，肩颈略有夜班后的疲惫。',
+        presence: 'present',
+        currentPlaceId: APP_OPENING_PLACE_ID,
+        currentSceneId: APP_OPENING_SCENE_ID,
+        visibility: 'player_known',
+        importance: 72,
+        keyMemories: [],
+        worldpackActorData: {}
+      }
+    ],
+    actionIntents: [
+      {
+        actionId: 'opening_action_1',
+        intent: '向值日警长询问今天最急的事务。',
+        relatedActorIds: [APP_OPENING_ACTOR_ID],
+        requiredFacts: ['值日警长正在交代当值事项']
+      },
+      {
+        actionId: 'opening_action_2',
+        intent: '先查看交更记录，确认昨夜遗留问题。',
+        relatedActorIds: [APP_OPENING_ACTOR_ID],
+        requiredFacts: ['交更记录放在值日室']
+      }
+    ]
+  };
+}
+
+function createAppOpeningInitialization(narrativeText = '真正开局：旺角警署的早班刚交接完。') {
+  return {
+    openingSessionId: APP_OPENING_SESSION_ID,
+    narrativeText: narrativeText.repeat(80),
+    suggestedActions: [
+      { actionId: 'opening_action_1', text: '向梁志强询问今天最急的事务。' },
+      { actionId: 'opening_action_2', text: '先查看昨夜交更记录。' }
+    ],
+    playerStatePatch: {
+      economy: {
+        cashOnHand: 600,
+        bankBalance: 1_200,
+        monthlyPressure: 35,
+        financeSummary: '有一笔个人存款，日常开支仍需留意。'
+      },
+      homeBase: {
+        placeId: 'place_player_home_mong_kok',
+        placeName: '旺角唐楼住所',
+        regionId: 'region_mong_kok',
+        housingType: '唐楼分租单位',
+        summary: '位于旺角旧区的分租单位，步行可到警署。',
+        householdSummary: '与一名普通租客分住，彼此作息独立。'
+      }
+    },
+    memories: [
+      {
+        text: '陈启明在旺角警署完成早班交接，梁志强交代了昨夜遗留事务。',
+        kind: 'turn',
+        relatedActorIds: ['player', APP_OPENING_ACTOR_ID],
+        relatedPlaceIds: [APP_OPENING_PLACE_ID],
+        relatedOrganizationIds: ['org_hk_police'],
+        importance: 75,
+        visibility: 'player_known',
+        certainty: 'fact'
+      }
+    ]
+  };
+}
+
+function readOpeningPromptContext(init?: RequestInit): {
+  openingSessionId: string;
+  currentPlaceId: string;
+  currentSceneId: string;
+} {
+  const body = JSON.parse(String(init?.body ?? '{}')) as {
+    messages?: Array<{ content?: unknown }>;
+  };
+  const prompt = (body.messages ?? [])
+    .map((message) =>
+      typeof message.content === 'string'
+        ? message.content
+        : JSON.stringify(message.content)
+    )
+    .join('\n');
+  return {
+    openingSessionId:
+      /"openingSessionId"\s*:\s*"([^"]+)"/.exec(prompt)?.[1] ??
+      APP_OPENING_SESSION_ID,
+    currentPlaceId:
+      /当前地点：([^\s\n]+)/.exec(prompt)?.[1] ??
+      /"currentPlaceId"\s*:\s*"([^"]+)"/.exec(prompt)?.[1] ??
+      APP_OPENING_PLACE_ID,
+    currentSceneId:
+      /当前场景：([^\s\n]+)/.exec(prompt)?.[1] ??
+      /"currentSceneId"\s*:\s*"([^"]+)"/.exec(prompt)?.[1] ??
+      APP_OPENING_SCENE_ID
+  };
+}
+
+function createAppOpeningCast(
+  openingSessionId: string,
+  currentPlaceId = APP_OPENING_PLACE_ID,
+  currentSceneId = APP_OPENING_SCENE_ID
+) {
+  const blueprint = createAppOpeningBlueprint();
+  const actor = blueprint.initialActors[0];
+  return {
+    openingSessionId,
+    openingFacts: {
+      situationSummary: blueprint.openingFacts.situationSummary,
+      centralMatter: blueprint.openingFacts.centralMatter,
+      playerDecisionBoundary: blueprint.openingFacts.playerDecisionBoundary
+    },
+    actors: [
+      {
+        slotId: APP_OPENING_ACTOR_ID,
+        name: actor.name,
+        gender: actor.gender,
+        currentIdentity: actor.currentIdentity,
+        publicIdentity: actor.publicIdentity,
+        actualIdentitySummary: actor.actualIdentitySummary,
+        playerRoleRelation: actor.playerRoleRelation,
+        organizationIds: actor.organizationIds,
+        positionSummary: actor.positionSummary,
+        profileSummary: actor.profileSummary,
+        personality: actor.personality,
+        speechStyle: actor.speechStyle,
+        motivation: actor.motivation,
+        presence: actor.presence,
+        currentPlaceId,
+        currentSceneId
+      }
+    ],
+    actionIntents: blueprint.actionIntents.map((action) => ({
+      actionId: action.actionId,
+      intent: action.intent,
+      relatedActorSlotIds: action.relatedActorIds,
+      requiredFacts: action.requiredFacts
+    }))
+  };
+}
+
+function createAppOpeningProfileBatch(openingSessionId: string) {
+  return {
+    openingSessionId,
+    actors: [
+      {
+        actorSlotId: APP_OPENING_ACTOR_ID,
+        profile: createAppOpeningBlueprint().initialActors[0]
+      }
+    ]
+  };
+}
+
+function createAppOpeningNarrative(
+  openingSessionId: string,
+  narrativeText = '真正开局：旺角警署的早班刚交接完。'
+) {
+  const initialization = createAppOpeningInitialization(narrativeText);
+  return {
+    openingSessionId,
+    narrativeText: initialization.narrativeText,
+    suggestedActions: initialization.suggestedActions
+  };
+}
+
+function createAppOpeningRuntime(openingSessionId: string) {
+  const blueprint = createAppOpeningBlueprint();
+  const initialization = createAppOpeningInitialization();
+  return {
+    openingSessionId,
+    playerPresentationPatch: blueprint.playerPresentationPatch,
+    playerStatePatch: initialization.playerStatePatch,
+    memories: initialization.memories
+  };
+}
+
 function mockOpeningFetch(narrativeText = '真正开局：旺角警署的早班刚交接完。') {
-  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
-    ok: true,
-    json: async () => ({
-      choices: [
-        {
-          message: {
-                content: JSON.stringify({
-                narrativeText,
-                suggestedActions: ['先观察报案室'],
-                playerPatch: {
-                  name: '陈启明',
-                  englishName: 'Michael Chan',
-                  policeNumber: '9527'
-                },
-                initialActors: [
-                  {
-                    name: '梁志强',
-                    englishName: 'Tony Leung',
-                    gender: 'male',
-                    birthDate: '1948-05-12',
-                    computedAge: 40,
-                    visualAgeAnchor: '四十岁左右',
-                    currentIdentity: 'police',
-                    publicIdentity: '值日警长',
-                    actualIdentitySummary: '旺角警署军装部值日警长。',
-                    roleProfiles: {
-                      police: {
-                        status: 'active',
-                        rank: 'Sergeant',
-                        department: 'Uniform Branch',
-                        stationOrPost: 'Mong Kok Police Station',
-                        assignmentSummary: 'Report Room Duty Sergeant'
-                      }
-                    },
-                    positionSummary: '旺角警署值日警长',
-                    profileSummary: '老资格军装警长，熟悉街面和报案室人情。',
-                    appearance: '四十岁左右，眼袋重，制服整洁。',
-                    clothing: '夏季军装制服。',
-                    equipment: ['警棍', '对讲机', '值日簿'],
-                    personality: '老练、圆滑、怕麻烦但知道底线。',
-                    speechStyle: '夹杂粤语口吻，常用短句催促新人。',
-                    motivation: '维持今晚值班平稳，不想惹麻烦。',
-                    longTermGoal: '安稳退休。',
-                    values: '实用主义，重视街坊秩序多过漂亮报告。',
-                    relationshipSummary: '刚认识主角，把主角当成需要看管的新同僚。',
-                    attitudeTowardPlayer: '观察、试探，但暂时没有敌意。',
-                    interactionScore: 10,
-                    trustTendency: '中等戒备。',
-                    entanglementSummary: '可能掌握警署和街坊间的旧人情。',
-                    longTermMemorySummary: '熟悉警署报案室与旺角街面关系。',
-                    recentInteractionMemory: '开局时安排主角留意今晚辖区状况。',
-                    statusSummary: '疲惫但状态正常。',
-                    presence: 'present',
-                    visibility: 'player_known',
-                    importance: 70
-                  }
-                ],
-                memories: [
-                  {
-                    text: '主角第一天以警员编号9527在警署值班。',
-                    kind: 'player',
-                    relatedActorIds: ['player'],
-                    importance: 90,
-                    visibility: 'player_known',
-                    certainty: 'fact'
-                  }
-                ],
-                pressureSeeds: []
-              })
-            }
-        }
-      ]
-    })
-  }));
+  let requestIndex = 0;
+  const fetchMock = vi.fn(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const context = readOpeningPromptContext(init);
+      const openingSessionId = context.openingSessionId;
+      const responses = [
+        createAppOpeningCast(
+          openingSessionId,
+          context.currentPlaceId,
+          context.currentSceneId
+        ),
+        createAppOpeningProfileBatch(openingSessionId),
+        createAppOpeningNarrative(openingSessionId, narrativeText),
+        createAppOpeningRuntime(openingSessionId)
+      ];
+      const response = responses[requestIndex];
+      requestIndex += 1;
+      return createOpeningApiResponse(response);
+    }
+  );
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
@@ -251,6 +519,17 @@ function encodeOpenAiStreamDelta(delta: string) {
   return `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`;
 }
 
+async function enterHongKongOpeningWizard() {
+  fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
+  expect(await screen.findByRole('heading', { name: '选择世界包' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
+  await screen.findByRole('heading', { name: /^(剧情扩展选择|开局向导)$/ });
+  if (screen.queryByRole('heading', { name: '剧情扩展选择' })) {
+    fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
+  }
+  expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+}
+
 async function startDefaultGameThroughOpening(gameOverrides?: Partial<AiSettings['game']>, settingsOverride?: AiSettings) {
   if (settingsOverride) {
     localStorage.setItem(aiSettingsStorageKey, JSON.stringify(settingsOverride));
@@ -259,16 +538,15 @@ async function startDefaultGameThroughOpening(gameOverrides?: Partial<AiSettings
   }
   mockOpeningFetch();
 
-  fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-  expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+  await enterHongKongOpeningWizard();
 
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < 6; i += 1) {
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   }
 
   fireEvent.click(screen.getByRole('button', { name: '生成开局' }));
-  await screen.findByRole('heading', { name: '对唔住，我系差人' });
-  await screen.findByText('陈启明');
+  await screen.findByRole('heading', { name: '对唔住，我系差人' }, { timeout: 5_000 });
+  await screen.findByText('陈启明', {}, { timeout: 5_000 });
   await waitFor(() => {
     expect(screen.getByRole('button', { name: '执行行动' })).not.toBeDisabled();
   });
@@ -277,6 +555,10 @@ async function startDefaultGameThroughOpening(gameOverrides?: Partial<AiSettings
 beforeEach(async () => {
   await deleteDatabase('sorry-im-a-cop-v2-saves');
   await deleteDatabase('sorry-im-a-cop-v2-turn-snapshots');
+  await deleteDatabase('sorry-im-a-cop-v2-visuals');
+  await deleteDatabase('sorry-im-a-cop-v2-avg-presentation');
+  await deleteDatabase('sorry-im-a-cop-v2-opening-sessions');
+  recordDailyChangelogView();
   localStorage.setItem(
     OPENING_LEGAL_ACCEPTANCE_STORAGE_KEY,
     JSON.stringify({ version: OPENING_LEGAL_DISCLAIMER_VERSION, acceptedAt: '2026-07-19T00:00:00.000Z' })
@@ -284,12 +566,37 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
 });
 
 describe('App', () => {
+  it('uses the pending opening visual partition before the first save is committed', () => {
+    expect(resolveGameVisualPartitionId({
+      openingPreviewActive: true,
+      openingRollbackChainId: 'chain_new_opening',
+      currentRollbackChainId: 'chain_previous_game'
+    })).toBe('chain_new_opening');
+    expect(resolveGameVisualPartitionId({
+      openingPreviewActive: false,
+      openingRollbackChainId: 'chain_new_opening',
+      currentRollbackChainId: 'chain_previous_game'
+    })).toBe('chain_previous_game');
+  });
+
+  it('renders the analytics login for the trailing-slash admin route', async () => {
+    window.history.replaceState({}, '', '/admin/analytics/');
+
+    try {
+      render(<App />);
+      expect(await screen.findByRole('heading', { name: '连接统计后台' })).toBeInTheDocument();
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  });
+
   it('renders the home menu before entering the game', () => {
     render(<App />);
 
@@ -305,7 +612,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^新手引导$/ })).toBeInTheDocument();
     const releaseInfo = screen.getByRole('group', { name: '版本、版权与法律信息' });
-    expect(within(releaseInfo).getByText('v1.0.0')).toBeInTheDocument();
+    expect(within(releaseInfo).getByText(APP_VERSION_LABEL)).toBeInTheDocument();
     expect(within(releaseInfo).getByText('简体中文')).toBeInTheDocument();
     expect(within(releaseInfo).getByText('© 2026 RedCliffScribe · 非商业本地互动叙事游戏')).toBeInTheDocument();
     expect(within(releaseInfo).getByRole('button', { name: '法律声明' })).toBeInTheDocument();
@@ -317,6 +624,80 @@ describe('App', () => {
       'href',
       'mailto:kale014@gmail.com'
     );
+  });
+
+  it('backs up, attaches the formal DLC to an existing save, and loads it', async () => {
+    const repository = new IndexedDbSaveRepository();
+    const record = createStoredSave('save_existing_dlc', 'chain_existing_dlc');
+    record.runtimeState.turnCounter = 37;
+    record.turnCounter = 37;
+    record.runtimeState.storyLog.push({
+      turnId: 'turn_0037',
+      speaker: 'narrator',
+      text: '加入扩展前已经成立的旧存档事实。',
+      gameTime: record.runtimeState.time
+    });
+    await repository.save(record);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'DLC剧情' }));
+    fireEvent.click(await screen.findByRole('button', { name: '加入已有存档' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '将都市怪谈加入已有存档' });
+    const saveRow = (await within(dialog).findByText('save_existing_dlc')).closest('li');
+    expect(saveRow).not.toBeNull();
+    fireEvent.click(within(saveRow as HTMLElement).getByRole('button', { name: '加入并读取' }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/从当前游戏时间开始寻找自然入口/));
+    expect(
+      await screen.findByRole('button', { name: '执行行动' }, { timeout: 5_000 })
+    ).toBeInTheDocument();
+    expect((await screen.findAllByText('玩家save_existing_dlc')).length).toBeGreaterThan(0);
+
+    await waitFor(async () => {
+      expect(await repository.list()).toHaveLength(2);
+    });
+    const updated = await repository.load('save_existing_dlc');
+    expect(updated?.runtimeState.world.officialDlcBindings).toEqual([expect.objectContaining({
+      dlcId: 'urban_legends',
+      version: '1.2.0',
+      status: 'active',
+      planningEnabled: true
+    })]);
+    expect(updated?.runtimeState.storyLog.at(-1)?.text).toBe('加入扩展前已经成立的旧存档事实。');
+
+    const backupSummary = (await repository.list()).find((save) => save.saveId !== record.saveId);
+    expect(backupSummary).toMatchObject({
+      saveName: 'save_existing_dlc（加入都市怪谈前备份）',
+      saveKind: 'manual',
+      rollbackChainId: 'chain_existing_dlc'
+    });
+    const backup = await repository.load(backupSummary!.saveId);
+    expect(backup?.runtimeState.world.officialDlcBindings).toEqual([]);
+    expect(backup?.runtimeState.storyLog.at(-1)?.text).toBe('加入扩展前已经成立的旧存档事实。');
+    confirm.mockRestore();
+  });
+
+  it('routes new games through the worldpack selection before the Hong Kong opening guide', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
+    expect(
+      await screen.findByRole('heading', { name: '选择世界包' }, { timeout: 5_000 })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择香港 1988世界包' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看圣·德拉罗世界包预研状态' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看圣·德拉罗世界包预研状态' }));
+    expect(screen.queryByRole('heading', { name: '开局向导' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('圣·德拉罗仍在预研阶段');
+
+    fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
+    expect(await screen.findByRole('heading', { name: '剧情扩展选择' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '将都市怪谈加入本局' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
+    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
   });
 
   it('opens the full legal notice from the homepage without changing consent', () => {
@@ -383,13 +764,16 @@ describe('App', () => {
 
     let dialog = screen.getByRole('dialog', { name: '重要说明' });
     expect(screen.queryByRole('heading', { name: '开局向导' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '选择世界包' })).not.toBeInTheDocument();
     expect(within(dialog).getByText('本游戏依据公开历史与人物资料构建时代背景。')).toBeInTheDocument();
+    expect(within(dialog).getByText(/第三方影视作品名称、虚构角色姓名/)).toBeInTheDocument();
     expect(within(dialog).getByText(/动态事件、人物言行、关系与剧情/)).toBeInTheDocument();
     const acceptButton = within(dialog).getByRole('button', { name: '同意并进入开局' });
     expect(acceptButton).toBeDisabled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: '查看完整法律声明' }));
     dialog = screen.getByRole('dialog', { name: '《对唔住，我系差人》' });
+    expect(within(dialog).getByText('三、第三方影视作品与虚构角色')).toBeInTheDocument();
     expect(within(dialog).getByText('kale014@gmail.com')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '返回重要说明' }));
 
@@ -407,11 +791,19 @@ describe('App', () => {
     );
     fireEvent.click(within(dialog).getByRole('button', { name: '同意并进入开局' }));
 
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '选择世界包' })).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem(OPENING_LEGAL_ACCEPTANCE_STORAGE_KEY) ?? '{}')).toMatchObject({
       version: OPENING_LEGAL_DISCLAIMER_VERSION,
       acceptedAt: expect.any(String)
     });
+
+    fireEvent.click(screen.getByRole('button', { name: '返回首页' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
+    expect(screen.queryByRole('dialog', { name: '重要说明' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
+    expect(await screen.findByRole('heading', { name: '剧情扩展选择' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
+    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
   });
 
   it('opens the save manager modal from the home menu in load mode', async () => {
@@ -440,6 +832,73 @@ describe('App', () => {
     expect(screen.queryByLabelText('服务商备注')).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'API 档案' })).getByRole('button', { name: '获取模型' })).toBeInTheDocument();
     expect(screen.getByLabelText('主剧情模型')).toBeInTheDocument();
+  });
+
+  it('opens dramatic content on the dedicated gameplay settings page', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByRole('heading', { name: '设置' }, { timeout: 5_000 });
+
+    fireEvent.click(screen.getByRole('button', { name: '游戏设置' }));
+    expect(screen.getByRole('heading', { name: '游戏设置' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('长期叙事节奏')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '玩法设置' }));
+    expect(screen.getByRole('heading', { name: '玩法设置' })).toBeInTheDocument();
+    expect(screen.getByLabelText('长期叙事节奏')).toBeInTheDocument();
+    expect(screen.queryByLabelText('界面与剧情语言')).not.toBeInTheDocument();
+  });
+
+  it('clears all local game data after two confirmations while preserving API and model routes', async () => {
+    seedMainNarratorSettings({ storyRenderLimit: 9, narrativePerspective: 'third_person' });
+    const configured = JSON.parse(localStorage.getItem(aiSettingsStorageKey) ?? '{}') as AiSettings;
+    configured.display = { ...configured.display, uiTheme: 'light', narrationFontSize: 22 };
+    configured.prompts = {
+      ...configured.prompts,
+      overrides: { main: '测试自定义提示词' }
+    };
+    configured.memory = { ...configured.memory, recentRawTurnLimit: 88 };
+    localStorage.setItem(aiSettingsStorageKey, JSON.stringify(configured));
+    localStorage.setItem(CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY, JSON.stringify([{ name: '测试出身' }]));
+    localStorage.setItem('unrelated-site-key', 'keep');
+
+    const saveRepository = new IndexedDbSaveRepository();
+    const snapshotRepository = await seedSnapshot('chain_data_management');
+    await saveRepository.save(createStoredSave('save_data_management', 'chain_data_management'));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByRole('heading', { name: '设置' }, { timeout: 5_000 });
+    fireEvent.click(screen.getByRole('button', { name: '数据管理' }));
+
+    expect(screen.getByRole('heading', { name: '数据管理' })).toBeInTheDocument();
+    expect(await screen.findByText('1 份存档')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清空全部数据（保留 API）' }));
+
+    expect(screen.getByText('第 1 次确认 · 共 2 次')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '继续，进入第二次确认' }));
+    expect(screen.getByText('第 2 次确认 · 共 2 次')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认清空：清空全部数据（保留 API 设置）' }));
+
+    expect(await screen.findByText('除 API 与模型配置外，全部本地数据已清空。')).toBeInTheDocument();
+    await waitFor(async () => {
+      expect(await saveRepository.list()).toEqual([]);
+      expect(await snapshotRepository.listTurnSnapshots('chain_data_management')).toEqual([]);
+    });
+
+    const stored = JSON.parse(localStorage.getItem(aiSettingsStorageKey) ?? '{}') as AiSettings;
+    const defaults = createDefaultAiSettings();
+    expect(stored.apiProfiles).toEqual(configured.apiProfiles);
+    expect(stored.mainNarrator).toEqual(configured.mainNarrator);
+    expect(stored.featureRoutes).toEqual(configured.featureRoutes);
+    expect(stored.game).toEqual(defaults.game);
+    expect(stored.display).toEqual(defaults.display);
+    expect(stored.prompts).toEqual(defaults.prompts);
+    expect(stored.memory).toEqual(defaults.memory);
+    expect(localStorage.getItem(CUSTOM_ORIGIN_BACKGROUNDS_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(OPENING_LEGAL_ACCEPTANCE_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem('unrelated-site-key')).toBe('keep');
   });
 
   it('applies and persists the interface font independently from story fonts', async () => {
@@ -477,7 +936,7 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     fireEvent.click(await screen.findByRole('button', { name: 'API 配置' }));
-    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://gcli.ggchan.dev/v1' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://models.example.test/v1' } });
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } });
     fireEvent.click(within(screen.getByRole('region', { name: 'API 档案' })).getByRole('button', { name: '获取模型' }));
 
@@ -500,7 +959,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     fireEvent.click(await screen.findByRole('button', { name: 'API 配置' }));
     fireEvent.change(screen.getByLabelText('配置名称'), { target: { value: 'siliconflow' } });
-    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.siliconflow.cn/v1' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://embeddings.example.test/v1' } });
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } });
     fireEvent.click(screen.getByRole('button', { name: '保存 API 档案' }));
 
@@ -546,7 +1005,7 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'API 配置' }));
     fireEvent.change(screen.getByLabelText('配置名称'), { target: { value: 'ggchan' } });
     fireEvent.change(screen.getByLabelText('接口类型'), { target: { value: 'openai-compatible' } });
-    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://gcli.ggchan.dev/v1' } });
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://models.example.test/v1' } });
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } });
     fireEvent.change(screen.getByLabelText('模型列表'), { target: { value: 'pro\nflash' } });
     fireEvent.click(screen.getByRole('button', { name: '保存 API 档案' }));
@@ -583,10 +1042,8 @@ describe('App', () => {
   it('creates a new game through a paginated opening guide', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
-    expect(screen.getByText('步骤 1/5')).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
+    expect(screen.getByText('步骤 1/7')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '01 世界与剧本' })).toHaveClass('active');
     expect(screen.getByRole('button', { name: '1988 纪律与人情' })).toBeInTheDocument();
     expect(screen.getByText('1980-1996 香港')).toBeInTheDocument();
@@ -597,7 +1054,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '1988 纪律与人情' }));
 
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText('步骤 2/5')).toBeInTheDocument();
+    expect(screen.getByText('步骤 2/7')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '身份选择' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '普通市民' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '警察' })).toBeInTheDocument();
@@ -605,7 +1062,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '警察' }));
 
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText('步骤 3/5')).toBeInTheDocument();
+    expect(screen.getByText('步骤 3/7')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '基础档案' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('玩家姓名'), { target: { value: '陈启明' } });
     expect(screen.getByLabelText('英文名')).toHaveAttribute('placeholder', '留空后按中文名生成');
@@ -647,7 +1104,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '较多' }));
 
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText('步骤 4/5')).toBeInTheDocument();
+    expect(screen.getByText('步骤 4/7')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '稳健新人' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '街头实干' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '会做人' })).toBeInTheDocument();
@@ -671,7 +1128,14 @@ describe('App', () => {
     expect(screen.getByLabelText('守规矩')).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText('步骤 5/5')).toBeInTheDocument();
+    expect(screen.getByText('步骤 5/7')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '戏剧化开局' })).toBeInTheDocument();
+    expect(screen.getByLabelText('启用戏剧化开局')).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByText('步骤 6/7')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '自定义内容' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByText('步骤 7/7')).toBeInTheDocument();
     const openingPressureSelect = screen.getByLabelText('开局压力');
     expect(openingPressureSelect).toHaveValue('relaxed');
     expect(within(openingPressureSelect).getAllByRole('option')).toHaveLength(5);
@@ -703,6 +1167,9 @@ describe('App', () => {
     expect(await screen.findByText('陈启明')).toBeInTheDocument();
     expect(await screen.findByText('Michael Chan')).toBeInTheDocument();
     expect(await screen.findByText('9527')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '执行行动' })).not.toBeDisabled();
+    });
     fireEvent.click(screen.getByRole('button', { name: '← 返回首页' }));
 
     fireEvent.click(screen.getByRole('button', { name: '读取游戏' }));
@@ -717,8 +1184,7 @@ describe('App', () => {
   it('saves edits and deletes custom origin backgrounds in localStorage', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
@@ -804,10 +1270,60 @@ describe('App', () => {
     expect(imported.rollbackChainId).not.toBe('external_chain');
   });
 
+  it('restores embedded generated images into the imported rollback partition', async () => {
+    const sourceDb = 'cop-v2-app-visual-import-source';
+    await deleteDatabase(sourceDb);
+    const externalRecord = createStoredSave('external_visual_save', 'external_visual_chain');
+    const sourceVisuals = new IndexedDbVisualRepository(sourceDb);
+    const sourceTask = createPersistingTask('task_imported_visual');
+    sourceTask.saveId = externalRecord.rollbackChainId!;
+    sourceTask.intent = { ...sourceTask.intent, saveId: externalRecord.rollbackChainId! };
+    await sourceVisuals.saveTask(sourceTask);
+    await sourceVisuals.completeTaskWithImages(externalRecord.rollbackChainId!, sourceTask.taskId, [
+      createImageInput('image_imported_visual')
+    ], '2026-07-23T00:00:00.000Z');
+    const visualArchive = await createPortableVisualArchive(
+      await sourceVisuals.exportSave(externalRecord.rollbackChainId!),
+      true
+    );
+    const zipBytes = await createPortableSaveZip([externalRecord], undefined, {
+      visualArchives: { [externalRecord.rollbackChainId!]: visualArchive }
+    });
+    const zipBuffer = new ArrayBuffer(zipBytes.byteLength);
+    new Uint8Array(zipBuffer).set(zipBytes);
+    const file = new File([zipBuffer], 'saves-with-images.zip', { type: 'application/zip' });
+    Object.defineProperty(file, 'arrayBuffer', { value: vi.fn().mockResolvedValue(zipBuffer) });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '读取游戏' }));
+    const dialog = await screen.findByRole('dialog', { name: '存档管理' });
+    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]');
+    fireEvent.change(input as HTMLInputElement, { target: { files: [file] } });
+
+    expect(await within(dialog).findByText('已导入 1 个存档及 1 个视觉资料分区。')).toBeInTheDocument();
+    const imported = (await new IndexedDbSaveRepository().list())[0];
+    const restoredVisuals = new IndexedDbVisualRepository();
+    const snapshot = await restoredVisuals.loadSnapshot(imported.rollbackChainId!);
+    expect(snapshot.assets.image_imported_visual).toBeDefined();
+    expect(await restoredVisuals.getBlob(snapshot.assets.image_imported_visual.blobKey)).toBeInstanceOf(Blob);
+    expect(imported.rollbackChainId).not.toBe(externalRecord.rollbackChainId);
+    await deleteDatabase(sourceDb);
+  });
+
   it('cleans a rollback chain after its final save reference is deleted', async () => {
     const saveRepository = new IndexedDbSaveRepository();
     const snapshotRepository = await seedSnapshot('chain_orphan');
+    const avgBindingRepository = new IndexedDbAvgGenericPortraitBindingRepository();
     await saveRepository.save(createStoredSave('save_orphan', 'chain_orphan'));
+    await avgBindingRepository.bindIfAvailable({
+      saveId: 'chain_orphan',
+      actorId: 'npc_orphan',
+      worldpackId: 'hk1988',
+      basePackId: 'hk1988_avg_default',
+      portraitSetId: 'generic_orphan',
+      createdAt: '2026-08-09T00:00:00.000Z',
+      updatedAt: '2026-08-09T00:00:00.000Z'
+    }, 'unique_per_save');
 
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '读取游戏' }));
@@ -816,6 +1332,13 @@ describe('App', () => {
 
     await waitFor(async () => {
       expect(await snapshotRepository.listTurnSnapshots('chain_orphan')).toEqual([]);
+      expect(
+        await avgBindingRepository.listForSavePack(
+          'chain_orphan',
+          'hk1988',
+          'hk1988_avg_default'
+        )
+      ).toEqual([]);
     });
   });
 
@@ -892,8 +1415,7 @@ describe('App', () => {
   it('starts the opening profile with blank name, male-only default gender choices, and generated English name', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
@@ -911,10 +1433,9 @@ describe('App', () => {
   it('keeps the player in opening setup when the main narrator is not configured', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
 
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     }
 
@@ -928,9 +1449,28 @@ describe('App', () => {
     seedMainNarratorSettings();
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
+    let openingSessionId = APP_OPENING_SESSION_ID;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          const context = readOpeningPromptContext(init);
+          openingSessionId = context.openingSessionId;
+          return createOpeningApiResponse(
+            createAppOpeningCast(
+              openingSessionId,
+              context.currentPlaceId,
+              context.currentSceneId
+            )
+          );
+        }
+      )
+      .mockImplementationOnce(async () =>
+        createOpeningApiResponse(
+          createAppOpeningProfileBatch(openingSessionId)
+        )
+      )
+      .mockImplementationOnce(async () => {
         const stream = new ReadableStream<Uint8Array>({
           start(nextController) {
             controller = nextController;
@@ -938,14 +1478,16 @@ describe('App', () => {
         });
         return new Response(stream, { status: 200 });
       })
-    );
+      .mockImplementationOnce(async () =>
+        createOpeningApiResponse(createAppOpeningRuntime(openingSessionId))
+      );
+    vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
 
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     }
 
@@ -956,78 +1498,162 @@ describe('App', () => {
     await waitFor(() => {
       expect(controller).toBeDefined();
     });
-    controller.enqueue(encoder.encode(encodeOpenAiStreamDelta('{"narrativeText":"电话声从')));
-    controller.enqueue(encoder.encode(encodeOpenAiStreamDelta('报案室深处响起"')));
+    const initializationJson = JSON.stringify(
+      createAppOpeningNarrative(
+        openingSessionId,
+        '电话声从报案室深处响起，值日室里的人同时抬起头。'
+      )
+    );
+    const streamedPhrase = '电话声从报案室深处响起';
+    const firstChunkEnd = initializationJson.indexOf(streamedPhrase) + streamedPhrase.length;
+    controller.enqueue(encoder.encode(encodeOpenAiStreamDelta(initializationJson.slice(0, firstChunkEnd))));
 
     expect(await screen.findByText('电话声从报案室深处响起')).toBeInTheDocument();
 
+    controller.enqueue(encoder.encode(encodeOpenAiStreamDelta(initializationJson.slice(firstChunkEnd))));
+
+    const previewAction = await screen.findByRole('button', { name: '向梁志强询问今天最急的事务。' });
+    expect(previewAction).toBeDisabled();
+
     controller.enqueue(
-      encoder.encode(
-        encodeOpenAiStreamDelta(
-          ',"suggestedActions":["先观察报案室"],"playerPatch":{"name":"陈启明","englishName":"Michael Chan","policeNumber":"9527"},"initialActors":[],"memories":[],"pressureSeeds":[]}'
-        )
-      )
+      encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`)
     );
     controller.enqueue(encoder.encode('data: [DONE]\n\n'));
     controller.close();
 
-    expect(screen.getByText('电话声从报案室深处响起')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(screen.getByRole('button', { name: '向梁志强询问今天最急的事务。' })).not.toBeDisabled();
+    });
+  });
+
+  it('keeps a completed opening non-authoritative until saving succeeds and retries only the save', async () => {
+    seedMainNarratorSettings();
+    const fetchMock = mockOpeningFetch('存档门禁测试：梁志强把值日簿推到陈启明面前。');
+    const originalSave = IndexedDbSaveRepository.prototype.save;
+    const saveSpy = vi
+      .spyOn(IndexedDbSaveRepository.prototype, 'save')
+      .mockRejectedValueOnce(new Error('模拟 IndexedDB 写入失败'))
+      .mockImplementation(function (
+        this: IndexedDbSaveRepository,
+        record: RuntimeSaveRecord
+      ) {
+        return originalSave.call(this, record);
+      });
+
+    render(<App />);
+
+    await enterHongKongOpeningWizard();
+    for (let i = 0; i < 6; i += 1) {
+      fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: '生成开局' }));
+
+    expect(
+      await screen.findByText(/开局数据已经生成，但创建存档失败：模拟 IndexedDB 写入失败/)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '执行行动' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重试保存' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试当前阶段' })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '重试保存' }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('button', { name: '执行行动' })).not.toBeDisabled();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(screen.queryByRole('button', { name: '重试保存' })).not.toBeInTheDocument();
+    saveSpy.mockRestore();
   });
 
   it('lets the player retry a failed opening without returning to setup', async () => {
     seedMainNarratorSettings();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        createOpeningApiResponse({
-          narrativeText: '',
-          suggestedActions: [],
-          initialActors: [],
-          memories: [],
-          pressureSeeds: []
-        })
-      )
-      .mockResolvedValueOnce(
-        createOpeningApiResponse({
-          narrativeText: '重试后的开局正文：报案室的灯终于稳定下来。',
-          suggestedActions: ['重新观察报案室'],
-          playerPatch: {
-            name: '陈启明',
-            englishName: 'Michael Chan',
-            policeNumber: '9527'
-          },
-          initialActors: [],
-          memories: [],
-          pressureSeeds: []
-        })
-      );
+    let requestIndex = 0;
+    let openingSessionId = APP_OPENING_SESSION_ID;
+    let currentPlaceId = APP_OPENING_PLACE_ID;
+    let currentSceneId = APP_OPENING_SCENE_ID;
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const context = readOpeningPromptContext(init);
+        openingSessionId = context.openingSessionId;
+        currentPlaceId = context.currentPlaceId;
+        currentSceneId = context.currentSceneId;
+        const invalidCast = {
+          openingSessionId,
+          openingFacts: {},
+          actors: [],
+          actionIntents: []
+        };
+        const responses = [
+          invalidCast,
+          invalidCast,
+          createAppOpeningCast(
+            openingSessionId,
+            currentPlaceId,
+            currentSceneId
+          ),
+          createAppOpeningProfileBatch(openingSessionId),
+          createAppOpeningNarrative(
+            openingSessionId,
+            '重试后的开局正文：报案室的灯终于稳定下来。'
+          ),
+          createAppOpeningRuntime(openingSessionId)
+        ];
+        const response = responses[requestIndex];
+        requestIndex += 1;
+        return createOpeningApiResponse(response);
+      }
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
-    expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
+    await enterHongKongOpeningWizard();
 
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       fireEvent.click(screen.getByRole('button', { name: '下一步' }));
     }
 
     fireEvent.click(screen.getByRole('button', { name: '生成开局' }));
-    expect(await screen.findByRole('heading', { name: '对唔住，我系差人' })).toBeInTheDocument();
-    expect(await screen.findByText(/开局生成失败/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole(
+        'heading',
+        { name: '对唔住，我系差人' },
+        { timeout: 5_000 }
+      )
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/当前开局阶段未完成/, {}, { timeout: 5_000 })
+    ).toBeInTheDocument();
+    expect(screen.getByText('停在阶段：')).toBeInTheDocument();
+    expect(
+      screen.getByText('正在修复人物蓝图的局部字段')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '更换模型并继续' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '放弃本次开局' })
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '导出原文' }));
+    fireEvent.click(screen.getByRole('button', { name: '诊断导出' }));
     const diagnosticDialog = await screen.findByRole('dialog', { name: '诊断导出' });
     const diagnosticText = within(diagnosticDialog).getByLabelText('诊断导出原文') as HTMLTextAreaElement;
+    expect(diagnosticText.value).toContain('## 开局请求尝试 1');
+    expect(diagnosticText.value).toContain('阶段：opening_cast');
+    expect(diagnosticText.value).toContain('解析结果：success');
     expect(diagnosticText.value).toContain('## 最近原始返回');
     expect(diagnosticText.value).not.toContain('最近模型原文');
-    expect(diagnosticText.value).toContain('"narrativeText":""');
+    expect(diagnosticText.value).toContain('"actors":[]');
     fireEvent.click(within(diagnosticDialog).getByRole('button', { name: '关闭' }));
 
-    fireEvent.click(screen.getByRole('button', { name: '重试开局' }));
+    fireEvent.click(screen.getByRole('button', { name: '重试当前阶段' }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(6);
       expect(screen.getByRole('button', { name: '执行行动' })).not.toBeDisabled();
     });
     expect(screen.getByText(/重试后的开局正文/)).toBeInTheDocument();
@@ -1043,7 +1669,7 @@ describe('App', () => {
     render(<App />);
     await startDefaultGameThroughOpening();
 
-    fireEvent.click(screen.getByRole('button', { name: '导出原文' }));
+    fireEvent.click(screen.getByRole('button', { name: '诊断导出' }));
 
     const dialog = await screen.findByRole('dialog', { name: '诊断导出' });
     const diagnosticText = within(dialog).getByLabelText('诊断导出原文') as HTMLTextAreaElement;
@@ -1071,7 +1697,7 @@ describe('App', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('·');
     expect(screen.getByRole('button', { name: '重掷开局' })).toBeInTheDocument();
     expect(screen.getByText('陈启明')).toBeInTheDocument();
-    expect(screen.getByText('旺角警署')).toBeInTheDocument();
+    expect(screen.getByText('旺角警署 · 军装巡逻 · 巡逻警员')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('玩家行动'), {
       target: { value: '我接起电话。' }
@@ -1091,9 +1717,9 @@ describe('App', () => {
     render(<App />);
     await startDefaultGameThroughOpening();
 
-    fireEvent.click(screen.getByRole('button', { name: '先观察报案室' }));
+    fireEvent.click(screen.getByRole('button', { name: '先查看昨夜交更记录。' }));
 
-    expect(screen.getByLabelText('玩家行动')).toHaveValue('先观察报案室');
+    expect(screen.getByLabelText('玩家行动')).toHaveValue('先查看昨夜交更记录。');
     expect(runPlayerTurnMock).not.toHaveBeenCalled();
   });
 
@@ -1185,6 +1811,7 @@ describe('App', () => {
         storyRenderLimit: 30,
         narrativeLengthLevel: 'standard',
         narrativePerspective: 'second_person',
+        playerPortrayalMode: 'player_led',
         autoSaveLimit: 20,
         autoSaveIntervalTurns: 1,
         rollbackSnapshotLimit: 20,
@@ -1384,7 +2011,9 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(screen.getByText('行动未完成：系统处理异常。行动内容已放回输入框。')).toBeInTheDocument();
-      expect(screen.queryByText('我接起电话。')).not.toBeInTheDocument();
+      expect(within(screen.getByRole('region', { name: '剧情正文' })).queryByText('我接起电话。')).not.toBeInTheDocument();
+      expect(actionButton).not.toBeDisabled();
+      expect(actionInput).toHaveValue('我接起电话。');
     });
 
     fireEvent.change(actionInput, {
@@ -1393,7 +2022,7 @@ describe('App', () => {
     fireEvent.click(actionButton);
 
     await waitFor(() => {
-      expect(screen.queryByText('我接起电话。')).not.toBeInTheDocument();
+      expect(within(screen.getByRole('region', { name: '剧情正文' })).queryByText('我接起电话。')).not.toBeInTheDocument();
       expect(screen.getAllByText('我重新接起电话。')).toHaveLength(1);
       expect(screen.getByText(/第二次接通了/)).toBeInTheDocument();
     });
@@ -1409,7 +2038,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '人物志' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '人物志' }));
-    const characterDialog = await screen.findByRole('dialog', { name: '人物志' });
+    const characterDialog = await screen.findByRole('dialog', { name: '人物志' }, { timeout: 5_000 });
     expect(within(characterDialog).getByText('梁志强')).toBeInTheDocument();
     fireEvent.click(within(characterDialog).getByRole('button', { name: '关闭' }));
     expect(screen.queryByRole('dialog', { name: '人物志' })).not.toBeInTheDocument();
@@ -1437,5 +2066,126 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '保存进度' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '← 返回首页' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '开始游戏' })).not.toBeInTheDocument();
+  });
+
+  it('persists Cantonese flavor changes in the current save only', async () => {
+    render(<App />);
+    await startDefaultGameThroughOpening();
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByRole('heading', { name: '设置' }, { timeout: 5_000 });
+    fireEvent.click(screen.getByRole('button', { name: '游戏设置' }));
+
+    expect(screen.getByText('当前游戏粤语风味')).toBeInTheDocument();
+    expect(screen.getByText('中等')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '粤语风味更改' }));
+    fireEvent.click(screen.getByRole('radio', { name: /较多/ }));
+
+    await waitFor(async () => {
+      const saves = await new IndexedDbSaveRepository().list();
+      expect(saves.length).toBeGreaterThan(0);
+      const saved = await new IndexedDbSaveRepository().load(saves[0].saveId);
+      expect(saved?.runtimeState.player.cantoneseFlavor).toBe('heavy');
+    });
+
+    expect(screen.getByText('较多')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /粤语风味/ })).not.toBeInTheDocument();
+  }, 10_000);
+
+  it('persists game difficulty changes in the current save only', async () => {
+    render(<App />);
+    await startDefaultGameThroughOpening();
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByRole('heading', { name: '设置' }, { timeout: 5_000 });
+    fireEvent.click(screen.getByRole('button', { name: '游戏设置' }));
+
+    expect(screen.getByText('当前游戏难度')).toBeInTheDocument();
+    expect(screen.getByText(/标准（判定目标值\+0）/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '游戏难度更改' }));
+    fireEvent.click(screen.getByRole('radio', { name: /严酷/ }));
+
+    await waitFor(async () => {
+      const saves = await new IndexedDbSaveRepository().list();
+      expect(saves.length).toBeGreaterThan(0);
+      const saved = await new IndexedDbSaveRepository().load(saves[0].saveId);
+      expect(saved?.runtimeState.world.gameDifficulty).toBe('brutal');
+    });
+
+    expect(screen.getByText(/严酷（判定目标值-20）/)).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /游戏难度/ })).not.toBeInTheDocument();
+  });
+
+  it('manages current-save custom content priority without editing its frozen revision', async () => {
+    const saveRepository = new IndexedDbSaveRepository();
+    await saveRepository.save(createCustomContentStoredSave());
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '读取游戏' }));
+    const loadDialog = await screen.findByRole('dialog', { name: '存档管理' });
+    fireEvent.click(
+      await within(loadDialog).findByRole('button', { name: '读取存档' })
+    );
+    expect(
+      await screen.findByRole('region', { name: '剧情正文' })
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByRole('heading', { name: '设置' }, { timeout: 5_000 });
+    fireEvent.click(screen.getByRole('button', { name: '游戏设置' }));
+
+    const customContentSection = screen.getByRole('region', {
+      name: '本局自定义内容推进'
+    });
+    expect(within(customContentSection).getByText('设置页记者')).toBeInTheDocument();
+    expect(within(customContentSection).getByText('revision 3')).toBeInTheDocument();
+    expect(within(customContentSection).getByLabelText('本局重点 1 / 3')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(customContentSection).getByRole('button', {
+        name: '取消本局重点'
+      })
+    );
+
+    await waitFor(async () => {
+      const saved = await saveRepository.load('save_custom_content_settings');
+      expect(saved?.runtimeState.customContent?.priorityItems).toEqual([]);
+      expect(
+        saved?.runtimeState.customContent?.characterEntryIntents[0]
+      ).toMatchObject({
+        mode: 'natural',
+        status: 'queued'
+      });
+      expect(
+        saved?.runtimeState.customContent?.characterBindings[0]
+      ).toMatchObject({
+        assetId: 'character-settings-reporter',
+        revision: 3,
+        checksum: 'checksum-character-settings-reporter-v3'
+      });
+    });
+
+    expect(
+      await within(customContentSection).findByRole('button', {
+        name: '设为本局重点'
+      })
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(customContentSection).getByRole('button', {
+        name: '暂停主动推进'
+      })
+    );
+
+    await waitFor(async () => {
+      const saved = await saveRepository.load('save_custom_content_settings');
+      expect(
+        saved?.runtimeState.customContent?.characterEntryIntents[0].status
+      ).toBe('paused');
+    });
+    expect(
+      await within(customContentSection).findByRole('button', {
+        name: '恢复主动推进'
+      })
+    ).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { deriveActorAgeAt, isAdultFemaleActorAt } from '../runtime/actorAge';
 import { createActorDefaults } from '../runtime/actorFactory';
+import { settleTransientCervixStatus } from '../runtime/femaleProfile';
 import type {
   Actor,
   ActorAdultPrivateWombProfile,
@@ -19,7 +20,6 @@ const DAY_MS = 86_400_000;
 const MAX_WOMB_RECORDS = 12;
 const MAX_PREGNANCY_HISTORY = 8;
 const MAX_RISK_SUMMARIES = 6;
-const NEGATIVE_CHECK_COOLDOWN_DAYS = 30;
 const CONFIRMATION_DAY = 45;
 const DELIVERY_WINDOW_DAY = 260;
 const DUE_DAY = 270;
@@ -31,6 +31,11 @@ export interface PregnancyRiskPatchInput {
   actorId: string;
   riskType: PregnancyRiskType;
   summary: string;
+  paternityCandidates?: Array<{
+    actorId?: string;
+    name?: string;
+    visibility?: Visibility;
+  }>;
   fatherActorId?: string;
   fatherName?: string;
   fatherVisibility?: Visibility;
@@ -38,7 +43,7 @@ export interface PregnancyRiskPatchInput {
 
 export interface PregnancyResolutionPatchInput {
   actorId: string;
-  outcome: 'live_birth' | 'pregnancy_ended';
+  outcome: 'pregnancy_confirmed' | 'live_birth' | 'pregnancy_ended';
   summary: string;
   childName?: string;
   childGender?: 'male' | 'female';
@@ -89,6 +94,10 @@ function formatDate(time: GameTime): string {
   return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`;
 }
 
+function isSameGameDay(left: GameTime, right: GameTime): boolean {
+  return left.year === right.year && left.month === right.month && left.day === right.day;
+}
+
 function stableHash(text: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index += 1) {
@@ -136,8 +145,13 @@ function clonePregnancy(pregnancy: ActorPregnancyState): ActorPregnancyState {
 function cloneWomb(womb: ActorAdultPrivateWombProfile): ActorAdultPrivateWombProfile {
   return {
     ...womb,
-    records: womb.records.map((record) => ({ ...record })),
+    cervixStatusUpdatedAt: womb.cervixStatusUpdatedAt ? cloneTime(womb.cervixStatusUpdatedAt) : undefined,
+    records: womb.records.map((record) => ({
+      ...record,
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    })),
     pregnancy: womb.pregnancy ? clonePregnancy(womb.pregnancy) : undefined,
+    pendingPregnancyChecks: womb.pendingPregnancyChecks?.map(clonePregnancy),
     lastPregnancyCheck: womb.lastPregnancyCheck
       ? {
           ...womb.lastPregnancyCheck,
@@ -148,7 +162,8 @@ function cloneWomb(womb: ActorAdultPrivateWombProfile): ActorAdultPrivateWombPro
     pregnancyHistory: womb.pregnancyHistory?.map((record) => ({
       ...record,
       startedAt: cloneTime(record.startedAt),
-      endedAt: cloneTime(record.endedAt)
+      endedAt: cloneTime(record.endedAt),
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
     }))
   };
 }
@@ -158,6 +173,34 @@ function getEligibleWomb(actor: Actor, currentTime: GameTime): ActorAdultPrivate
   const privateProfile = actor.femaleProfile?.adultPrivateProfile;
   if (!privateProfile || privateProfile.enabled === false) return undefined;
   return privateProfile.womb;
+}
+
+function ensurePregnancyTrackingActor(actor: Actor, currentTime: GameTime): Actor | undefined {
+  if (!isAdultFemaleActorAt(actor, currentTime)) return undefined;
+  const femaleProfile = actor.femaleProfile ?? {};
+  const privateProfile = femaleProfile.adultPrivateProfile;
+  const womb = privateProfile?.womb ?? {
+    status: '未受孕',
+    cervixStatus: '紧闭',
+    records: []
+  };
+  return {
+    ...actor,
+    femaleProfile: {
+      ...femaleProfile,
+      updatedAt: cloneTime(currentTime),
+      source: femaleProfile.source ?? 'writeback',
+      adultPrivateProfile: {
+        ...(privateProfile ?? {}),
+        enabled: true,
+        ageConfirmedAdult: true,
+        profileStatus: privateProfile?.profileStatus ?? 'developing',
+        womb,
+        updatedAt: cloneTime(currentTime),
+        source: privateProfile?.source ?? 'writeback'
+      }
+    }
+  };
 }
 
 function withWomb(actor: Actor, womb: ActorAdultPrivateWombProfile): Actor {
@@ -180,14 +223,32 @@ function appendWombRecord(
   womb: ActorAdultPrivateWombProfile,
   record: ActorAdultPrivateWombProfile['records'][number]
 ): ActorAdultPrivateWombProfile['records'] {
-  return [...womb.records.map((item) => ({ ...item })), record].slice(-MAX_WOMB_RECORDS);
+  return [
+    ...womb.records.map((item) => ({
+      ...item,
+      paternityCandidates: item.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    })),
+    {
+      ...record,
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    }
+  ].slice(-MAX_WOMB_RECORDS);
 }
 
 function appendHistory(
   womb: ActorAdultPrivateWombProfile,
   record: ActorPregnancyHistoryRecord
 ): ActorPregnancyHistoryRecord[] {
-  return [...(womb.pregnancyHistory ?? []).map((item) => ({ ...item })), record].slice(-MAX_PREGNANCY_HISTORY);
+  return [
+    ...(womb.pregnancyHistory ?? []).map((item) => ({
+      ...item,
+      paternityCandidates: item.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    })),
+    {
+      ...record,
+      paternityCandidates: record.paternityCandidates?.map((candidate) => ({ ...candidate }))
+    }
+  ].slice(-MAX_PREGNANCY_HISTORY);
 }
 
 function ageBaseChancePercent(age: number): number {
@@ -221,31 +282,107 @@ function chancePercentFor(actor: Actor, currentTime: GameTime, mode: Exclude<Pre
   );
 }
 
-function createPaternityCandidate(
-  patch: PregnancyRiskPatchInput,
+function normalizePaternityCandidate(
+  candidate: {
+    actorId?: string;
+    name?: string;
+    visibility?: Visibility;
+  },
   playerActorId: string
 ): ActorPregnancyPaternityCandidate | undefined {
-  const actorId = patch.fatherActorId?.trim();
-  const name = patch.fatherName?.trim();
+  const actorId = candidate.actorId?.trim();
+  const name = candidate.name?.trim();
   if (!actorId && !name) return undefined;
   return {
     ...(actorId ? { actorId } : {}),
     ...(name ? { name } : {}),
-    visibility: patch.fatherVisibility ?? (actorId === playerActorId ? 'player_known' : 'hidden')
+    visibility: candidate.visibility ?? (actorId === playerActorId ? 'player_known' : 'hidden')
   };
+}
+
+function createPaternityCandidates(
+  patch: PregnancyRiskPatchInput,
+  playerActorId: string
+): ActorPregnancyPaternityCandidate[] {
+  const explicitCandidates = (patch.paternityCandidates ?? [])
+    .map((candidate) => normalizePaternityCandidate(candidate, playerActorId))
+    .filter((candidate): candidate is ActorPregnancyPaternityCandidate => Boolean(candidate));
+  const legacyCandidate = normalizePaternityCandidate(
+    {
+      actorId: patch.fatherActorId,
+      name: patch.fatherName,
+      visibility: patch.fatherVisibility
+    },
+    playerActorId
+  );
+  return mergePaternityCandidates([], legacyCandidate ? [...explicitCandidates, legacyCandidate] : explicitCandidates);
 }
 
 function mergePaternityCandidates(
   existing: ActorPregnancyPaternityCandidate[],
-  candidate: ActorPregnancyPaternityCandidate | undefined
+  additions: ActorPregnancyPaternityCandidate[]
 ): ActorPregnancyPaternityCandidate[] {
-  if (!candidate) return existing.map((item) => ({ ...item }));
-  const key = `${candidate.actorId ?? ''}|${candidate.name ?? ''}`;
   const candidates = new Map<string, ActorPregnancyPaternityCandidate>(
     existing.map((item) => [`${item.actorId ?? ''}|${item.name ?? ''}`, { ...item }] as const)
   );
-  candidates.set(key, candidate);
+  for (const candidate of additions) {
+    const key = `${candidate.actorId ?? ''}|${candidate.name ?? ''}`;
+    candidates.set(key, { ...candidate });
+  }
   return [...candidates.values()].slice(-4);
+}
+
+function createPregnancyOpportunity(
+  actor: Actor,
+  currentTime: GameTime,
+  worldpackId: string,
+  playerActorId: string,
+  mode: Exclude<PregnancyMode, 'off'>,
+  patch: PregnancyRiskPatchInput
+): ActorPregnancyState {
+  const dateKey = formatDate(currentTime).replaceAll('-', '');
+  const seed = `${worldpackId}|${actor.actorId}|${dateKey}|pregnancy`;
+  const checkOffsetDays = 21 + (stableHash(`${worldpackId}|${actor.actorId}|pregnancy-check-delay`) % 10);
+  const candidates = createPaternityCandidates(patch, playerActorId);
+  return {
+    pregnancyId: `preg_${compactId(actor.actorId)}_${dateKey}_${stableHash(seed).toString(36)}`,
+    status: 'pending_check',
+    registeredAt: cloneTime(currentTime),
+    checkDueAt: shiftDays(currentTime, checkOffsetDays),
+    confirmationDueAt: shiftDays(currentTime, CONFIRMATION_DAY),
+    deliveryWindowAt: shiftDays(currentTime, DELIVERY_WINDOW_DAY),
+    dueAt: shiftDays(currentTime, DUE_DAY),
+    deliveryDeadlineAt: shiftDays(currentTime, DELIVERY_DEADLINE_DAY),
+    chancePercent: chancePercentFor(actor, currentTime, mode, patch.riskType),
+    rollPercent: stableRollPercent(`${seed}|roll`),
+    riskTypes: [patch.riskType],
+    riskSummaries: compactText([patch.summary], MAX_RISK_SUMMARIES),
+    paternityCandidates: candidates
+  };
+}
+
+function mergePregnancyOpportunity(
+  pregnancy: ActorPregnancyState,
+  actor: Actor,
+  currentTime: GameTime,
+  playerActorId: string,
+  mode: Exclude<PregnancyMode, 'off'>,
+  patch: PregnancyRiskPatchInput
+): ActorPregnancyState {
+  const addedChance = chancePercentFor(actor, currentTime, mode, patch.riskType) * 0.35;
+  return {
+    ...clonePregnancy(pregnancy),
+    chancePercent: Math.min(
+      MAX_CHANCE_PERCENT,
+      Math.round((pregnancy.chancePercent + addedChance) * 100) / 100
+    ),
+    riskTypes: unique([...pregnancy.riskTypes, patch.riskType]),
+    riskSummaries: compactText([...pregnancy.riskSummaries, patch.summary], MAX_RISK_SUMMARIES),
+    paternityCandidates: mergePaternityCandidates(
+      pregnancy.paternityCandidates,
+      createPaternityCandidates(patch, playerActorId)
+    )
+  };
 }
 
 function diagnostic(index: number, area: 'risk' | 'resolution', code: string, message: string): StoryDiagnosticIssue {
@@ -258,8 +395,17 @@ function diagnostic(index: number, area: 'risk' | 'resolution', code: string, me
 
 function advanceActorPregnancy(actor: Actor, currentTime: GameTime): Actor {
   const sourceWomb = actor.femaleProfile?.adultPrivateProfile?.womb;
-  if (!sourceWomb?.pregnancy) return actor;
+  if (!sourceWomb) return actor;
+  if (!sourceWomb.pregnancy && !(sourceWomb.pendingPregnancyChecks?.length ?? 0)) return actor;
   let womb = cloneWomb(sourceWomb);
+  if (!womb.pregnancy && womb.pendingPregnancyChecks?.length) {
+    const [nextPregnancy, ...remainingChecks] = womb.pendingPregnancyChecks;
+    womb = {
+      ...womb,
+      pregnancy: clonePregnancy(nextPregnancy),
+      pendingPregnancyChecks: remainingChecks.length ? remainingChecks.map(clonePregnancy) : undefined
+    };
+  }
   let pregnancy = womb.pregnancy;
   if (!pregnancy) return actor;
 
@@ -268,33 +414,41 @@ function advanceActorPregnancy(actor: Actor, currentTime: GameTime): Actor {
       womb = {
         ...womb,
         status: '未受孕',
-        pregnancy: undefined
+        pregnancy: undefined,
+        pendingPregnancyChecks: undefined
       };
       return withWomb(actor, womb);
     }
     return actor;
   }
 
-  if (pregnancy.status === 'pending_check' && isAtOrAfter(currentTime, pregnancy.checkDueAt)) {
+  while (pregnancy.status === 'pending_check' && isAtOrAfter(currentTime, pregnancy.checkDueAt)) {
     const successful = pregnancy.rollPercent < pregnancy.chancePercent;
     const checkedAt = cloneTime(pregnancy.checkDueAt);
     if (!successful) {
+      const [nextPregnancy, ...remainingChecks] = womb.pendingPregnancyChecks ?? [];
       womb = {
         ...womb,
-        status: '未受孕',
-        pregnancy: undefined,
+        status: nextPregnancy ? '待验孕' : '未受孕',
+        pregnancy: nextPregnancy ? clonePregnancy(nextPregnancy) : undefined,
+        pendingPregnancyChecks: remainingChecks.length ? remainingChecks.map(clonePregnancy) : undefined,
         lastPregnancyCheck: {
           checkedAt,
           result: 'negative',
-          cooldownUntil: shiftDays(checkedAt, NEGATIVE_CHECK_COOLDOWN_DAYS)
+          cooldownUntil: cloneTime(checkedAt)
         },
         records: appendWombRecord(womb, {
           date: formatDate(checkedAt),
           description: '按期验孕，结果为阴性。',
-          pregnancyCheckDate: formatDate(checkedAt)
+          pregnancyCheckDate: formatDate(checkedAt),
+          pregnancyId: pregnancy.pregnancyId,
+          pregnancyCheckResult: 'negative',
+          paternityCandidates: pregnancy.paternityCandidates
         })
       };
-      return withWomb(actor, womb);
+      pregnancy = womb.pregnancy;
+      if (!pregnancy) return withWomb(actor, womb);
+      continue;
     }
 
     pregnancy = {
@@ -306,17 +460,22 @@ function advanceActorPregnancy(actor: Actor, currentTime: GameTime): Actor {
       ...womb,
       status: '疑似怀孕',
       pregnancy,
+      pendingPregnancyChecks: undefined,
       lastPregnancyCheck: {
         checkedAt,
         result: 'positive',
-        cooldownUntil: shiftDays(checkedAt, NEGATIVE_CHECK_COOLDOWN_DAYS)
+        cooldownUntil: cloneTime(checkedAt)
       },
       records: appendWombRecord(womb, {
         date: formatDate(checkedAt),
         description: '按期验孕，结果为阳性，进入观察确认阶段。',
-        pregnancyCheckDate: formatDate(checkedAt)
+        pregnancyCheckDate: formatDate(checkedAt),
+        pregnancyId: pregnancy.pregnancyId,
+        pregnancyCheckResult: 'positive',
+        paternityCandidates: pregnancy.paternityCandidates
       })
     };
+    break;
   }
 
   pregnancy = womb.pregnancy;
@@ -498,7 +657,8 @@ function completeLiveBirth(
     outcome: 'live_birth',
     summary,
     childActorId,
-    ...(father ? { fatherActorId: father.actorId } : {})
+    ...(father ? { fatherActorId: father.actorId } : {}),
+    paternityCandidates: pregnancy.paternityCandidates
   };
   const nextWomb: ActorAdultPrivateWombProfile = {
     ...womb,
@@ -507,7 +667,9 @@ function completeLiveBirth(
     pregnancyHistory: appendHistory(womb, historyRecord),
     records: appendWombRecord(womb, {
       date: formatDate(currentTime),
-      description: summary
+      description: summary,
+      pregnancyId: pregnancy.pregnancyId,
+      paternityCandidates: pregnancy.paternityCandidates
     })
   };
   nextActors[mother.actorId] = withWomb(
@@ -552,11 +714,37 @@ function endPregnancy(actor: Actor, currentTime: GameTime, summary: string): Act
       startedAt: cloneTime(pregnancy.registeredAt),
       endedAt: cloneTime(currentTime),
       outcome: 'pregnancy_ended',
-      summary
+      summary,
+      paternityCandidates: pregnancy.paternityCandidates
     }),
     records: appendWombRecord(womb, {
       date: formatDate(currentTime),
-      description: summary
+      description: summary,
+      pregnancyId: pregnancy.pregnancyId,
+      paternityCandidates: pregnancy.paternityCandidates
+    })
+  });
+}
+
+function confirmPregnancy(actor: Actor, currentTime: GameTime, summary: string): Actor {
+  const sourceWomb = actor.femaleProfile?.adultPrivateProfile?.womb;
+  const pregnancy = sourceWomb?.pregnancy;
+  if (!sourceWomb || !pregnancy || pregnancy.status !== 'suspected') return actor;
+  const womb = cloneWomb(sourceWomb);
+  return withWomb(actor, {
+    ...womb,
+    status: '已确认怀孕',
+    pregnancy: {
+      ...pregnancy,
+      status: 'confirmed',
+      confirmedAt: cloneTime(currentTime)
+    },
+    records: appendWombRecord(womb, {
+      date: formatDate(currentTime),
+      description: summary,
+      pregnancyId: pregnancy.pregnancyId,
+      pregnancyCheckResult: 'positive',
+      paternityCandidates: pregnancy.paternityCandidates
     })
   });
 }
@@ -572,70 +760,89 @@ function applyRiskPatch(
   if (mode === 'off') {
     return { actors, code: 'pregnancy_feature_disabled', error: '怀孕机制已关闭，本回合风险事件未登记。' };
   }
-  const actor = actors[patch.actorId];
-  if (!actor) return { actors, code: 'pregnancy_actor_missing', error: `人物 "${patch.actorId}" 不存在，风险事件未登记。` };
+  const storedActor = actors[patch.actorId];
+  if (!storedActor) return { actors, code: 'pregnancy_actor_missing', error: `人物 "${patch.actorId}" 不存在，风险事件未登记。` };
+  const actor = ensurePregnancyTrackingActor(storedActor, currentTime);
+  if (!actor) {
+    return {
+      actors,
+      code: 'pregnancy_actor_ineligible',
+      error: `人物 "${patch.actorId}" 不是已确认成年的女性，风险事件未登记。`
+    };
+  }
   const sourceWomb = getEligibleWomb(actor, currentTime);
   if (!sourceWomb) {
     return {
       actors,
       code: 'pregnancy_actor_ineligible',
-      error: `人物 "${patch.actorId}" 不是已确认成年的女性香闺秘档对象，风险事件未登记。`
+      error: `人物 "${patch.actorId}" 无法建立妊娠跟踪，风险事件未登记。`
     };
   }
   if (sourceWomb.pregnancy && sourceWomb.pregnancy.status !== 'pending_check') {
-    return { actors, code: 'pregnancy_already_active', error: `人物 "${patch.actorId}" 已处于孕期或产后阶段，新的风险事件未登记。` };
-  }
-  if (
-    !sourceWomb.pregnancy &&
-    sourceWomb.lastPregnancyCheck?.result === 'negative' &&
-    !isAtOrAfter(currentTime, sourceWomb.lastPregnancyCheck.cooldownUntil)
-  ) {
-    return { actors, code: 'pregnancy_check_cooldown', error: `人物 "${patch.actorId}" 仍在最近一次阴性验孕后的冷却期。` };
-  }
-
-  const womb = cloneWomb(sourceWomb);
-  const candidate = createPaternityCandidate(patch, playerActorId);
-  if (womb.pregnancy?.status === 'pending_check') {
-    const addedChance = chancePercentFor(actor, currentTime, mode, patch.riskType) * 0.35;
-    const pregnancy: ActorPregnancyState = {
-      ...clonePregnancy(womb.pregnancy),
-      chancePercent: Math.min(MAX_CHANCE_PERCENT, Math.round((womb.pregnancy.chancePercent + addedChance) * 100) / 100),
-      riskTypes: unique([...womb.pregnancy.riskTypes, patch.riskType]),
-      riskSummaries: compactText([...womb.pregnancy.riskSummaries, patch.summary], MAX_RISK_SUMMARIES),
-      paternityCandidates: mergePaternityCandidates(womb.pregnancy.paternityCandidates, candidate)
-    };
+    const womb = cloneWomb(sourceWomb);
     const nextWomb: ActorAdultPrivateWombProfile = {
       ...womb,
-      status: '待验孕',
-      pregnancy,
       records: appendWombRecord(womb, {
         date: formatDate(currentTime),
         description: patch.summary,
-        pregnancyCheckDate: formatDate(pregnancy.checkDueAt)
+        paternityCandidates: createPaternityCandidates(patch, playerActorId)
       })
     };
     return { actors: { ...actors, [actor.actorId]: withWomb(actor, nextWomb) } };
   }
 
-  const dateKey = formatDate(currentTime).replaceAll('-', '');
-  const seed = `${worldpackId}|${actor.actorId}|${dateKey}|pregnancy`;
-  const checkOffsetDays = 21 + (stableHash(`${seed}|check`) % 10);
-  const pregnancyId = `preg_${compactId(actor.actorId)}_${dateKey}_${stableHash(seed).toString(36)}`;
-  const pregnancy: ActorPregnancyState = {
-    pregnancyId,
-    status: 'pending_check',
-    registeredAt: cloneTime(currentTime),
-    checkDueAt: shiftDays(currentTime, checkOffsetDays),
-    confirmationDueAt: shiftDays(currentTime, CONFIRMATION_DAY),
-    deliveryWindowAt: shiftDays(currentTime, DELIVERY_WINDOW_DAY),
-    dueAt: shiftDays(currentTime, DUE_DAY),
-    deliveryDeadlineAt: shiftDays(currentTime, DELIVERY_DEADLINE_DAY),
-    chancePercent: chancePercentFor(actor, currentTime, mode, patch.riskType),
-    rollPercent: stableRollPercent(`${seed}|roll`),
-    riskTypes: [patch.riskType],
-    riskSummaries: compactText([patch.summary], MAX_RISK_SUMMARIES),
-    paternityCandidates: candidate ? [candidate] : []
-  };
+  let womb = cloneWomb(sourceWomb);
+  if (!womb.pregnancy && womb.pendingPregnancyChecks?.length) {
+    const [nextPregnancy, ...remainingChecks] = womb.pendingPregnancyChecks;
+    womb = {
+      ...womb,
+      pregnancy: clonePregnancy(nextPregnancy),
+      pendingPregnancyChecks: remainingChecks.length ? remainingChecks.map(clonePregnancy) : undefined
+    };
+  }
+  if (womb.pregnancy?.status === 'pending_check') {
+    const currentPregnancy = womb.pregnancy;
+    const queuedPregnancies = womb.pendingPregnancyChecks ?? [];
+    const queuedIndex = queuedPregnancies.findIndex((item) => isSameGameDay(item.registeredAt, currentTime));
+    const pregnancy = isSameGameDay(currentPregnancy.registeredAt, currentTime)
+      ? mergePregnancyOpportunity(currentPregnancy, actor, currentTime, playerActorId, mode, patch)
+      : currentPregnancy;
+    const pendingPregnancyChecks =
+      queuedIndex >= 0
+        ? queuedPregnancies.map((item, index) =>
+            index === queuedIndex
+              ? mergePregnancyOpportunity(item, actor, currentTime, playerActorId, mode, patch)
+              : clonePregnancy(item)
+          )
+        : isSameGameDay(currentPregnancy.registeredAt, currentTime)
+          ? queuedPregnancies.map(clonePregnancy)
+          : [
+              ...queuedPregnancies.map(clonePregnancy),
+              createPregnancyOpportunity(actor, currentTime, worldpackId, playerActorId, mode, patch)
+            ];
+    const recordedPregnancy =
+      isSameGameDay(currentPregnancy.registeredAt, currentTime)
+        ? pregnancy
+        : queuedIndex >= 0
+          ? pendingPregnancyChecks[queuedIndex]
+          : pendingPregnancyChecks[pendingPregnancyChecks.length - 1];
+    const nextWomb: ActorAdultPrivateWombProfile = {
+      ...womb,
+      status: '待验孕',
+      pregnancy,
+      pendingPregnancyChecks: pendingPregnancyChecks.length ? pendingPregnancyChecks : undefined,
+      records: appendWombRecord(womb, {
+        date: formatDate(currentTime),
+        description: patch.summary,
+        pregnancyCheckDate: formatDate(recordedPregnancy.checkDueAt),
+        pregnancyId: recordedPregnancy.pregnancyId,
+        paternityCandidates: recordedPregnancy.paternityCandidates
+      })
+    };
+    return { actors: { ...actors, [actor.actorId]: withWomb(actor, nextWomb) } };
+  }
+
+  const pregnancy = createPregnancyOpportunity(actor, currentTime, worldpackId, playerActorId, mode, patch);
   const nextWomb: ActorAdultPrivateWombProfile = {
     ...womb,
     status: '待验孕',
@@ -643,7 +850,9 @@ function applyRiskPatch(
     records: appendWombRecord(womb, {
       date: formatDate(currentTime),
       description: patch.summary,
-      pregnancyCheckDate: formatDate(pregnancy.checkDueAt)
+      pregnancyCheckDate: formatDate(pregnancy.checkDueAt),
+      pregnancyId: pregnancy.pregnancyId,
+      paternityCandidates: pregnancy.paternityCandidates
     })
   };
   return { actors: { ...actors, [actor.actorId]: withWomb(actor, nextWomb) } };
@@ -655,7 +864,8 @@ export function applyPregnancyLifecycle(input: ApplyPregnancyLifecycleInput): Ap
   const diagnostics: StoryDiagnosticIssue[] = [];
 
   for (const actor of Object.values(actors)) {
-    const advanced = advanceActorPregnancy(actor, input.currentTime);
+    const settled = settleTransientCervixStatus(actor, input.currentTime);
+    const advanced = advanceActorPregnancy(settled, input.currentTime);
     if (advanced !== actor) actors[actor.actorId] = advanced;
   }
 
@@ -676,6 +886,18 @@ export function applyPregnancyLifecycle(input: ApplyPregnancyLifecycleInput): Ap
         continue;
       }
       actors[actor.actorId] = endPregnancy(actor, input.currentTime, patch.summary);
+      continue;
+    }
+    if (patch.outcome === 'pregnancy_confirmed') {
+      if (pregnancy.status === 'pending_check') {
+        diagnostics.push(
+          diagnostic(index, 'resolution', 'pregnancy_confirmation_too_early', `人物 "${patch.actorId}" 尚未取得阳性验孕结果，不能确认妊娠。`)
+        );
+        continue;
+      }
+      if (pregnancy.status === 'suspected') {
+        actors[actor.actorId] = confirmPregnancy(actor, input.currentTime, patch.summary);
+      }
       continue;
     }
     if (!isAtOrAfter(input.currentTime, pregnancy.deliveryWindowAt)) {

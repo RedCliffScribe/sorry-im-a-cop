@@ -13,6 +13,9 @@ import {
   upsertApiProfile
 } from '../../domain/settings/settingsOperations';
 import type { AiSettings, ApiInterfaceType, ApiProfile } from '../../domain/settings/types';
+import {
+  DEFAULT_API_MAX_TOKENS
+} from '../../domain/narrator/narratorLimits';
 import { ModelRecommendation } from './ModelRecommendation';
 
 interface ApiConfigPanelProps {
@@ -36,7 +39,7 @@ const emptyForm: ApiFormState = {
   baseUrl: '',
   apiKey: '',
   modelsText: '',
-  maxTokens: '8192',
+  maxTokens: String(DEFAULT_API_MAX_TOKENS),
   temperature: ''
 };
 
@@ -51,8 +54,24 @@ const interfaceTypeOptions: Array<{ value: ApiInterfaceType; label: string }> = 
   label: getApiCapabilities(value).label
 }));
 
-function createProfileId(name: string) {
-  return `api_${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_') || Date.now()}`;
+function createProfileId(name: string, existingProfiles: ApiProfile[]) {
+  const nameSlug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const baseId = `api_${nameSlug || 'profile'}`;
+  const existingIds = new Set(existingProfiles.map((profile) => profile.id));
+
+  if (!existingIds.has(baseId)) {
+    return baseId;
+  }
+
+  let suffix = 2;
+  while (existingIds.has(`${baseId}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseId}_${suffix}`;
 }
 
 function getInterfaceTypeLabel(interfaceType: ApiInterfaceType | undefined) {
@@ -66,7 +85,7 @@ function formFromProfile(profile: ApiProfile): ApiFormState {
     baseUrl: profile.baseUrl,
     apiKey: profile.apiKey,
     modelsText: profile.models.join(', '),
-    maxTokens: String(profile.defaultMaxTokens ?? 8192),
+    maxTokens: String(profile.defaultMaxTokens ?? DEFAULT_API_MAX_TOKENS),
     temperature: profile.defaultTemperature === undefined ? '' : String(profile.defaultTemperature)
   };
 }
@@ -106,6 +125,19 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
       : ''
   );
   const [mainModel, setMainModel] = useState(settings.mainNarrator?.model ?? '');
+  const [mainMaxTokensMode, setMainMaxTokensMode] = useState<'inherit' | 'custom'>(
+    settings.mainNarrator?.maxTokensMode ??
+      (settings.mainNarrator?.maxTokens === undefined ? 'inherit' : 'custom')
+  );
+  const [mainMaxTokens, setMainMaxTokens] = useState(
+    String(
+      settings.mainNarrator?.maxTokens ??
+        settings.apiProfiles.find(
+          (profile) => profile.id === settings.mainNarrator?.apiProfileId
+        )?.defaultMaxTokens ??
+        DEFAULT_API_MAX_TOKENS
+    )
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isFetchingMainModels, setIsFetchingMainModels] = useState(false);
@@ -115,6 +147,10 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
     [mainProfileName, settings.apiProfiles]
   );
   const formSupportsNarration = supportsMainNarration(form.interfaceType);
+  const effectiveMainMaxTokens =
+    mainMaxTokensMode === 'custom'
+      ? Number(mainMaxTokens) || DEFAULT_API_MAX_TOKENS
+      : (selectedMainProfile?.defaultMaxTokens ?? DEFAULT_API_MAX_TOKENS);
 
   const editingProfile = useMemo(
     () => settings.apiProfiles.find((profile) => profile.id === editingProfileId) ?? null,
@@ -141,6 +177,17 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
       : null;
     setMainProfileName(nextMainProfile?.name ?? '');
     setMainModel(nextSettings.mainNarrator?.model ?? '');
+    setMainMaxTokensMode(
+      nextSettings.mainNarrator?.maxTokensMode ??
+        (nextSettings.mainNarrator?.maxTokens === undefined ? 'inherit' : 'custom')
+    );
+    setMainMaxTokens(
+      String(
+        nextSettings.mainNarrator?.maxTokens ??
+          nextMainProfile?.defaultMaxTokens ??
+          DEFAULT_API_MAX_TOKENS
+      )
+    );
   }
 
   function handleSelectProfile(profile: ApiProfile) {
@@ -152,7 +199,7 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
   function handleSaveProfile() {
     const now = new Date().toISOString();
     const profile: ApiProfile = {
-      id: editingProfile?.id ?? createProfileId(form.name),
+      id: editingProfile?.id ?? createProfileId(form.name, settings.apiProfiles),
       name: form.name.trim(),
       providerLabel: getInterfaceTypeLabel(form.interfaceType),
       interfaceType: form.interfaceType,
@@ -161,6 +208,10 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
       models: parseModels(form.modelsText),
       defaultMaxTokens: Number(form.maxTokens) || undefined,
       defaultTemperature: form.temperature === '' ? undefined : Number(form.temperature),
+      capabilities: editingProfile?.capabilities ?? {
+        jsonObjectResponseFormat: 'auto',
+        streamingJson: 'auto'
+      },
       createdAt: editingProfile?.createdAt ?? now,
       updatedAt: now
     };
@@ -288,7 +339,11 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
           ? {
               apiProfileId: selectedMainProfile.id,
               model: mainModel,
-              maxTokens: selectedMainProfile.defaultMaxTokens,
+              maxTokensMode: mainMaxTokensMode,
+              maxTokens:
+                mainMaxTokensMode === 'custom'
+                  ? Number(mainMaxTokens) || DEFAULT_API_MAX_TOKENS
+                  : undefined,
               temperature: selectedMainProfile.defaultTemperature
             }
           : null
@@ -433,7 +488,7 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
                   aria-label="最大输出 Token"
                   value={form.maxTokens}
                   onChange={(event) => updateForm({ maxTokens: event.target.value })}
-                  placeholder="留空按 8192 或模型默认"
+                  placeholder="留空按 32768 或服务商默认"
                 />
               </div>
               <label>
@@ -513,6 +568,39 @@ export function ApiConfigPanel({ settings, onChange }: ApiConfigPanelProps) {
                 <button type="button" disabled={isFetchingMainModels || !selectedMainProfile} onClick={handleFetchMainModels}>
                   {isFetchingMainModels ? '获取中' : '获取模型'}
                 </button>
+              </div>
+              <div className="span-2 api-main-token-settings">
+                <h4>主剧情最大输出</h4>
+                <div className="token-preset-row" role="group" aria-label="主剧情最大输出来源">
+                  <button
+                    type="button"
+                    className={mainMaxTokensMode === 'inherit' ? 'active' : ''}
+                    onClick={() => setMainMaxTokensMode('inherit')}
+                  >
+                    继承 API 档案
+                  </button>
+                  <button
+                    type="button"
+                    className={mainMaxTokensMode === 'custom' ? 'active' : ''}
+                    onClick={() => setMainMaxTokensMode('custom')}
+                  >
+                    自定义线路值
+                  </button>
+                </div>
+                {mainMaxTokensMode === 'custom' ? (
+                  <input
+                    aria-label="主剧情自定义最大输出 Token"
+                    inputMode="numeric"
+                    value={mainMaxTokens}
+                    onChange={(event) => setMainMaxTokens(event.target.value)}
+                  />
+                ) : null}
+                  <p className="field-note">
+                    普通回合有效最大输出：{effectiveMainMaxTokens.toLocaleString()}。主剧情最大输出是本线路的请求上限。
+                  </p>
+                  <p className="field-note">
+                    新开局会按人物、正文和运行态拆分请求，各主阶段使用不超过线路上限的独立预算。局部修复会继承本线路的最大输出上限，避免固定 4K 导致复杂修复被截断；这只是允许上限，实际输出量以接口返回为准。
+                  </p>
               </div>
               <button type="button" onClick={handleSaveMain}>
                 保存主剧情模型
