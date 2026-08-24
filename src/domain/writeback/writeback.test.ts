@@ -4,8 +4,10 @@ import { createActorDefaults } from '../runtime/actorFactory';
 import { applyManualActorProfileEdit, createManualActorProfileDraft } from '../runtime/manualActorProfile';
 import { PLAYER_POLICE_SALARY_CASHFLOW_ID } from '../finance/playerSalaryCashflow';
 import { recoverCaseWritebackIntents } from '../cases/caseWritebackIntent';
+import { findFixedActorIdentityDescriptors } from '../identity/fixedActorIdentityGuard';
 import { applyNarratorResponse } from './applyWriteback';
 import { validateNarratorResponse as validateNarratorResponseStrict } from './validateWriteback';
+import { collectUnresolvedPartialWritebackDiagnostics } from './writebackDiagnostics';
 
 function validateNarratorResponse(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -19,6 +21,239 @@ function validateNarratorResponse(value: unknown) {
 }
 
 describe('writeback protocol', () => {
+  it('preserves an existing actor interaction score when the model proposes an unexplained decrease', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_qiu_shuk_zhen = createActorDefaults({
+      actorId: 'npc_qiu_shuk_zhen',
+      name: '邱淑贞',
+      currentIdentity: 'civilian',
+      interactionScore: 48,
+      relationshipSummary: '已经与玩家建立持续合作和信任。',
+      presence: 'present',
+      visibility: 'player_known'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '双方继续愉快商谈合约，邱淑贞对玩家的安排更加放心。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_qiu_shuk_zhen',
+            interactionScore: 12,
+            relationshipSummary: '双方继续推进合作，信任更加稳定。'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+    const diagnostics = next.storyLog.at(-1)?.writebackDiagnostics ?? [];
+
+    expect(next.actors.npc_qiu_shuk_zhen.interactionScore).toBe(48);
+    expect(next.actors.npc_qiu_shuk_zhen.relationshipSummary).toBe('双方继续推进合作，信任更加稳定。');
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'actorPatches', 0, 'interactionScore'],
+        code: 'actor_interaction_score_decrease_preserved',
+        message: expect.stringContaining('48 -> 12')
+      })
+    );
+    expect(collectUnresolvedPartialWritebackDiagnostics(diagnostics)).toEqual([]);
+  });
+
+  it('accepts a higher interaction score for an existing actor after further contact', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_returning_contact = createActorDefaults({
+      actorId: 'npc_returning_contact',
+      name: '持续往来的联系人',
+      currentIdentity: 'civilian',
+      interactionScore: 48,
+      presence: 'present',
+      visibility: 'player_known'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '双方完成新的共同事务，往来和牵连进一步加深。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_returning_contact',
+            interactionScore: 55
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_returning_contact.interactionScore).toBe(55);
+    expect(
+      next.storyLog.at(-1)?.writebackDiagnostics?.some(
+        (issue) => issue.code === 'actor_interaction_score_decrease_preserved'
+      )
+    ).not.toBe(true);
+  });
+
+  it('does not teleport an existing remote actor into the visible scene without a location anchor', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_remote_contact = createActorDefaults({
+      actorId: 'npc_remote_contact',
+      name: '远场联系人',
+      currentIdentity: 'civilian',
+      currentPlaceId: 'place_remote_district',
+      presence: 'mentioned',
+      visibility: 'player_known',
+      statusSummary: '仍在外区办事。'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '玩家想起远场联系人仍在外区办事。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_remote_contact',
+            presence: 'present',
+            statusSummary: '已经回复了玩家的留言。'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_remote_contact).toMatchObject({
+      presence: 'mentioned',
+      currentPlaceId: 'place_remote_district',
+      statusSummary: '已经回复了玩家的留言。'
+    });
+    expect(next.scenes[state.location.currentSceneId!].presentActorIds).not.toContain('npc_remote_contact');
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        path: ['writeback', 'actorPatches', 0, 'presence'],
+        code: 'actor_present_requires_location_anchor'
+      })
+    );
+  });
+
+  it('allows an existing remote actor to enter when the patch anchors the actor to the current scene', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_arriving_contact = createActorDefaults({
+      actorId: 'npc_arriving_contact',
+      name: '赶来现场的联系人',
+      currentIdentity: 'civilian',
+      currentPlaceId: 'place_remote_district',
+      presence: 'mentioned',
+      visibility: 'player_known'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '联系人推门进入当前房间。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_arriving_contact',
+            presence: 'present',
+            currentPlaceId: state.location.currentPlaceId,
+            currentSceneId: state.location.currentSceneId
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_arriving_contact).toMatchObject({
+      presence: 'present',
+      currentPlaceId: state.location.currentPlaceId,
+      currentSceneId: state.location.currentSceneId
+    });
+    expect(next.scenes[state.location.currentSceneId!].presentActorIds).toContain('npc_arriving_contact');
+    expect(
+      (next.storyLog.at(-1)?.writebackDiagnostics ?? []).some(
+        (issue) => issue.code === 'actor_present_requires_location_anchor'
+      )
+    ).toBe(false);
+  });
+
+  it('allows a nearby actor already anchored to the current place to enter the visible scene', () => {
+    const state = createInitialRuntimeState();
+    state.actors.npc_nearby_contact = createActorDefaults({
+      actorId: 'npc_nearby_contact',
+      name: '门外同事',
+      currentIdentity: 'police',
+      currentPlaceId: state.location.currentPlaceId,
+      presence: 'nearby',
+      visibility: 'player_known'
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '门外同事走进当前房间。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_nearby_contact',
+            presence: 'present'
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_nearby_contact).toMatchObject({
+      presence: 'present',
+      currentPlaceId: state.location.currentPlaceId,
+      currentSceneId: state.location.currentSceneId
+    });
+  });
+
+  it('drops cross-person fixed actor patches and memories without failing the turn', () => {
+    const state = createInitialRuntimeState();
+    const zhou = findFixedActorIdentityDescriptors('周慧敏')[0]!;
+    state.actors[zhou.runtimeActorId] = createActorDefaults({
+      actorId: zhou.runtimeActorId,
+      name: zhou.displayName,
+      englishName: zhou.englishName,
+      aliases: [...zhou.aliases],
+      currentIdentity: 'civilian',
+      publicIdentity: zhou.publicIdentity,
+      actualIdentitySummary: zhou.actualIdentitySummary,
+      profileSummary: zhou.profileSummary,
+      statusSummary: '正在电台完成节目。',
+      stableIdentityRef: zhou.ref
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '周慧敏继续完成电台节目。',
+      writeback: {
+        actorPatches: [{
+          actorId: zhou.runtimeActorId,
+          name: '周慧敏',
+          englishName: 'Vivian Chow',
+          aliases: ['叶玉卿', 'Veronica Yip', '叶子楣', 'Amy Yip'],
+          profileSummary: '模型把数位艺人错误融合成同一人物。',
+          statusSummary: '错误覆盖。'
+        }],
+        actorMemories: [{
+          actorId: zhou.runtimeActorId,
+          actorName: '叶玉卿',
+          text: '叶玉卿刚刚被玩家帮回了钱包。',
+          visibility: 'player_known'
+        }]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors[zhou.runtimeActorId]).toMatchObject({
+      name: '周慧敏',
+      englishName: 'Vivian Chow',
+      profileSummary: zhou.profileSummary,
+      statusSummary: '正在电台完成节目。'
+    });
+    expect(Object.values(next.memories).some((memory) => memory.text.includes('帮回了钱包'))).toBe(false);
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'actor_fixed_identity_conflict' }),
+        expect.objectContaining({ code: 'actor_memory_identity_conflict' })
+      ])
+    );
+  });
+
   it('preserves player-corrected stable actor fields while allowing dynamic actor updates', () => {
     let state = createInitialRuntimeState();
     state.actors.npc_manual_profile = createActorDefaults({
@@ -1964,6 +2199,95 @@ describe('writeback protocol', () => {
     expect(next.relationshipThreads.rel_uncle_wah.milestones[0]?.summary).toContain('旺角茶餐厅');
   });
 
+  it('keeps a relationship out of runtime when its NPC archive is missing', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '一名尚未建档的联系人向玩家作出承诺。',
+      writeback: {
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_orphan_contact',
+            kind: 'network',
+            title: '尚未建档的联系人',
+            summary: '这条关系必须等待对应人物建档成功后再写入。',
+            relatedActorIds: ['npc_orphan_contact'],
+            primaryActorId: 'npc_orphan_contact',
+            relationshipRole: '联系人',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'current_turn',
+                refId: 'current_turn',
+                summary: '本回合明确形成承诺。'
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.relationshipThreads.rel_orphan_contact).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'relationship_missing_actor_rejected',
+        path: ['writeback', 'relationshipThreadPatches', 0]
+      })
+    );
+  });
+
+  it('atomically creates a new actor archive and its relationship in the same writeback', () => {
+    const state = createInitialRuntimeState();
+    const response = validateNarratorResponse({
+      narrativeText: '茶档老板娘王婶正式认识了玩家，并答应继续留意街坊消息。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: 'npc_atomic_auntie_wong',
+            name: '王婶',
+            gender: 'female',
+            computedAge: 52,
+            currentIdentity: 'civilian',
+            publicIdentity: '茶档老板娘',
+            presence: 'present',
+            visibility: 'player_known',
+            importance: 65
+          }
+        ],
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_atomic_auntie_wong',
+            kind: 'network',
+            title: '王婶这条街坊线',
+            summary: '王婶愿意替玩家留意街坊消息。',
+            relatedActorIds: ['npc_atomic_auntie_wong'],
+            primaryActorId: 'npc_atomic_auntie_wong',
+            relationshipRole: '街坊联系人',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'current_turn',
+                refId: 'current_turn',
+                summary: '王婶本回合明确答应继续提供消息。'
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors.npc_atomic_auntie_wong?.name).toBe('王婶');
+    expect(next.relationshipThreads.rel_atomic_auntie_wong?.primaryActorId).toBe('npc_atomic_auntie_wong');
+    expect(
+      next.storyLog.at(-1)?.writebackDiagnostics?.some(
+        (issue) => issue.code === 'relationship_missing_actor_rejected'
+      )
+    ).not.toBe(true);
+  });
+
   it('does not infer a fate thread from female profile prose without an explicit relationship writeback', () => {
     const state = createInitialRuntimeState();
     state.actors.npc_girlfriend = createActorDefaults({
@@ -3301,6 +3625,146 @@ describe('writeback protocol', () => {
     );
   });
 
+  it('recovers an uninstantiated mismatched seed id through agreeing exact names and remaps dependent data', () => {
+    const state = createInitialRuntimeState();
+    const incorrectActorId = 'npc_seed_fig_hk_ent_q715330';
+    const canonicalActorId = 'npc_seed_fig_hk_ent_q838209';
+    const response = validateNarratorResponse({
+      narrativeText: '玩家在电视台后台正式认识邱淑贞，并约定日后保持联系。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: incorrectActorId,
+            name: '邱淑贞',
+            englishName: 'Chingmy Yau',
+            gender: 'female',
+            computedAge: 20,
+            currentIdentity: 'civilian',
+            publicIdentity: '香港演艺圈新人',
+            presence: 'present',
+            visibility: 'player_known',
+            importance: 72
+          }
+        ],
+        actorMemories: [
+          {
+            actorId: incorrectActorId,
+            actorName: '邱淑贞',
+            text: '邱淑贞记得玩家在电视台后台提供过帮助。',
+            importance: 55,
+            visibility: 'player_known'
+          }
+        ],
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_chingmy_yau_contact',
+            kind: 'network',
+            title: '电视台后台的联系',
+            summary: '邱淑贞愿意和玩家保持联系。',
+            relatedActorIds: ['player', incorrectActorId],
+            primaryActorId: incorrectActorId,
+            relationshipRole: '演艺圈联系人',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'current_turn',
+                refId: 'current_turn',
+                summary: '本回合双方明确约定保持联系。'
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors[incorrectActorId]).toBeUndefined();
+    expect(next.actors[canonicalActorId]).toMatchObject({
+      actorId: canonicalActorId,
+      name: '邱淑贞',
+      englishName: 'Chingmy Yau'
+    });
+    expect(next.relationshipThreads.rel_chingmy_yau_contact).toMatchObject({
+      primaryActorId: canonicalActorId,
+      relatedActorIds: ['player', canonicalActorId]
+    });
+    expect(
+      Object.values(next.memories).find((memory) => memory.relatedActorIds.includes(canonicalActorId))
+    ).toMatchObject({
+      kind: 'actor'
+    });
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'seed_identity_actor_remapped',
+        path: ['writeback', 'actorPatches', 0, 'actorId']
+      })
+    );
+  });
+
+  it('does not redirect or attach a relationship when the conflicting seed actor already exists', () => {
+    const state = createInitialRuntimeState();
+    const existingIdentity = findFixedActorIdentityDescriptors('刘伟强')[0]!;
+    state.actors[existingIdentity.runtimeActorId] = createActorDefaults({
+      actorId: existingIdentity.runtimeActorId,
+      name: existingIdentity.displayName,
+      englishName: existingIdentity.englishName,
+      aliases: [...existingIdentity.aliases],
+      currentIdentity: 'civilian',
+      publicIdentity: existingIdentity.publicIdentity,
+      profileSummary: existingIdentity.profileSummary,
+      statusSummary: '正在片场筹备拍摄。',
+      stableIdentityRef: existingIdentity.ref
+    });
+    const response = validateNarratorResponse({
+      narrativeText: '模型错误地把另一位艺人的资料写到了刘伟强的稳定身份上。',
+      writeback: {
+        actorPatches: [
+          {
+            actorId: existingIdentity.runtimeActorId,
+            name: '邱淑贞',
+            englishName: 'Chingmy Yau',
+            statusSummary: '错误覆盖。'
+          }
+        ],
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_conflicting_seed_identity',
+            kind: 'network',
+            title: '错误人物关系',
+            summary: '这条关系不应绑定到刘伟强。',
+            relatedActorIds: [existingIdentity.runtimeActorId],
+            primaryActorId: existingIdentity.runtimeActorId,
+            relationshipRole: '演艺圈联系人',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'current_turn',
+                refId: 'current_turn',
+                summary: '模型声称本回合形成联系。'
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    const next = applyNarratorResponse(state, response);
+
+    expect(next.actors[existingIdentity.runtimeActorId]).toMatchObject({
+      name: '刘伟强',
+      statusSummary: '正在片场筹备拍摄。'
+    });
+    expect(next.actors.npc_seed_fig_hk_ent_q838209).toBeUndefined();
+    expect(next.relationshipThreads.rel_conflicting_seed_identity).toBeUndefined();
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'actor_fixed_identity_conflict' }),
+        expect.objectContaining({ code: 'relationship_actor_identity_conflict_rejected' })
+      ])
+    );
+  });
+
   it('remaps a city power public figure to one stable canonical actor while keeping real names', () => {
     const state = createInitialRuntimeState();
     const response = validateNarratorResponse({
@@ -4435,6 +4899,7 @@ describe('writeback protocol', () => {
       presence: 'present',
       profileSummary: 'A diner owner who knows the neighborhood.',
       recentInteractionMemory: 'She complained about night noise near the stall.',
+      interactionScore: 0,
       keyMemories: [],
       vitals: undefined
     };
@@ -4452,6 +4917,7 @@ describe('writeback protocol', () => {
       presence: 'present',
       profileSummary: 'A young man loitering near the arcade.',
       recentInteractionMemory: 'He was stopped by the player on patrol.',
+      interactionScore: 0,
       keyMemories: [],
       vitals: undefined
     };
@@ -5988,7 +6454,7 @@ describe('writeback protocol', () => {
     expect(next.scenes.scene_report_room.presentActorIds).not.toContain('npc_wah');
   });
 
-  it('inherits the current structured location when an existing actor is explicitly marked present', () => {
+  it('inherits the current scene when an existing actor is anchored to the current place and marked present', () => {
     const state = createInitialRuntimeState();
     const sceneId = state.location.currentSceneId!;
     state.actors.npc_returning_contact = createActorDefaults({
@@ -6005,6 +6471,7 @@ describe('writeback protocol', () => {
           {
             actorId: 'npc_returning_contact',
             presence: 'present',
+            currentPlaceId: state.location.currentPlaceId,
             statusSummary: '正在和玩家当面交谈。'
           }
         ]
@@ -6975,6 +7442,48 @@ describe('writeback protocol', () => {
     expect(response.writeback.pregnancyResolutionPatches).toEqual([
       expect.objectContaining({ outcome: 'pregnancy_confirmed' })
     ]);
+  });
+
+  it('normalizes unambiguous pregnancy review aliases and string-like reasons', () => {
+    const response = validateNarratorResponseStrict({
+      writebackVersion: '1.7',
+      narrativeText: '医院检查明确确认已有妊娠。',
+      turnSummary: '医生完成检查并确认阿玲怀孕。',
+      suggestedActions: ['继续听医生说明。'],
+      pregnancyLifecycleReview: {
+        changed: true,
+        events: [
+          {
+            actorId: 'npc_adult_female',
+            event: 'pregnancy-confirmed',
+            reason: { detail: '医院检查', description: '明确确认妊娠。' }
+          }
+        ],
+        reason: ['本回合发生了医学确认。']
+      },
+      writeback: {
+        pregnancyResolutionPatches: [
+          {
+            actorId: 'npc_adult_female',
+            outcome: 'pregnancy_confirmed',
+            summary: '医院检查明确确认妊娠。'
+          }
+        ]
+      }
+    });
+
+    expect(response.pregnancyLifecycleReview).toEqual({
+      changed: true,
+      events: [
+        {
+          actorId: 'npc_adult_female',
+          event: 'pregnancy_confirmed',
+          reason: '明确确认妊娠。'
+        }
+      ],
+      reason: '本回合发生了医学确认。'
+    });
+    expect(response.validationWarnings).toBeUndefined();
   });
 
   it('soft-drops a contradictory pregnancy lifecycle review without discarding valid writeback', () => {

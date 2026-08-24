@@ -1,4 +1,5 @@
 import type { Actor, RuntimeState, StoryEntry } from '../runtime/types';
+import { getStoryBlocks } from '../runtime/storyBlocks';
 import {
   confirmManualCharacterBatch,
   createBuiltInCharacterDraftExecutionConfig,
@@ -63,24 +64,61 @@ export interface AutomaticImageSubjects {
   narratorEntries: StoryEntry[];
 }
 
+function isVisibleAutomaticActor(actor: Actor, playerActorId: string): boolean {
+  return actor.actorId !== playerActorId
+    && actor.visibility !== 'hidden'
+    && actor.visibility !== 'private';
+}
+
+function isScenePresence(actor: Actor | undefined): boolean {
+  return actor?.presence === 'present' || actor?.presence === 'nearby';
+}
+
+function dialogueActorIds(entry: StoryEntry | undefined, state: RuntimeState): Set<string> {
+  if (!entry) return new Set();
+  return new Set(
+    getStoryBlocks(entry, {
+      actors: state.actors,
+      actorIdAliases: state.actorIdAliases,
+      playerActorId: state.player.actorId
+    }).flatMap((block) => block.type === 'dialogue' && block.speakerActorId
+      ? [block.speakerActorId]
+      : [])
+  );
+}
+
 export function detectAutomaticImageSubjects(previous: RuntimeState, current: RuntimeState): AutomaticImageSubjects {
   const previousActorIds = new Set(Object.keys(previous.actors));
-  const previousNarratorTextByTurnId = new Map(
+  const previousNarratorByTurnId = new Map(
     previous.storyLog
       .filter((entry) => entry.speaker === 'narrator')
-      .map((entry) => [entry.turnId, entry.text] as const)
+      .map((entry) => [entry.turnId, entry] as const)
   );
+  const narratorEntries = current.storyLog.filter((entry) =>
+    entry.speaker === 'narrator'
+    && previousNarratorByTurnId.get(entry.turnId)?.text !== entry.text
+  );
+  const actorIds = new Set<string>();
+  for (const actor of Object.values(current.actors)) {
+    if (!isVisibleAutomaticActor(actor, current.player.actorId)) continue;
+    const previousActor = previous.actors[actor.actorId];
+    if (!previousActorIds.has(actor.actorId) || (!isScenePresence(previousActor) && isScenePresence(actor))) {
+      actorIds.add(actor.actorId);
+    }
+  }
+  for (const entry of narratorEntries) {
+    const currentDialogueActorIds = dialogueActorIds(entry, current);
+    const previousDialogueActorIds = dialogueActorIds(previousNarratorByTurnId.get(entry.turnId), previous);
+    for (const actorId of currentDialogueActorIds) {
+      const actor = current.actors[actorId];
+      if (actor && isVisibleAutomaticActor(actor, current.player.actorId) && !previousDialogueActorIds.has(actorId)) {
+        actorIds.add(actorId);
+      }
+    }
+  }
   return {
-    actors: Object.values(current.actors).filter((actor) =>
-      !previousActorIds.has(actor.actorId) &&
-      actor.actorId !== current.player.actorId &&
-      actor.visibility !== 'hidden' &&
-      actor.visibility !== 'private'
-    ),
-    narratorEntries: current.storyLog.filter((entry) =>
-      entry.speaker === 'narrator'
-      && previousNarratorTextByTurnId.get(entry.turnId) !== entry.text
-    )
+    actors: Object.values(current.actors).filter((actor) => actorIds.has(actor.actorId)),
+    narratorEntries
   };
 }
 
@@ -308,9 +346,22 @@ export class ImageAutomationCoordinator {
   }
 
   private async processCharacter(saveId: string, actor: Actor, worldYear: number, purposes: CharacterVisualPurpose[]): Promise<void> {
-    const claimed = await this.claim(saveId, 'character-created', actor.actorId, 0);
-    if (!claimed.created) return;
+    const claimed = await this.claim(saveId, 'character-created', actor.actorId, 1);
     let record = claimed.record;
+    if (!claimed.created) {
+      const maxRetries = Math.max(record.maxRetries, 1);
+      const canSafelyRetryBeforeSubmission = record.status === 'blocked'
+        && record.taskIds.length === 0
+        && record.retryCount < maxRetries;
+      if (!canSafelyRetryBeforeSubmission) return;
+      record = await this.update(record, {
+        status: 'detected',
+        retryCount: record.retryCount + 1,
+        maxRetries,
+        blockerCode: undefined,
+        safeMessage: '首次人物图准备未提交到图片供应商，正在安全重试一次。'
+      });
+    }
     const controller = new AbortController();
     this.controllers.set(record.triggerId, controller);
     try {

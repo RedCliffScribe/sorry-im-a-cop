@@ -1107,19 +1107,32 @@ export function App() {
 
     const { withRuntimeDefaults } = await import('../domain/runtime/initialState');
     const auditedState = withRuntimeDefaults(record.runtimeState);
+    const { repairFixedActorIdentityIntegrity } = await import(
+      '../domain/identity/fixedActorIdentityGuard'
+    );
+    const identityRepair = repairFixedActorIdentityIntegrity(auditedState);
     const pendingCount = auditedState.pendingActorWritebackRecoveries?.length ?? 0;
-    if (pendingCount === 0) {
-      return '本地审计未发现当前版本可安全自动修复的人物建档缺口；未调用主剧情 API，也没有改动存档。';
+    const identityRepairCount = identityRepair.repairedActorCount + identityRepair.repairedMemoryCount;
+    if (pendingCount === 0 && identityRepairCount === 0) {
+      return '本地审计未发现当前版本可安全自动修复的人物建档或固定身份错绑；未调用主剧情 API，也没有改动存档。';
     }
 
-    const narrator = createNarratorClientFromSettings(aiSettingsRef.current);
-    const { repairPendingActorWritebacksInSave } = await import('../domain/turn/TurnEngine');
-    const result = await repairPendingActorWritebacksInSave({
-      state: auditedState,
-      narrator,
-      promptSettings: aiSettingsRef.current.prompts
-    });
-    if (result.repairedCount === 0) {
+    let repairedState = identityRepair.state;
+    let repairedCount = 0;
+    let pendingAfter = pendingCount;
+    if (pendingCount > 0) {
+      const narrator = createNarratorClientFromSettings(aiSettingsRef.current);
+      const { repairPendingActorWritebacksInSave } = await import('../domain/turn/TurnEngine');
+      const result = await repairPendingActorWritebacksInSave({
+        state: identityRepair.state,
+        narrator,
+        promptSettings: aiSettingsRef.current.prompts
+      });
+      repairedState = result.state;
+      repairedCount = result.repairedCount;
+      pendingAfter = result.pendingAfter;
+    }
+    if (repairedCount === 0 && identityRepairCount === 0) {
       return `已审计 ${pendingCount} 项人物建档缺口，但主 LLM 本次没有返回可通过严格校验的修复；原存档未被覆盖。`;
     }
 
@@ -1135,17 +1148,20 @@ export function App() {
     const repairedRecord: RuntimeSaveRecord = {
       ...record,
       updatedAt: now,
-      playerName: result.state.player.name,
-      gameDateLabel: formatGameDateLabel(result.state),
-      turnCounter: result.state.turnCounter,
-      runtimeState: result.state
+      playerName: repairedState.player.name,
+      gameDateLabel: formatGameDateLabel(repairedState),
+      turnCounter: repairedState.turnCounter,
+      runtimeState: repairedState
     };
     await saveRepository.saveMany([backup, repairedRecord]);
     if (currentSaveIdRef.current === saveId) {
-      setState(result.state);
+      setState(repairedState);
     }
     setSaves(await saveRepository.list());
-    return `存档修复完成：本次补齐 ${result.repairedCount} 名人物，剩余 ${result.pendingAfter} 项待处理；原存档已另存为“修复前备份”。`;
+    const identitySummary = identityRepairCount > 0
+      ? `校正 ${identityRepair.repairedActorCount} 名人物固定身份、${identityRepair.repairedMemoryCount} 条确定性错投记忆`
+      : '未发现固定身份错绑';
+    return `存档修复完成：${identitySummary}；补齐 ${repairedCount} 名人物，剩余 ${pendingAfter} 项待处理；原存档已另存为“修复前备份”。`;
   }
 
   async function deleteSave(saveId: string) {

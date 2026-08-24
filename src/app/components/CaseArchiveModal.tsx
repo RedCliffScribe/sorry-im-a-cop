@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { isNpcEvolutionTrackProjectable } from '../../domain/backgroundEvolution/trackVisibility';
 import { submitAssetEvidenceToCase } from '../../domain/cases/submitEvidence';
 import { resolveCaseLeadDisplayName } from '../../domain/cases/caseLeadContract';
+import type { CaseActionIntent } from '../../domain/cases/caseActionIntent';
 import { gameTimeToEpochMinutes } from '../../domain/backgroundEvolution/time';
 import type { AssetItem, CaseEvidenceType, CaseFile, GameTime, RuntimeState } from '../../domain/runtime/types';
 
@@ -9,7 +10,7 @@ interface CaseArchiveModalProps {
   state: RuntimeState;
   onClose: () => void;
   onStateChange?: (state: RuntimeState) => void;
-  onDraftPlayerAction?: (actionText: string) => void;
+  onDraftPlayerAction?: (actionText: string, caseActionIntent?: CaseActionIntent) => void;
 }
 
 const activeStatuses = new Set<CaseFile['status']>([
@@ -97,7 +98,7 @@ function canSubmitEvidence(caseFile: CaseFile): boolean {
 }
 
 function canUseLeadActions(caseFile: CaseFile): boolean {
-  return caseFile.playerRole === 'lead';
+  return caseFile.playerRole === 'lead' && caseFile.status !== 'archived';
 }
 
 function createProsecutionAction(caseFile: CaseFile): string {
@@ -167,9 +168,10 @@ export function CaseArchiveModal({ state, onClose, onStateChange, onDraftPlayerA
     onStateChange(nextState);
   }
 
-  function draftLeadCaseAction(actionText: string) {
+  function draftLeadCaseAction(actionText: string, caseActionIntent?: CaseActionIntent) {
     if (!onDraftPlayerAction) return;
-    onDraftPlayerAction(actionText);
+    if (caseActionIntent) onDraftPlayerAction(actionText, caseActionIntent);
+    else onDraftPlayerAction(actionText);
     onClose();
   }
 
@@ -262,7 +264,10 @@ export function CaseArchiveModal({ state, onClose, onStateChange, onDraftPlayerA
                           type="button"
                           disabled={!onDraftPlayerAction}
                           title={!onDraftPlayerAction ? '下一步接入行动输入后启用' : undefined}
-                          onClick={() => draftLeadCaseAction(createArchiveAction(selectedCase))}
+                          onClick={() => draftLeadCaseAction(createArchiveAction(selectedCase), {
+                            kind: 'archive_request',
+                            caseId: selectedCase.caseId
+                          })}
                         >
                           申请归档
                         </button>

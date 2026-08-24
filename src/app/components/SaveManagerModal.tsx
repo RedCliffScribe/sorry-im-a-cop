@@ -8,7 +8,7 @@ import {
 type SaveManagerMode = 'save' | 'load';
 
 const saveRepairHelpText =
-  '只审计并修复已识别的结构缺口，使用主剧情 API 小范围补齐；成功前会自动建立备份，不会让 AI 重写整份存档。';
+  '只审计并修复已识别的结构缺口与固定人物身份错绑；确定性修复在本地完成，必要时才使用主剧情 API 小范围补齐。成功前会自动建立备份，不会让 AI 重写整份存档。';
 
 interface SaveManagerModalProps {
   mode: SaveManagerMode;
@@ -170,7 +170,7 @@ export function SaveManagerModal({
   async function handleRepairSave(saveId: string) {
     if (
       !window.confirm(
-        '存档修复只会审计明确的结构缺口，并用主剧情 API 小范围补齐；成功前会自动建立“修复前备份”。是否继续？'
+        '存档修复只会审计明确的结构缺口和固定人物身份错绑；确定性项目在本地修复，必要时才用主剧情 API 小范围补齐。成功前会自动建立“修复前备份”。是否继续？'
       )
     ) {
       return;

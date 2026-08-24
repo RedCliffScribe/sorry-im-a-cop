@@ -43,6 +43,7 @@ import {
   newsIssuePatchSchema,
   organizationPatchSchema,
   placePatchSchema,
+  policeCareerProgressPatchSchema,
   playerCivilianRoleProfilePatchSchema,
   playerPoliceRoleProfilePatchSchema,
   playerPatchSchema,
@@ -81,6 +82,7 @@ const nestedWritebackKeys = [
   'playerPatch',
   'identityContextPatch',
   'policeRoleProfilePatch',
+  'policeCareerProgressPatch',
   'civilianRoleProfilePatch',
   'secretFactPatches',
   'locationPatch',
@@ -120,6 +122,81 @@ type SafeSchema<T> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+const optionalRolePatchFields = {
+  policeRoleProfilePatch: new Set([
+    'reason',
+    'stationOrPost',
+    'department',
+    'assignmentSummary',
+    'postRole',
+    'publicIdentity',
+    'supervisorActorIds',
+    'peerActorIds',
+    'authoritySummary',
+    'accessSummary',
+    'dutySummary'
+  ]),
+  civilianRoleProfilePatch: new Set([
+    'reason',
+    'status',
+    'civilianProfileId',
+    'occupationGroupId',
+    'employmentStatusId',
+    'publicOccupation',
+    'workplacePlaceId',
+    'employerOrganizationId',
+    'employerRelationType',
+    'employerRelationSummary',
+    'workUnitSummary',
+    'positionSummary',
+    'dutySummary',
+    'decisionScopeSummary',
+    'accessSummary',
+    'sectorIds',
+    'roleTags',
+    'livelihoodActorIds',
+    'communitySummary',
+    'familyEconomicSummary',
+    'legalStatusSummary'
+  ])
+} as const;
+
+function isEmptyOptionalRolePatchValue(value: unknown): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === 'string' && value.trim().length === 0) ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function isEmptyOptionalRolePatchShell(
+  value: unknown,
+  allowedFields: ReadonlySet<string>
+): boolean {
+  if (value === null) return true;
+  if (!isRecord(value)) return false;
+
+  const entries = Object.entries(value);
+  if (entries.some(([key]) => !allowedFields.has(key))) return false;
+  return entries.every(([, fieldValue]) => isEmptyOptionalRolePatchValue(fieldValue));
+}
+
+function normalizeEmptyOptionalRolePatchShells(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.writeback)) return value;
+
+  const writeback = { ...value.writeback };
+  let changed = false;
+  for (const [key, allowedFields] of Object.entries(optionalRolePatchFields)) {
+    if (isEmptyOptionalRolePatchShell(writeback[key], allowedFields)) {
+      delete writeback[key];
+      changed = true;
+    }
+  }
+
+  return changed ? { ...value, writeback } : value;
 }
 
 function normalizeMisplacedWriteback(value: unknown): {
@@ -733,6 +810,12 @@ function sanitizeWriteback(rawWriteback: unknown, warnings: StoryDiagnosticIssue
       ['writeback', 'policeRoleProfilePatch'],
       warnings
     ),
+    policeCareerProgressPatch: parseOptional(
+      policeCareerProgressPatchSchema,
+      rawWriteback.policeCareerProgressPatch,
+      ['writeback', 'policeCareerProgressPatch'],
+      warnings
+    ),
     civilianRoleProfilePatch: parseOptional(
       playerCivilianRoleProfilePatchSchema,
       rawWriteback.civilianRoleProfilePatch,
@@ -859,13 +942,16 @@ function enforceAssetWritebackPolicy(response: NarratorResponse): NarratorRespon
 
 export function validateNarratorResponse(value: unknown): NarratorResponse {
   const normalized = normalizeMisplacedWriteback(value);
-  const rawAssetPatch = getRawAssetPatch(normalized.value);
-  const rawAssetUpsertItems = getRawAssetUpsertItems(normalized.value);
-  const rawJudgementCheckPatches = getRawJudgementCheckPatches(normalized.value);
-  const rawCombatEventPatches = getRawCombatEventPatches(normalized.value);
-  const rawCasePatches = getRawCasePatches(normalized.value);
-  const rawRelationshipThreadPatches = getRawRelationshipThreadPatches(normalized.value);
-  const strict = narratorResponseSchema.safeParse(normalized.value);
+  const valueWithoutEmptyRolePatchShells = normalizeEmptyOptionalRolePatchShells(normalized.value);
+  const rawAssetPatch = getRawAssetPatch(valueWithoutEmptyRolePatchShells);
+  const rawAssetUpsertItems = getRawAssetUpsertItems(valueWithoutEmptyRolePatchShells);
+  const rawJudgementCheckPatches = getRawJudgementCheckPatches(valueWithoutEmptyRolePatchShells);
+  const rawCombatEventPatches = getRawCombatEventPatches(valueWithoutEmptyRolePatchShells);
+  const rawCasePatches = getRawCasePatches(valueWithoutEmptyRolePatchShells);
+  const rawRelationshipThreadPatches = getRawRelationshipThreadPatches(
+    valueWithoutEmptyRolePatchShells
+  );
+  const strict = narratorResponseSchema.safeParse(valueWithoutEmptyRolePatchShells);
   if (strict.success) {
     const policyChecked = enforceAssetWritebackPolicy(
       appendValidationWarnings(strict.data, normalized.warnings)
@@ -900,7 +986,7 @@ export function validateNarratorResponse(value: unknown): NarratorResponse {
     };
   }
 
-  const envelope = responseEnvelopeSchema.safeParse(normalized.value);
+  const envelope = responseEnvelopeSchema.safeParse(valueWithoutEmptyRolePatchShells);
   if (!envelope.success) {
     throw strict.error;
   }

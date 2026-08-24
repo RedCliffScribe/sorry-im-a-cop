@@ -27,6 +27,7 @@ export type NarratorRequestPurpose =
   | 'main_turn_judgement_narrative_repair'
   | 'main_turn_actor_writeback_repair'
   | 'main_turn_case_lead_repair'
+  | 'main_turn_case_action_repair'
   | 'main_turn_json_repair'
   | 'save_actor_writeback_repair'
   | 'auxiliary';

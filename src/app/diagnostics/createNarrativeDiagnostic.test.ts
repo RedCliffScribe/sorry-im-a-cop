@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialRuntimeState } from '../../domain/runtime/initialState';
+import {
+  createInitialRuntimeState,
+  withRuntimeDefaults
+} from '../../domain/runtime/initialState';
+import { POLICE_PROMOTION_DLC_ID } from '../../domain/police/policePromotionRules';
 import { createNarrativeDiagnostic } from './createNarrativeDiagnostic';
 
 describe('createNarrativeDiagnostic', () => {
@@ -1313,6 +1317,30 @@ describe('createNarrativeDiagnostic', () => {
     expect(diagnostic).toContain('模型重复返回当前天气，本地保留原天气截止时间');
   });
 
+  it('exports the latest locally preserved interaction score decrease', () => {
+    const state = createInitialRuntimeState();
+    state.storyLog.push({
+      turnId: 'turn_relationship_score_0001',
+      speaker: 'narrator',
+      text: '双方继续交谈，本地保留既有往来度。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'actorPatches', 0, 'interactionScore'],
+          code: 'actor_interaction_score_decrease_preserved',
+          message: 'Actor "npc_qiu_shuk_zhen" kept its cumulative interaction score (48 -> 12 was not applied).'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 最近往来度写回诊断');
+    expect(diagnostic).toContain('turnId=turn_relationship_score_0001');
+    expect(diagnostic).toContain('code=actor_interaction_score_decrease_preserved');
+    expect(diagnostic).toContain('48 -> 12');
+  });
+
   it('exports the current player condition lifecycle and its latest review diagnostics', () => {
     const state = createInitialRuntimeState();
     state.player.vitals.conditionSummary = '整夜值守后明显疲惫。';
@@ -1346,5 +1374,51 @@ describe('createNarrativeDiagnostic', () => {
     expect(diagnostic).toContain('## 最近玩家状态复核诊断');
     expect(diagnostic).toContain('turnId=turn_vitals_0001');
     expect(diagnostic).toContain('code=player_vitals_lifecycle_review_applied');
+  });
+
+  it('exports bounded structured police promotion state and recent gate diagnostics', () => {
+    const base = createInitialRuntimeState();
+    const state = withRuntimeDefaults({
+      ...base,
+      world: {
+        ...base.world,
+        officialDlcBindings: [
+          {
+            dlcId: POLICE_PROMOTION_DLC_ID,
+            version: '0.1.0',
+            status: 'active'
+          }
+        ]
+      }
+    });
+    const program = state.policePanel.careerPath.promotionProgress!;
+    state.policePanel.careerPath.promotionProgress = {
+      ...program,
+      processStage: 'exam_or_course',
+      processedEventIds: ['career-exam-1'],
+      lastProgressTurnId: 'turn_career_1'
+    };
+    state.storyLog.push({
+      turnId: 'turn_career_1',
+      speaker: 'narrator',
+      text: '晋升考试记录已经进入本地程序。',
+      gameTime: state.time,
+      writebackDiagnostics: [
+        {
+          path: ['writeback', 'policeCareerProgressPatch'],
+          code: 'police_promotion_stage_rejected',
+          message: '不允许跨阶段推进。'
+        }
+      ]
+    });
+
+    const diagnostic = createNarrativeDiagnostic({ state });
+
+    expect(diagnostic).toContain('## 警队晋升与调动程序诊断');
+    expect(diagnostic).toContain('bindingStatus=active');
+    expect(diagnostic).toContain('promotion route=hk1988_pc_to_sgt');
+    expect(diagnostic).toContain('stage=exam_or_course');
+    expect(diagnostic).toContain('processedEventIds=career-exam-1');
+    expect(diagnostic).toContain('code=police_promotion_stage_rejected');
   });
 });

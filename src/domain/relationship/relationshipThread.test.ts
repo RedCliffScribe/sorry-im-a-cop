@@ -194,6 +194,47 @@ describe('relationship thread domain', () => {
 
     expect(result.thread).toBeUndefined();
     expect(result.diagnostics[0]).toContain('requires kind, title');
+    expect(result.rejectionCode).toBe('incomplete_creation');
+  });
+
+  it('rejects a new relationship until every referenced NPC has an actor archive', () => {
+    const result = applyRelationshipThreadPatch(
+      {},
+      {
+        threadId: 'rel_missing_actor',
+        kind: 'network',
+        title: '尚未建档的联系人',
+        summary: '正文提及了这名联系人，但人物档案尚未合法建立。',
+        relatedActorIds: ['player', 'npc_missing'],
+        primaryActorId: 'npc_missing',
+        relationshipRole: '联系人'
+      },
+      time,
+      {}
+    );
+
+    expect(result.thread).toBeUndefined();
+    expect(result.rejectionCode).toBe('missing_actor');
+    expect(result.missingActorIds).toEqual(['npc_missing']);
+    expect(result.diagnostics[0]).toContain('actor archive is missing');
+  });
+
+  it('updates an existing relationship without admitting a new missing actor reference', () => {
+    const existing = createThread();
+    const result = applyRelationshipThreadPatch(
+      { rel_lam: existing },
+      {
+        threadId: 'rel_lam',
+        summary: '林长旺继续向玩家提供工作照应。',
+        relatedActorIds: ['npc_missing']
+      },
+      { ...time, minute: 55 },
+      { npc_lam: createActor('npc_lam', '林长旺') }
+    );
+
+    expect(result.thread?.summary).toContain('继续向玩家提供工作照应');
+    expect(result.thread?.relatedActorIds).toEqual(['npc_lam']);
+    expect(result.diagnostics).toEqual([expect.stringContaining('ignored missing actor references')]);
   });
 
   it('builds remote heartbeat candidates without projecting hidden or present threads', () => {

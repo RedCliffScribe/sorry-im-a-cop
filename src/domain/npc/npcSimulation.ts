@@ -195,29 +195,84 @@ export function parseNpcSimulationPackage(value: unknown): NpcSimulationPackage 
   };
 }
 
+interface NpcSimulationRouteCandidate {
+  actorId: string;
+  actorName: string;
+}
+
+interface ConstrainedNpcSimulationPackage {
+  package: NpcSimulationPackage;
+  diagnostics: StoryDiagnosticIssue[];
+}
+
+function resolveAdviceForRoute(
+  advice: NpcSimulationAdvice,
+  candidates: NpcSimulationRouteCandidate[]
+): NpcSimulationAdvice | null {
+  const candidate = advice.actorId
+    ? candidates.find((item) => item.actorId === advice.actorId)
+    : (() => {
+        const actorName = advice.actorName?.trim();
+        if (!actorName) return undefined;
+        const matches = candidates.filter((item) => item.actorName === actorName);
+        return matches.length === 1 ? matches[0] : undefined;
+      })();
+
+  if (!candidate) return null;
+  return {
+    ...advice,
+    actorId: candidate.actorId,
+    actorName: candidate.actorName
+  };
+}
+
 function constrainNpcSimulationPackage(
   simulationPackage: NpcSimulationPackage,
   context: PromptContext,
   foregroundContract?: ForegroundContract
-): NpcSimulationPackage {
+): ConstrainedNpcSimulationPackage {
   const allowedActorIds = foregroundContract
     ? new Set(foregroundContract.allowedActorIds)
     : undefined;
-  const actorIdByName = new Map(
-    context.actorPackets.map((actor) => [actor.name, actor.actorId])
-  );
-  const isAllowed = (advice: NpcSimulationAdvice): boolean => {
-    if (!allowedActorIds) return true;
-    if (advice.actorId) return allowedActorIds.has(advice.actorId);
-    const resolvedActorId = advice.actorName
-      ? actorIdByName.get(advice.actorName)
-      : undefined;
-    return Boolean(resolvedActorId && allowedActorIds.has(resolvedActorId));
+  const diagnostics: StoryDiagnosticIssue[] = [];
+  const constrainRoute = (
+    route: 'presentReactions' | 'remotePresence',
+    adviceList: NpcSimulationAdvice[],
+    candidates: NpcSimulationRouteCandidate[]
+  ): NpcSimulationAdvice[] => {
+    const accepted: NpcSimulationAdvice[] = [];
+    for (const [index, advice] of adviceList.entries()) {
+      const resolved = resolveAdviceForRoute(advice, candidates);
+      if (!resolved) {
+        diagnostics.push({
+          path: ['npcSimulation', route, index],
+          code: 'npc_simulation_presence_route_mismatch',
+          message: `NPC simulation ${route} advice for ${advice.actorId ?? advice.actorName ?? 'unknown actor'} was ignored because it did not match the deterministic ${route === 'presentReactions' ? 'present-scene' : 'remote'} projection.`
+        });
+        continue;
+      }
+      if (allowedActorIds && !allowedActorIds.has(resolved.actorId!)) continue;
+      accepted.push(resolved);
+      if (accepted.length >= 1) break;
+    }
+    return accepted;
   };
+
   return {
-    presentReactions: simulationPackage.presentReactions.filter(isAllowed).slice(0, 1),
-    remotePresence: simulationPackage.remotePresence.filter(isAllowed).slice(0, 1),
-    notes: simulationPackage.notes.slice(0, 2)
+    package: {
+      presentReactions: constrainRoute(
+        'presentReactions',
+        simulationPackage.presentReactions,
+        context.presentActorReactionProjection.candidates
+      ),
+      remotePresence: constrainRoute(
+        'remotePresence',
+        simulationPackage.remotePresence,
+        context.remoteNpcPresenceProjection.candidates
+      ),
+      notes: simulationPackage.notes.slice(0, 2)
+    },
+    diagnostics
   };
 }
 
@@ -238,17 +293,19 @@ export async function runNpcSimulation({
       foregroundContract
     );
     const rawPackage = await client.complete(prompt);
-    const parsedPackage = constrainNpcSimulationPackage(
+    const constrainedPackage = constrainNpcSimulationPackage(
       parseNpcSimulationPackage(rawPackage),
       context,
       foregroundContract
     );
+    const parsedPackage = constrainedPackage.package;
     const suggestionCount = parsedPackage.presentReactions.length + parsedPackage.remotePresence.length;
     const memoryProjection = selectNpcSimulationMemoryProjection(context);
 
     if (suggestionCount === 0 && parsedPackage.notes.length === 0) {
       return {
         diagnostics: [
+          ...constrainedPackage.diagnostics,
           {
             path: ['npcSimulation'],
             code: 'npc_simulation_api_empty',
@@ -261,11 +318,12 @@ export async function runNpcSimulation({
     return {
       package: parsedPackage,
       diagnostics: [
-          {
-            path: ['npcSimulation'],
-            code: 'npc_simulation_api_applied',
-            message: `NPC simulation API supplied ${suggestionCount} suggestion(s) from ${memoryProjection.entries.length} routed memory item(s): ${memoryProjection.diagnostics.selectedMemoryIds.join(',') || 'none'}.`
-          }
+        ...constrainedPackage.diagnostics,
+        {
+          path: ['npcSimulation'],
+          code: 'npc_simulation_api_applied',
+          message: `NPC simulation API supplied ${suggestionCount} suggestion(s) from ${memoryProjection.entries.length} routed memory item(s): ${memoryProjection.diagnostics.selectedMemoryIds.join(',') || 'none'}.`
+        }
       ]
     };
   } catch (error) {

@@ -23,6 +23,14 @@ export interface OfficialDlcPresentation {
   contentHighlights?: readonly string[];
 }
 
+export interface OfficialDlcExistingSaveAttachment {
+  /**
+   * The extension starts from the save's current game time. It must not infer
+   * or recreate historical events that happened before attachment.
+   */
+  mode: 'forward_only';
+}
+
 export interface OfficialDlcManifest {
   dlcId: string;
   title: string;
@@ -32,6 +40,8 @@ export interface OfficialDlcManifest {
   worldCompatibility: OfficialDlcWorldCompatibility[];
   /** Player-facing catalog metadata kept separate from execution contracts. */
   presentation?: OfficialDlcPresentation;
+  /** Explicit product capability. Omitted manifests are never offered to old saves. */
+  existingSaveAttachment?: OfficialDlcExistingSaveAttachment;
   dramaIntegration?: {
     enabled: boolean;
     priority: DlcPriority;

@@ -5,6 +5,7 @@ import {
   urbanLegendsFormalV1_1Manifest,
   urbanLegendsFormalV1Manifest
 } from './urbanLegends/content';
+import { policePromotionManifest } from './policePromotion/content';
 import { getWorldpackAdaptationDescriptor } from '../worldpack/adaptationRegistry';
 
 /**
@@ -14,7 +15,8 @@ import { getWorldpackAdaptationDescriptor } from '../worldpack/adaptationRegistr
  * Formal packages are added only after their release gate is complete.
  */
 export const officialDlcManifests: readonly OfficialDlcManifest[] = [
-  urbanLegendsFormalManifest
+  urbanLegendsFormalManifest,
+  policePromotionManifest
 ];
 
 /**
@@ -26,7 +28,8 @@ export const officialDlcRuntimeManifests: readonly OfficialDlcManifest[] = [
   urbanLegendsAlphaManifest,
   urbanLegendsFormalV1Manifest,
   urbanLegendsFormalV1_1Manifest,
-  urbanLegendsFormalManifest
+  urbanLegendsFormalManifest,
+  policePromotionManifest
 ];
 
 export function getOfficialDlcManifest(dlcId: string): OfficialDlcManifest | undefined {

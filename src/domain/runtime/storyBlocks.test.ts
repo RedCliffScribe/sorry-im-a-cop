@@ -156,7 +156,7 @@ describe('story blocks', () => {
     });
   });
 
-  it('returns persisted blocks as the authoritative derived representation', () => {
+  it('keeps persisted blocks authoritative when no actor context is available', () => {
     const state = createInitialRuntimeState();
     const blocks = [{
       type: 'dialogue' as const,
@@ -172,5 +172,61 @@ describe('story blocks', () => {
       blocks
     };
     expect(getStoryBlocks(entry)).toBe(blocks);
+  });
+
+  it('reconnects a persisted first-encounter dialogue block after the actor profile arrives', () => {
+    const state = createInitialRuntimeState();
+    const actor = Object.values(state.actors)[0];
+    actor.name = '温碧霞';
+    const entry = {
+      turnId: 'turn_first_encounter',
+      speaker: 'narrator' as const,
+      text: '【温碧霞】你终于来了。',
+      gameTime: state.time,
+      blocks: [{
+        type: 'dialogue' as const,
+        speakerLabel: '温碧霞',
+        text: '你终于来了。',
+        emotion: 'happy' as const
+      }]
+    };
+
+    const resolved = getStoryBlocks(entry, { actors: state.actors });
+
+    expect(resolved).toEqual([{
+      ...entry.blocks[0],
+      speakerActorId: actor.actorId
+    }]);
+    expect(entry.blocks[0]).not.toHaveProperty('speakerActorId');
+  });
+
+  it('preserves a valid persisted actor id and canonicalizes an obsolete alias', () => {
+    const state = createInitialRuntimeState();
+    const actor = Object.values(state.actors)[0];
+    actor.name = '改名后的角色';
+    const validEntry = {
+      turnId: 'turn_valid_frozen_actor',
+      speaker: 'narrator' as const,
+      text: '【旧称】原话。',
+      gameTime: state.time,
+      blocks: [{
+        type: 'dialogue' as const,
+        speakerLabel: '旧称',
+        speakerActorId: actor.actorId,
+        text: '原话。',
+        emotion: 'serious' as const
+      }]
+    };
+    expect(getStoryBlocks(validEntry, { actors: state.actors })[0]).toBe(validEntry.blocks[0]);
+
+    const aliasEntry = {
+      ...validEntry,
+      turnId: 'turn_obsolete_actor_alias',
+      blocks: [{ ...validEntry.blocks[0], speakerActorId: 'npc_obsolete' }]
+    };
+    expect(getStoryBlocks(aliasEntry, {
+      actors: state.actors,
+      actorIdAliases: { npc_obsolete: actor.actorId }
+    })[0]).toMatchObject({ speakerActorId: actor.actorId });
   });
 });

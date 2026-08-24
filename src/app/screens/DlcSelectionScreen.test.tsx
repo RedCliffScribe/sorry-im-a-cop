@@ -17,7 +17,7 @@ const mixedCompatibilityManifest: OfficialDlcManifest = {
 };
 
 describe('DlcSelectionScreen', () => {
-  it('publishes the formal DLC unselected and keeps Alpha out of new-game selection', () => {
+  it('publishes released narrative and system DLCs unselected and keeps Alpha hidden', () => {
     const onContinue = vi.fn();
     render(
       <DlcSelectionScreen
@@ -30,8 +30,27 @@ describe('DlcSelectionScreen', () => {
     expect(screen.getByRole('checkbox', { name: '将都市怪谈加入本局' })).not.toBeChecked();
     expect(screen.queryByText('都市怪谈 Alpha')).not.toBeInTheDocument();
     expect(screen.getByText('都市怪谈')).toBeInTheDocument();
+    expect(screen.getByText('警队晋升')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '将警队晋升加入本局' })).not.toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
     expect(onContinue).toHaveBeenCalledWith([]);
+  });
+
+  it('adds the system DLC only after an explicit player choice', () => {
+    const onContinue = vi.fn();
+    render(
+      <DlcSelectionScreen
+        worldpackId="hk_1988"
+        onBack={vi.fn()}
+        onContinue={onContinue}
+      />
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: '将警队晋升加入本局' });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
+    expect(onContinue).toHaveBeenCalledWith(['police_promotion']);
   });
 
   it('defaults released DLCs to unselected and submits only an explicit choice', () => {

@@ -11,6 +11,7 @@ import { createActorDefaults } from '../runtime/actorFactory';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import type { GameTime, RuntimeState } from '../runtime/types';
 import { createDefaultAiSettings } from '../settings/defaultSettings';
+import { collectUnresolvedPartialWritebackDiagnostics } from '../writeback/writebackDiagnostics';
 import type { JudgementRecoveryTrace } from '../conflict/judgementRecoveryTrace';
 import { addGameHours } from '../backgroundEvolution/time';
 import type { CustomCharacterRevision } from '../customContent/assetTypes';
@@ -322,6 +323,42 @@ class MinimumIncompleteAuntieNarratorClient implements NarratorClient {
       writeback: {
         ...base.writeback,
         actorPatches: [{ actorId: 'npc_shopkeeper_auntie_wong', name: '王婶' }]
+      }
+    };
+  }
+}
+
+class MinimumIncompleteAuntieWithRelationshipNarratorClient implements NarratorClient {
+  async complete(prompt: string, options?: NarratorStreamOptions): Promise<unknown> {
+    const base = (await new MinimumIncompleteAuntieNarratorClient().complete(prompt, options)) as {
+      narrativeText: string;
+      turnSummary: string;
+      suggestedActions: string[];
+      writeback: Record<string, unknown>;
+    };
+    return {
+      ...base,
+      writeback: {
+        ...base.writeback,
+        relationshipThreadPatches: [
+          {
+            threadId: 'rel_auntie_wong_recovery',
+            kind: 'network',
+            title: '王婶这条街坊线',
+            summary: '王婶答应继续替玩家留意可疑车辆。',
+            relatedActorIds: ['player', 'npc_shopkeeper_auntie_wong'],
+            primaryActorId: 'npc_shopkeeper_auntie_wong',
+            relationshipRole: '街坊联系人',
+            creationBasis: 'debt_or_promise',
+            evidenceRefs: [
+              {
+                kind: 'current_turn',
+                refId: 'current_turn',
+                summary: '王婶本回合明确答应继续替玩家留意可疑车辆。'
+              }
+            ]
+          }
+        ]
       }
     };
   }
@@ -3084,7 +3121,7 @@ describe('turn engine', () => {
     expect(remaining?.missingFields).not.toContain('recentInteractionMemory');
   });
 
-  it('fails open when identity review is unavailable and keeps a valid original actor patch', async () => {
+  it('does not call identity review when no anchored existing actor can be a merge target', async () => {
     const state = createInitialRuntimeState();
     state.actors.npc_unrelated_shopkeeper = createActorDefaults({
       actorId: 'npc_unrelated_shopkeeper',
@@ -3101,10 +3138,10 @@ describe('turn engine', () => {
       writebackRepair: repair
     });
 
-    expect(repair.calls).toBe(1);
+    expect(repair.calls).toBe(0);
     expect(next.actors.npc_shopkeeper_auntie_wong?.name).toBe('王婶');
     expect(next.pendingActorWritebackRecoveries).toHaveLength(0);
-    expect(next.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
+    expect(next.storyLog.at(-1)?.writebackDiagnostics).not.toContainEqual(
       expect.objectContaining({ code: 'writeback_repair_failed' })
     );
   });
@@ -3204,6 +3241,42 @@ describe('turn engine', () => {
     expect(recovered.storyLog.at(-1)?.writebackDiagnostics).toContainEqual(
       expect.objectContaining({ code: 'actor_writeback_recovery_applied' })
     );
+  });
+
+  it('restores a player relationship only after its queued NPC archive is repaired', async () => {
+    const repair = new DelayedActorIdentityReviewNarratorClient(1);
+    const deferred = await runPlayerTurn({
+      state: createInitialRuntimeState(),
+      playerInput: '先听王婶说完，再确认她的人物资料。',
+      narrator: new MinimumIncompleteAuntieWithRelationshipNarratorClient(),
+      writebackRepair: repair
+    });
+
+    expect(deferred.actors.npc_shopkeeper_auntie_wong).toBeUndefined();
+    expect(deferred.relationshipThreads.rel_auntie_wong_recovery).toBeUndefined();
+    expect(deferred.pendingActorWritebackRecoveries).toHaveLength(1);
+
+    const waiting = await runPlayerTurn({
+      state: deferred,
+      playerInput: '继续整理街坊证词。',
+      narrator: new QuietNarratorClient(),
+      writebackRepair: repair
+    });
+    expect(waiting.relationshipThreads.rel_auntie_wong_recovery).toBeUndefined();
+
+    const recovered = await runPlayerTurn({
+      state: waiting,
+      playerInput: '补全王婶的建档资料。',
+      narrator: new QuietNarratorClient(),
+      writebackRepair: repair
+    });
+
+    expect(recovered.actors.npc_shopkeeper_auntie_wong?.name).toBe('王婶');
+    expect(recovered.relationshipThreads.rel_auntie_wong_recovery).toMatchObject({
+      primaryActorId: 'npc_shopkeeper_auntie_wong',
+      relatedActorIds: ['player', 'npc_shopkeeper_auntie_wong']
+    });
+    expect(recovered.pendingActorWritebackRecoveries).toHaveLength(0);
   });
 
   it('directly recovers a minimum-valid actor from recent raw story history without another API repair', async () => {
@@ -4868,7 +4941,11 @@ describe('turn engine', () => {
         pregnancyLifecycleReview: {
           changed: true,
           events: [
-            { actorId, event: 'pregnancy_confirmed', reason: '医院检查明确确认妊娠。' }
+            {
+              actorId,
+              event: 'medical_confirmation',
+              reason: { detail: '医院检查明确确认妊娠。' }
+            }
           ],
           reason: '本回合发生医学确认。'
         },
@@ -4895,6 +4972,42 @@ describe('turn engine', () => {
       }
     };
 
+    const incompleteRepair = new CombinedWritebackRepairNarratorClient({
+      pregnancyLifecycle: {
+        pregnancyLifecycleReview: {
+          changed: true,
+          events: [
+            { actorId, event: 'pregnancy_confirmed', reason: '医院检查明确确认妊娠。' }
+          ],
+          reason: '本回合发生医学确认。'
+        },
+        pregnancyRiskPatches: [],
+        pregnancyResolutionPatches: []
+      }
+    });
+    const incomplete = await runPlayerTurn({
+      state,
+      playerInput: '陪阿玲完成检查。',
+      narrator: confirmationNarrator,
+      writebackRepair: incompleteRepair
+    });
+    const incompleteDiagnostics = incomplete.storyLog.at(-1)?.writebackDiagnostics ?? [];
+
+    expect(incomplete.actors[actorId].femaleProfile?.adultPrivateProfile?.womb?.pregnancy?.status).toBe(
+      'suspected'
+    );
+    expect(incompleteDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'pregnancy_lifecycle_repair_missing_patch' })
+      ])
+    );
+    expect(incompleteDiagnostics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'pregnancy_lifecycle_repair_applied' })
+      ])
+    );
+    expect(collectUnresolvedPartialWritebackDiagnostics(incompleteDiagnostics)).not.toEqual([]);
+
     const confirmed = await runPlayerTurn({
       state,
       playerInput: '陪阿玲完成检查。',
@@ -4905,15 +5018,20 @@ describe('turn engine', () => {
     expect(confirmationRepair.calls).toBe(1);
     expect(confirmationRepair.prompt).toContain('pregnancyLifecycle');
     expect(confirmationRepair.prompt).toContain('pregnancyLifecycleReview');
+    expect(confirmationRepair.prompt).toContain('"actorId": "knownAdultFemaleActors 中的稳定 ID"');
+    expect(confirmationRepair.prompt).toContain('reason 禁止返回数组、对象或 null');
     expect(confirmed.actors[actorId].femaleProfile?.adultPrivateProfile?.womb?.pregnancy?.status).toBe(
       'confirmed'
     );
-    expect(confirmed.storyLog.at(-1)?.writebackDiagnostics).toEqual(
+    const confirmationDiagnostics = confirmed.storyLog.at(-1)?.writebackDiagnostics ?? [];
+    expect(confirmationDiagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'pregnancy_lifecycle_repair_requested' }),
+        expect.objectContaining({ code: 'pregnancy_lifecycle_review_recovered_from_valid_patches' }),
         expect.objectContaining({ code: 'pregnancy_lifecycle_repair_applied' })
       ])
     );
+    expect(collectUnresolvedPartialWritebackDiagnostics(confirmationDiagnostics)).toEqual([]);
 
     const terminationRepair = new CombinedWritebackRepairNarratorClient({
       pregnancyLifecycle: {
@@ -6129,6 +6247,17 @@ describe('turn engine', () => {
 
   it('preloads auxiliary NPC simulation suggestions into the main narrator prompt when configured', async () => {
     const state = createInitialRuntimeState();
+    const sceneId = state.location.currentSceneId!;
+    state.actors.npc_aux = createActorDefaults({
+      actorId: 'npc_aux',
+      name: 'Aux NPC',
+      currentIdentity: 'civilian',
+      currentPlaceId: state.location.currentPlaceId,
+      currentSceneId: sceneId,
+      presence: 'present',
+      visibility: 'player_known'
+    });
+    state.scenes[sceneId].presentActorIds.push('npc_aux');
     const narrator = new CapturingNarratorClient();
     const npcSimulation = new FakeNpcSimulationClient();
 

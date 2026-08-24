@@ -197,6 +197,161 @@ describe('GameScreen right panel', () => {
     expect(rightRail).not.toHaveTextContent('保存进度');
   });
 
+  it('enters page immersive mode without remounting the active story presentation', () => {
+    render(
+      <GameScreen
+        state={createInitialRuntimeState()}
+        onStateChange={vi.fn()}
+        createNarrator={vi.fn()}
+        onSave={vi.fn()}
+        onAutoSave={vi.fn(async () => undefined)}
+        onLoad={vi.fn()}
+        onSettings={vi.fn()}
+        onHome={vi.fn()}
+      />
+    );
+
+    const storyPresentation = screen.getByRole('region', { name: '剧情呈现' });
+    const shell = storyPresentation.closest('main');
+    expect(shell).toHaveAttribute('data-immersive-mode', 'off');
+
+    fireEvent.click(screen.getByRole('button', { name: '沉浸式' }));
+    expect(screen.getByRole('dialog', { name: '进入沉浸式模式' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^页面沉浸/ }));
+
+    expect(shell).toHaveClass('game-shell--immersive');
+    expect(shell).toHaveAttribute('data-immersive-mode', 'page');
+    expect(screen.getByRole('region', { name: '剧情呈现' })).toBe(storyPresentation);
+    expect(storyPresentation).toHaveClass('story-presentation-pane--immersive');
+    expect(screen.getByLabelText('当前时间地点')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: '剧情显示模式' })).not.toBeInTheDocument();
+    expect(screen.queryByText('未启用 AVG 资源')).not.toBeInTheDocument();
+
+    const leftRail = document.getElementById('game-mobile-region-profile');
+    const rightRail = screen.getByLabelText('功能入口');
+    fireEvent.click(screen.getByRole('button', { name: '展开人物状态' }));
+    expect(leftRail).toHaveClass('game-immersive-rail--open');
+    expect(rightRail).not.toHaveClass('game-immersive-rail--open');
+
+    fireEvent.click(screen.getByRole('button', { name: '展开功能面板' }));
+    expect(leftRail).not.toHaveClass('game-immersive-rail--open');
+    expect(rightRail).toHaveClass('game-immersive-rail--open');
+
+    fireEvent.click(screen.getByRole('button', { name: '退出沉浸式模式' }));
+    expect(shell).not.toHaveClass('game-shell--immersive');
+    expect(shell).toHaveAttribute('data-immersive-mode', 'off');
+    expect(screen.getByRole('region', { name: '剧情呈现' })).toBe(storyPresentation);
+    expect(storyPresentation).not.toHaveClass('story-presentation-pane--immersive');
+    expect(screen.getByRole('group', { name: '剧情显示模式' })).toBeInTheDocument();
+  });
+
+  it('downgrades native fullscreen to page immersive when the browser exits fullscreen', async () => {
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
+    const originalRequestFullscreen = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'requestFullscreen');
+    const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, 'exitFullscreen');
+    let fullscreenElement: Element | null = null;
+    let requestedFullscreenElement: Element | null = null;
+
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => fullscreenElement
+    });
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: vi.fn(() => {
+        fullscreenElement = requestedFullscreenElement;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        return Promise.resolve();
+      })
+    });
+    Object.defineProperty(document, 'exitFullscreen', {
+      configurable: true,
+      value: vi.fn(() => {
+        fullscreenElement = null;
+        document.dispatchEvent(new Event('fullscreenchange'));
+        return Promise.resolve();
+      })
+    });
+
+    try {
+      render(
+        <GameScreen
+          state={createInitialRuntimeState()}
+          onStateChange={vi.fn()}
+          createNarrator={vi.fn()}
+          onSave={vi.fn()}
+          onAutoSave={vi.fn(async () => undefined)}
+          onLoad={vi.fn()}
+          onSettings={vi.fn()}
+          onHome={vi.fn()}
+        />
+      );
+
+      const shell = screen.getByRole('region', { name: '剧情呈现' }).closest('main');
+      requestedFullscreenElement = shell;
+      fireEvent.click(screen.getByRole('button', { name: '沉浸式' }));
+      fireEvent.click(screen.getByRole('button', { name: /全屏沉浸/ }));
+
+      await waitFor(() => expect(shell).toHaveAttribute('data-immersive-mode', 'fullscreen'));
+      expect(HTMLElement.prototype.requestFullscreen).toHaveBeenCalledTimes(1);
+
+      fullscreenElement = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+
+      await waitFor(() => expect(shell).toHaveAttribute('data-immersive-mode', 'page'));
+      expect(shell).toHaveClass('game-shell--immersive');
+      expect(screen.getByRole('button', { name: '退出沉浸式模式' })).toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: '剧情显示模式' })).not.toBeInTheDocument();
+    } finally {
+      if (originalFullscreenElement) Object.defineProperty(document, 'fullscreenElement', originalFullscreenElement);
+      else Reflect.deleteProperty(document, 'fullscreenElement');
+      if (originalRequestFullscreen) {
+        Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', originalRequestFullscreen);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'requestFullscreen');
+      }
+      if (originalExitFullscreen) Object.defineProperty(document, 'exitFullscreen', originalExitFullscreen);
+      else Reflect.deleteProperty(document, 'exitFullscreen');
+    }
+  });
+
+  it('keeps page immersive mode when the browser rejects native fullscreen', async () => {
+    const originalRequestFullscreen = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'requestFullscreen');
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: vi.fn(() => Promise.reject(new Error('fullscreen denied')))
+    });
+
+    try {
+      render(
+        <GameScreen
+          state={createInitialRuntimeState()}
+          onStateChange={vi.fn()}
+          createNarrator={vi.fn()}
+          onSave={vi.fn()}
+          onAutoSave={vi.fn(async () => undefined)}
+          onLoad={vi.fn()}
+          onSettings={vi.fn()}
+          onHome={vi.fn()}
+        />
+      );
+
+      const shell = screen.getByRole('region', { name: '剧情呈现' }).closest('main');
+      fireEvent.click(screen.getByRole('button', { name: '沉浸式' }));
+      fireEvent.click(screen.getByRole('button', { name: /全屏沉浸/ }));
+
+      await waitFor(() => expect(shell).toHaveAttribute('data-immersive-mode', 'page'));
+      expect(shell).toHaveClass('game-shell--immersive');
+      expect(await screen.findByRole('status')).toHaveTextContent('已保留页面沉浸模式');
+    } finally {
+      if (originalRequestFullscreen) {
+        Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', originalRequestFullscreen);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'requestFullscreen');
+      }
+    }
+  });
+
   it('opens the AI process trace from the brain button beside the turn counter', () => {
     render(
       <GameScreen

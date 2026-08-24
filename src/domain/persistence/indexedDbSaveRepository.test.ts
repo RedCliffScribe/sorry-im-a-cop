@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createActorDefaults } from '../runtime/actorFactory';
 import { createInitialRuntimeState } from '../runtime/initialState';
 import { IndexedDbSaveRepository } from './IndexedDbSaveRepository';
 import type { RuntimeSaveRecord } from './SaveRepository';
@@ -92,6 +93,46 @@ describe('IndexedDbSaveRepository', () => {
     expect(loaded?.runtimeState.assets.items.asset_volvo_240).toEqual(
       record.runtimeState.assets.items.asset_volvo_240
     );
+  });
+
+  it('preserves an NPC archive and its relationship together across save and load', async () => {
+    const repository = new IndexedDbSaveRepository('cop-v2-test-saves');
+    const record = createRecord('save_actor_relationship', 'Actor relationship', '2026-08-23T00:00:00.000Z');
+    record.runtimeState.actors.npc_auntie_wong = createActorDefaults({
+      actorId: 'npc_auntie_wong',
+      name: '王婶',
+      gender: 'female',
+      computedAge: 52,
+      currentIdentity: 'civilian',
+      publicIdentity: '茶档老板娘',
+      presence: 'absent',
+      visibility: 'player_known',
+      importance: 65
+    });
+    record.runtimeState.relationshipThreads.rel_auntie_wong = {
+      threadId: 'rel_auntie_wong',
+      kind: 'network',
+      title: '王婶这条街坊线',
+      summary: '王婶愿意替玩家留意街坊消息。',
+      relatedActorIds: ['player', 'npc_auntie_wong'],
+      primaryActorId: 'npc_auntie_wong',
+      relationshipRole: '街坊联系人',
+      status: 'active',
+      milestones: [],
+      visibility: 'player_known',
+      importance: 65,
+      createdAt: { ...record.runtimeState.time },
+      updatedAt: { ...record.runtimeState.time }
+    };
+
+    await repository.save(record);
+    const loaded = await repository.load(record.saveId);
+
+    expect(loaded?.runtimeState.actors.npc_auntie_wong?.name).toBe('王婶');
+    expect(loaded?.runtimeState.relationshipThreads.rel_auntie_wong).toMatchObject({
+      primaryActorId: 'npc_auntie_wong',
+      relatedActorIds: ['player', 'npc_auntie_wong']
+    });
   });
 
   it('deletes a save', async () => {

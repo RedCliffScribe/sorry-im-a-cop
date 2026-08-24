@@ -7,7 +7,22 @@ import {
   type AvgResourcePackSelection,
   type InstalledAvgResourcePackRecord
 } from '../../domain/avgResourcePack';
-import type { DisplaySettings } from '../../domain/settings/types';
+import {
+  AVG_PORTRAIT_HORIZONTAL_OFFSET_MAX,
+  AVG_PORTRAIT_HORIZONTAL_OFFSET_MIN,
+  AVG_PORTRAIT_SCALE_MAX,
+  AVG_PORTRAIT_SCALE_MIN,
+  AVG_PORTRAIT_VERTICAL_OFFSET_MAX,
+  AVG_PORTRAIT_VERTICAL_OFFSET_MIN,
+  DEFAULT_AVG_PORTRAIT_LAYOUT,
+  areAvgPortraitLayoutsEqual,
+  normalizeAvgPortraitLayout
+} from '../../domain/settings/avgPortraitLayout';
+import type {
+  AvgPortraitLayoutSettings,
+  DisplaySettings
+} from '../../domain/settings/types';
+import { avgPortraitLayoutStyle } from '../components/avg/avgPortraitLayoutStyle';
 
 const defaultManager = new AvgResourcePackManager(createDefaultAvgResourcePackStorage());
 
@@ -47,7 +62,21 @@ export function AvgResourcePackSettingsPanel({
   const [progress, setProgress] = useState<AvgResourcePackInstallProgress>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
+  const savedPortraitLayout = useMemo(
+    () => normalizeAvgPortraitLayout(displaySettings?.avgPortraitLayout),
+    [displaySettings?.avgPortraitLayout]
+  );
+  const [portraitLayoutDraft, setPortraitLayoutDraft] = useState<AvgPortraitLayoutSettings>(
+    savedPortraitLayout
+  );
+  const [layoutSaving, setLayoutSaving] = useState(false);
+  const [layoutMessage, setLayoutMessage] = useState<string>();
+  const [layoutError, setLayoutError] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setPortraitLayoutDraft(savedPortraitLayout);
+  }, [savedPortraitLayout]);
 
   const refresh = useCallback(async () => {
     const [nextRecords, nextSelection] = await Promise.all([
@@ -144,11 +173,46 @@ export function AvgResourcePackSettingsPanel({
     }
   };
 
+  const updatePortraitLayout = (
+    field: keyof AvgPortraitLayoutSettings,
+    value: number
+  ) => {
+    setPortraitLayoutDraft((current) => normalizeAvgPortraitLayout({
+      ...current,
+      [field]: value
+    }));
+    setLayoutMessage(undefined);
+    setLayoutError(undefined);
+  };
+
+  const savePortraitLayout = async () => {
+    if (!displaySettings || !onDisplaySettingsChange) return;
+    setLayoutSaving(true);
+    setLayoutMessage(undefined);
+    setLayoutError(undefined);
+    try {
+      await onDisplaySettingsChange({
+        ...displaySettings,
+        avgPortraitLayout: portraitLayoutDraft
+      });
+      setLayoutMessage('立绘大小与位置已保存。');
+    } catch (reason) {
+      setLayoutError(reason instanceof Error ? reason.message : '立绘布局保存失败。');
+    } finally {
+      setLayoutSaving(false);
+    }
+  };
+
+  const portraitLayoutChanged = !areAvgPortraitLayoutsEqual(
+    portraitLayoutDraft,
+    savedPortraitLayout
+  );
+
   return (
     <section className="settings-panel avg-resource-settings">
       <div>
-        <h2>AVG 演出资源</h2>
-        <p className="muted">香港1988 · 本地资源包与存档、玩家图片、剧情 DLC 分开保存。</p>
+        <h2>AVG 演出设置</h2>
+        <p className="muted">调整演出布局，并管理与存档、玩家图片和剧情 DLC 分开保存的本地资源包。</p>
       </div>
 
       <div className="avg-resource-summary" aria-live="polite">
@@ -178,6 +242,104 @@ export function AvgResourcePackSettingsPanel({
           </small>
         </span>
       </label>
+
+      <section className="avg-portrait-layout-settings" aria-labelledby="avg-portrait-layout-title">
+        <header>
+          <div>
+            <h3 id="avg-portrait-layout-title">人物立绘大小与位置</h3>
+            <p>拖动下方滑块实时查看示意；点击保存后应用到所有 AVG 演出。对话框位置不会改变。</p>
+          </div>
+          <button
+            type="button"
+            disabled={layoutSaving}
+            onClick={() => {
+              setPortraitLayoutDraft({ ...DEFAULT_AVG_PORTRAIT_LAYOUT });
+              setLayoutMessage(undefined);
+              setLayoutError(undefined);
+            }}
+          >
+            恢复默认
+          </button>
+        </header>
+
+        <div
+          className="avg-layout-preview-stage"
+          data-testid="avg-layout-preview-stage"
+          style={avgPortraitLayoutStyle(portraitLayoutDraft)}
+          aria-label="AVG 立绘布局示意"
+        >
+          <div className="avg-layout-preview-scene" aria-hidden="true" />
+          <div className="avg-layout-preview-portrait" aria-hidden="true">
+            <span className="avg-layout-preview-portrait-head" />
+            <span className="avg-layout-preview-portrait-body" />
+            <small>立绘</small>
+          </div>
+          <div className="avg-layout-preview-dialogue" aria-hidden="true">
+            <strong>人物名</strong>
+            <span>对话框保持固定，便于判断立绘与台词区域是否遮挡。</span>
+          </div>
+        </div>
+
+        <div className="avg-portrait-layout-controls">
+          <label>
+            <span>立绘大小 <output>{portraitLayoutDraft.scalePercent}%</output></span>
+            <input
+              type="range"
+              aria-label="立绘大小"
+              min={AVG_PORTRAIT_SCALE_MIN}
+              max={AVG_PORTRAIT_SCALE_MAX}
+              step="1"
+              value={portraitLayoutDraft.scalePercent}
+              disabled={!displaySettings || !onDisplaySettingsChange || layoutSaving}
+              onChange={(event) => updatePortraitLayout('scalePercent', Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <span>左右位置 <output>{portraitLayoutDraft.horizontalOffsetPercent > 0 ? '+' : ''}{portraitLayoutDraft.horizontalOffsetPercent}%</output></span>
+            <input
+              type="range"
+              aria-label="立绘左右位置"
+              min={AVG_PORTRAIT_HORIZONTAL_OFFSET_MIN}
+              max={AVG_PORTRAIT_HORIZONTAL_OFFSET_MAX}
+              step="1"
+              value={portraitLayoutDraft.horizontalOffsetPercent}
+              disabled={!displaySettings || !onDisplaySettingsChange || layoutSaving}
+              onChange={(event) => updatePortraitLayout('horizontalOffsetPercent', Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <span>上下位置 <output>{portraitLayoutDraft.verticalOffsetPercent > 0 ? '+' : ''}{portraitLayoutDraft.verticalOffsetPercent}%</output></span>
+            <input
+              type="range"
+              aria-label="立绘上下位置"
+              min={AVG_PORTRAIT_VERTICAL_OFFSET_MIN}
+              max={AVG_PORTRAIT_VERTICAL_OFFSET_MAX}
+              step="1"
+              value={portraitLayoutDraft.verticalOffsetPercent}
+              disabled={!displaySettings || !onDisplaySettingsChange || layoutSaving}
+              onChange={(event) => updatePortraitLayout('verticalOffsetPercent', Number(event.target.value))}
+            />
+          </label>
+        </div>
+
+        <div className="avg-portrait-layout-actions">
+          <p className="field-note">左右为负时向左、为正时向右；上下为负时向上、为正时向下。</p>
+          <button
+            type="button"
+            disabled={
+              !displaySettings ||
+              !onDisplaySettingsChange ||
+              layoutSaving ||
+              !portraitLayoutChanged
+            }
+            onClick={() => void savePortraitLayout()}
+          >
+            {layoutSaving ? '保存中…' : '保存立绘布局'}
+          </button>
+        </div>
+        {layoutMessage ? <p className="avg-resource-message" role="status">{layoutMessage}</p> : null}
+        {layoutError ? <p className="avg-resource-error" role="alert">{layoutError}</p> : null}
+      </section>
 
       {basePacks.length > 1 ? (
         <label className="avg-resource-field">

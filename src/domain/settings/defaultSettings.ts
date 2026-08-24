@@ -1,5 +1,6 @@
 import type { AiSettings } from './types';
 import { defaultDramaticContentSettings } from '../drama/settings';
+import { DEFAULT_AVG_PORTRAIT_LAYOUT } from './avgPortraitLayout';
 
 export function createDefaultAiSettings(): AiSettings {
   return {
@@ -33,6 +34,7 @@ export function createDefaultAiSettings(): AiSettings {
       uiTheme: 'dark',
       storyPresentationMode: 'auto',
       avgPlayerPortraitMode: 'hidden',
+      avgPortraitLayout: { ...DEFAULT_AVG_PORTRAIT_LAYOUT },
       interfaceFontFamily: 'readable',
       narrationFontFamily: 'system',
       dialogueFontFamily: 'system',

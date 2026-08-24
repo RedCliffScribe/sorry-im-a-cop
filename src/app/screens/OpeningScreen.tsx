@@ -651,8 +651,8 @@ export function OpeningScreen({
     useState<string>();
   const [characterTemplateStatus, setCharacterTemplateStatus] =
     useState('');
-  const attributeHoldTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const attributeHoldIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const attributeHoldTimeoutRef = useRef<number | null>(null);
+  const attributeHoldIntervalRef = useRef<number | null>(null);
 
   const selectedScenario = hk1980sOpeningScenarios.find((scenario) => scenario.id === scenarioId) ?? hk1980sOpeningScenarios[2];
   const selectedDramaticOpening = getDramaticOpeningDefinition(dramaticOpeningId);

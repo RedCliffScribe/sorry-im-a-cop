@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RuntimeSaveRecord } from '../persistence/SaveRepository';
-import { createInitialRuntimeState } from '../runtime/initialState';
+import { createInitialRuntimeState, withRuntimeDefaults } from '../runtime/initialState';
 import { selectContext } from '../context/selectContext';
 import { urbanLegendsFormalManifest } from './urbanLegends/content';
+import { policePromotionManifest } from './policePromotion/content';
 import { resolveOfficialDlcPlanning } from './planning';
 import {
   createExistingSaveDlcCandidate,
@@ -80,6 +81,133 @@ describe('existing-save official DLC attachment', () => {
       }
     }).toEqual(beforeState);
     expect(record.runtimeState).toEqual(beforeState);
+  });
+
+  it('initializes a police old save from its current game time without rewriting established facts', () => {
+    const record = createRecord();
+    record.runtimeState.lawIdentity.rank = '警员';
+    record.runtimeState.lawIdentity.department = '军装巡逻';
+    record.runtimeState.lawIdentity.stationOrPost = '旺角警署';
+    record.runtimeState.lawIdentity.assignmentSummary = '弥敦道夜更巡逻。';
+    record.runtimeState.policePanel.unitName = '旺角警署军装巡逻小队';
+    record.runtimeState.policePanel.careerPath.routeSummary = '旧档原有的职业经历摘要。';
+    record.runtimeState.player.economy.cashOnHand = 812;
+    record.runtimeState.world.officialDlcBindings = [{
+      dlcId: 'urban_legends',
+      version: '1.2.0',
+      status: 'active',
+      planningEnabled: true
+    }];
+    const beforeState = structuredClone(record.runtimeState);
+
+    expect(createExistingSaveDlcCandidate(record, policePromotionManifest).eligibility).toMatchObject({
+      eligible: true,
+      code: 'eligible'
+    });
+
+    const prepared = prepareExistingSaveDlcAttachment({
+      record,
+      manifest: policePromotionManifest,
+      backupSaveId: 'save_before_police_promotion',
+      activatedAt: '2026-08-24T14:30:00.000Z'
+    });
+    const updated = prepared.updatedRecord.runtimeState;
+
+    expect(prepared.backupRecord.runtimeState).toEqual(beforeState);
+    expect(updated.world.officialDlcBindings).toEqual([
+      beforeState.world.officialDlcBindings![0],
+      {
+        dlcId: 'police_promotion',
+        version: '1.0.0',
+        status: 'active',
+        activatedAt: '2026-08-24T14:30:00.000Z'
+      }
+    ]);
+    expect(updated.policePanel.careerPath.promotionProgress).toMatchObject({
+      routeId: 'hk1988_pc_to_sgt',
+      processStage: 'not_eligible',
+      serviceBasis: 'established_service',
+      rankEffectiveAt: beforeState.time,
+      evidence: [],
+      vacancyStatus: 'unknown'
+    });
+    expect(updated.lawIdentity).toEqual(beforeState.lawIdentity);
+    expect(updated.player).toEqual(beforeState.player);
+    expect(updated.policePanel.unitName).toBe(beforeState.policePanel.unitName);
+    expect(updated.policePanel.careerPath.routeSummary).toBe(
+      beforeState.policePanel.careerPath.routeSummary
+    );
+    expect(updated.storyLog).toEqual(beforeState.storyLog);
+    expect(record.runtimeState).toEqual(beforeState);
+  });
+
+  it('blocks unsafe police old saves instead of creating a half-bound system DLC', () => {
+    const civilian = createRecord();
+    civilian.runtimeState.player.currentIdentity = 'civilian';
+    expect(evaluateExistingSaveDlcEligibility(
+      civilian.runtimeState,
+      policePromotionManifest
+    ).code).toBe('police_identity_required');
+
+    const unknownRank = createRecord();
+    unknownRank.runtimeState.lawIdentity.rank = '临时特别调查员';
+    expect(evaluateExistingSaveDlcEligibility(
+      unknownRank.runtimeState,
+      policePromotionManifest
+    ).code).toBe('police_rank_unrecognized');
+
+    const unsupportedRank = createRecord();
+    unsupportedRank.runtimeState.lawIdentity.rank = '总督察';
+    expect(evaluateExistingSaveDlcEligibility(
+      unsupportedRank.runtimeState,
+      policePromotionManifest
+    ).code).toBe('police_promotion_route_unavailable');
+
+    const inconsistent = createRecord();
+    inconsistent.runtimeState.world.officialDlcBindings = [{
+      dlcId: 'police_promotion',
+      version: '1.0.0',
+      status: 'active'
+    }];
+    const progress = createInitialRuntimeState({
+      currentIdentity: 'police',
+      officialDlcIds: ['police_promotion']
+    }).policePanel.careerPath.promotionProgress;
+    inconsistent.runtimeState.world.officialDlcBindings = [];
+    inconsistent.runtimeState.policePanel.careerPath.promotionProgress = progress;
+    expect(evaluateExistingSaveDlcEligibility(
+      inconsistent.runtimeState,
+      policePromotionManifest
+    ).code).toBe('police_promotion_state_conflict');
+  });
+
+  it('keeps the forward-only police program stable after old-save reload normalization', () => {
+    const prepared = prepareExistingSaveDlcAttachment({
+      record: createRecord(),
+      manifest: policePromotionManifest,
+      backupSaveId: 'save_before_police_promotion',
+      activatedAt: '2026-08-24T14:30:00.000Z'
+    });
+    const beforeReload = prepared.updatedRecord.runtimeState;
+    const reloaded = withRuntimeDefaults(structuredClone(beforeReload));
+
+    expect(reloaded.world.officialDlcBindings).toEqual(beforeReload.world.officialDlcBindings);
+    expect(reloaded.policePanel.careerPath.promotionProgress).toEqual(
+      beforeReload.policePanel.careerPath.promotionProgress
+    );
+    expect(reloaded.policePanel.careerPath.promotionProgress?.rankEffectiveAt).toEqual(
+      beforeReload.time
+    );
+    expect(reloaded.policePanel.careerPath.promotionProgress?.evidence).toEqual([]);
+  });
+
+  it('does not expose attachment for a manifest that omits the capability', () => {
+    const { existingSaveAttachment: _capability, ...manifestWithoutAttachment } =
+      urbanLegendsFormalManifest;
+    expect(evaluateExistingSaveDlcEligibility(
+      createRecord().runtimeState,
+      manifestWithoutAttachment
+    ).code).toBe('existing_save_attachment_unavailable');
   });
 
   it('makes the existing save eligible for the normal official-DLC planning route after load', () => {

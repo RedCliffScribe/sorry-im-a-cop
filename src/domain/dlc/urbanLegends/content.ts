@@ -25,6 +25,9 @@ export const urbanLegendsFormalV1Manifest: OfficialDlcManifest = {
     experienceKeywords: ['城市传闻', '多身份入口', '真假难辨', '长期人物关系'],
     contentHighlights: ['完整长剧情弧：《午夜末班车》']
   },
+  existingSaveAttachment: {
+    mode: 'forward_only'
+  },
   worldCompatibility: [
     {
       worldpackId: 'hk_1988',

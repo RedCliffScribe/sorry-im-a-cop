@@ -238,11 +238,34 @@ describe('PlayerPanel', () => {
     expect(shoulderChevron).toHaveAttribute('d', 'M83 11L62 25L83 39');
     expect(card).toHaveTextContent('所属单位 / Station / Unit');
     expect(card).toHaveTextContent('旺角警署 · 军装巡逻 · 报案室值日');
-    expect(card).toHaveTextContent('值班：临近交班 · 晚更 14:00–22:45');
+    expect(card).not.toHaveTextContent('值班：临近交班');
     expect(card).not.toHaveTextContent('香港警队基层警员');
     expect(card).not.toHaveTextContent('HK$2,350');
 
+    const dutyWeek = screen.getByRole('region', { name: '未来七日值班' });
+    expect(dutyWeek).toHaveTextContent('未来七日值班');
+    expect(dutyWeek).toHaveTextContent('默认显示今天和明天 · 随游戏时间滚动更新');
+    expect(dutyWeek).toHaveTextContent('当前：1988年9月12日 星期一 晚更 14:00–22:45');
+    expect(dutyWeek.querySelectorAll('li')).toHaveLength(2);
+    expect(dutyWeek).toHaveTextContent('今天星期一晚更14:00–22:45');
+    expect(dutyWeek).toHaveTextContent('明天星期二晚更14:00–22:45');
+    expect(dutyWeek).not.toHaveTextContent('9月17日星期六轮休休班');
+
+    const dutyToggle = screen.getByRole('button', { name: '展开7天' });
+    expect(dutyToggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(dutyToggle);
+
+    expect(dutyToggle).toHaveAccessibleName('收起');
+    expect(dutyToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(dutyWeek.querySelectorAll('li')).toHaveLength(7);
+    expect(dutyWeek).toHaveTextContent('9月17日星期六轮休休班');
+
+    fireEvent.click(dutyToggle);
+    expect(dutyToggle).toHaveAccessibleName('展开7天');
+    expect(dutyWeek.querySelectorAll('li')).toHaveLength(2);
+
     const otherInfo = screen.getByRole('region', { name: '玩家其他信息' });
+    expect(dutyWeek.nextElementSibling).toBe(otherInfo);
     expect(otherInfo).toHaveTextContent('HK$350');
     expect(otherInfo).toHaveTextContent('HK$2,350');
     expect(otherInfo).toHaveTextContent('石硖尾邨第21座');

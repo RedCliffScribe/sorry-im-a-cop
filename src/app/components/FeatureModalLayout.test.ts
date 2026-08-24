@@ -1,4 +1,3 @@
-// @ts-expect-error Vitest 在 Node 中运行；产品 tsconfig 有意不加载整套 Node 类型。
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 

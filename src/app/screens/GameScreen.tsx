@@ -37,6 +37,7 @@ import { IndexedDbImageAutomationRuntimeRepository } from '../../domain/imageGen
 import { IndexedDbImageProbeStore } from '../../domain/imageGeneration/probe';
 import { IndexedDbImageCredentialRepository, IndexedDbImageProfileRepository } from '../../domain/imageGeneration/profile';
 import { ImageAutomationCoordinator } from '../../domain/imageGeneration/ImageAutomationCoordinator';
+import { formatImageAutomationDiagnostics } from '../../domain/imageGeneration/automationDiagnostics';
 import type { MemoryEmbeddingClient } from '../../domain/memory/MemoryEmbeddingClient';
 import type {
   NarratorAttemptRecord,
@@ -54,6 +55,7 @@ import { selectBackgroundEvolutionCandidates } from '../../domain/backgroundEvol
 import { getNewsIssueCategory } from '../../domain/news/newsIssueLifecycle';
 import { isArchivedCurrentMatter } from '../../domain/dynamic/currentMatterStatus';
 import { archiveDynamicEntry, isCurrentSignal } from '../../domain/dynamic/signalLifecycle';
+import type { CaseActionIntent } from '../../domain/cases/caseActionIntent';
 import { removeRelationshipThreadFromState } from '../../domain/relationship/relationshipThread';
 import { IndexedDbTurnSnapshotRepository } from '../../domain/persistence/IndexedDbTurnSnapshotRepository';
 import type { TurnSnapshotRepository } from '../../domain/persistence/TurnSnapshotRepository';
@@ -665,6 +667,11 @@ export function GameScreen({
   const [canAbortTurn, setCanAbortTurn] = useState(false);
   const [isAbortingTurn, setIsAbortingTurn] = useState(false);
   const [isStoryExportOpen, setIsStoryExportOpen] = useState(false);
+  const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [isImmersiveDialogOpen, setIsImmersiveDialogOpen] = useState(false);
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+  const [immersiveRailOpen, setImmersiveRailOpen] = useState<'left' | 'right' | null>(null);
+  const [immersiveStatus, setImmersiveStatus] = useState<string | null>(null);
   const [isDiagnosticOpen, setIsDiagnosticOpen] = useState(false);
   const [isAiProcessTraceOpen, setIsAiProcessTraceOpen] = useState(false);
   const [diagnosticText, setDiagnosticText] = useState('');
@@ -696,8 +703,13 @@ export function GameScreen({
   const [manualEvolutionStatus, setManualEvolutionStatus] = useState<string | null>(null);
   const [combatInitialDetailId, setCombatInitialDetailId] = useState<CombatEventId | null>(null);
   const [lastDiagnosticPlayerInput, setLastDiagnosticPlayerInput] = useState('');
-  const [draftAction, setDraftAction] = useState<{ text: string; version: number } | null>(null);
+  const [draftAction, setDraftAction] = useState<{
+    text: string;
+    version: number;
+    caseActionIntent?: CaseActionIntent;
+  } | null>(null);
   const [rollbackAvailableTurnNumbers, setRollbackAvailableTurnNumbers] = useState<number[]>([]);
+  const gameShellRef = useRef<HTMLElement>(null);
   const storyPresentationRef = useRef<StoryPresentationPaneHandle>(null);
   const isRunningRef = useRef(false);
   const manualEvolutionRunningRef = useRef(false);
@@ -725,6 +737,58 @@ export function GameScreen({
   const imagePromptTemplateRepository = useMemo(() => new IndexedDbImagePromptTemplateRepository(), []);
   const imageGenerationPresetRepository = useMemo(() => new IndexedDbImageGenerationPresetRepository(), []);
   const pngStyleRepository = useMemo(() => new IndexedDbPngStyleRepository(), []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsNativeFullscreen(document.fullscreenElement === gameShellRef.current);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (!immersiveStatus) return;
+    const timeoutId = window.setTimeout(() => setImmersiveStatus(null), 4200);
+    return () => window.clearTimeout(timeoutId);
+  }, [immersiveStatus]);
+
+  const openImmersiveDialog = () => {
+    setIsImmersiveDialogOpen(true);
+  };
+
+  const enterImmersiveMode = (requestNativeFullscreen: boolean) => {
+    setIsImmersiveDialogOpen(false);
+    setIsImmersiveMode(true);
+    setImmersiveRailOpen(null);
+    setMobileGameRegion('narrative');
+
+    if (!requestNativeFullscreen) return;
+
+    const shell = gameShellRef.current;
+    if (!shell || typeof shell.requestFullscreen !== 'function') {
+      setImmersiveStatus('当前浏览器不支持网页全屏，已进入页面沉浸模式。');
+      return;
+    }
+
+    try {
+      void shell.requestFullscreen().catch(() => {
+        setImmersiveStatus('浏览器未允许全屏，已保留页面沉浸模式。');
+      });
+    } catch {
+      setImmersiveStatus('浏览器未允许全屏，已保留页面沉浸模式。');
+    }
+  };
+
+  const exitImmersiveMode = () => {
+    const shell = gameShellRef.current;
+    setIsImmersiveDialogOpen(false);
+    setIsImmersiveMode(false);
+    setImmersiveRailOpen(null);
+    setImmersiveStatus(null);
+    if (document.fullscreenElement === shell && typeof document.exitFullscreen === 'function') {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
   useEffect(() => {
     let active = true;
     void imagePromptTemplateRepository.load().then(
@@ -860,23 +924,35 @@ export function GameScreen({
   }, [imageAutomationCoordinator, state, visualSaveId]);
 
   function handleOpenDiagnostic() {
-    setDiagnosticText(
-      createNarrativeDiagnostic({
-        state,
-        saveId,
-        streamingText: activeStreamingText,
-        lastError: latestErrorDetail,
-        lastRawNarratorResponse,
-        lastNarratorAttempts: openingAttempts,
-        lastTurnNarratorAttemptStarts,
-        lastTurnNarratorAttempts,
-          lastTurnExecution,
-          lastPlayerInput: lastDiagnosticPlayerInput,
-          lastJudgementRecoveryTrace,
-          lastOfficialDlcDramaAudit
-        })
-    );
+    const narrativeDiagnostic = createNarrativeDiagnostic({
+      state,
+      saveId,
+      streamingText: activeStreamingText,
+      lastError: latestErrorDetail,
+      lastRawNarratorResponse,
+      lastNarratorAttempts: openingAttempts,
+      lastTurnNarratorAttemptStarts,
+      lastTurnNarratorAttempts,
+      lastTurnExecution,
+      lastPlayerInput: lastDiagnosticPlayerInput,
+      lastJudgementRecoveryTrace,
+      lastOfficialDlcDramaAudit
+    });
+    setDiagnosticText(narrativeDiagnostic);
     setIsDiagnosticOpen(true);
+    if (!visualSaveId) return;
+    void (async () => {
+      try {
+        await automationWorkRef.current.catch(() => undefined);
+        const [records, snapshot] = await Promise.all([
+          imageAutomationRuntimeRepository.listForSave(visualSaveId),
+          imageVisualRepository.loadSnapshot(visualSaveId)
+        ]);
+        setDiagnosticText(`${narrativeDiagnostic}\n\n${formatImageAutomationDiagnostics(records, snapshot)}`);
+      } catch {
+        setDiagnosticText(`${narrativeDiagnostic}\n\n## Image Automation Diagnostics / 自动图片诊断\n读取失败；未影响正文或已有图片。`);
+      }
+    })();
   }
 
   function handleCloseDiagnostic() {
@@ -953,7 +1029,8 @@ export function GameScreen({
     playerInput: string,
     failureState: RuntimeState,
     signal: AbortSignal,
-    requestId: string
+    requestId: string,
+    caseActionIntent?: CaseActionIntent
   ): Promise<boolean> {
     try {
       const judgementRollKey = `${stateBeforeTurn.turnCounter}:${playerInput}`;
@@ -988,6 +1065,7 @@ export function GameScreen({
       const next = await runPlayerTurn({
         state: stateBeforeTurn,
         playerInput,
+        caseActionIntent,
         requestId,
         narrator,
         memoryEmbedding,
@@ -1121,7 +1199,11 @@ export function GameScreen({
             }
           : current
       );
-      setDraftAction((current) => ({ text: playerInput, version: (current?.version ?? 0) + 1 }));
+      setDraftAction((current) => ({
+        text: playerInput,
+        version: (current?.version ?? 0) + 1,
+        ...(caseActionIntent ? { caseActionIntent } : {})
+      }));
       setTurnError(
         wasAborted
           ? '本回合已中止，行动内容已放回输入框。'
@@ -1134,7 +1216,8 @@ export function GameScreen({
   async function runActionFromState(
     stateBeforeTurn: RuntimeState,
     playerInput: string,
-    failureState = stateBeforeTurn
+    failureState = stateBeforeTurn,
+    caseActionIntent?: CaseActionIntent
   ): Promise<boolean> {
     if (isCommandDisabled || isRunningRef.current || manualEvolutionRunningRef.current) return false;
 
@@ -1182,7 +1265,8 @@ export function GameScreen({
         playerInput,
         failureState,
         abortController.signal,
-        requestId
+        requestId,
+        caseActionIntent
       );
     } finally {
       if (activeTurnAbortControllerRef.current === abortController) {
@@ -1321,7 +1405,8 @@ export function GameScreen({
   }
 
   async function handleSubmit(playerInput: string) {
-    await runActionFromState(state, playerInput);
+    const succeeded = await runActionFromState(state, playerInput, state, draftAction?.caseActionIntent);
+    if (succeeded) setDraftAction(null);
   }
 
   async function handleRollbackLatestTurn() {
@@ -1402,8 +1487,12 @@ export function GameScreen({
     setIsAssetArchiveOpen(true);
   }
 
-  function handleDraftPlayerAction(actionText: string) {
-    setDraftAction((current) => ({ text: actionText, version: (current?.version ?? 0) + 1 }));
+  function handleDraftPlayerAction(actionText: string, caseActionIntent?: CaseActionIntent) {
+    setDraftAction((current) => ({
+      text: actionText,
+      version: (current?.version ?? 0) + 1,
+      ...(caseActionIntent ? { caseActionIntent } : {})
+    }));
   }
 
   function getPanelEntryAction(entryId: string) {
@@ -1475,7 +1564,11 @@ export function GameScreen({
   const displayedTraceReasoning = isOpeningTrace ? openingReasoningText : turnReasoningText;
 
   return (
-    <main className="game-shell game-shell--play">
+    <main
+      ref={gameShellRef}
+      className={`game-shell game-shell--play${isImmersiveMode ? ' game-shell--immersive' : ''}${isNativeFullscreen ? ' game-shell--native-fullscreen' : ''}`}
+      data-immersive-mode={isImmersiveMode ? (isNativeFullscreen ? 'fullscreen' : 'page') : 'off'}
+    >
       <section className="game-frame" aria-label="游戏界面">
         <header className="game-topbar">
           <WeatherAmbience
@@ -1584,9 +1677,42 @@ export function GameScreen({
         <MobileGameRegionSwitcher activeRegion={mobileGameRegion} onSelect={setMobileGameRegion} />
 
         <section className="game-play-layout">
+          {isImmersiveMode ? (
+            <>
+              <button
+                className="game-immersive-edge game-immersive-edge--left"
+                type="button"
+                aria-label={immersiveRailOpen === 'left' ? '收起人物状态' : '展开人物状态'}
+                aria-controls="game-mobile-region-profile"
+                aria-expanded={immersiveRailOpen === 'left'}
+                onClick={() => setImmersiveRailOpen((open) => open === 'left' ? null : 'left')}
+              >
+                <span aria-hidden="true">›</span>
+              </button>
+              <button
+                className="game-immersive-exit-handle"
+                type="button"
+                aria-label="退出沉浸式模式"
+                onClick={exitImmersiveMode}
+              >
+                <span aria-hidden="true" className="game-immersive-exit-grip" />
+                <span className="game-immersive-exit-label">退出沉浸</span>
+              </button>
+              <button
+                className="game-immersive-edge game-immersive-edge--right"
+                type="button"
+                aria-label={immersiveRailOpen === 'right' ? '收起功能面板' : '展开功能面板'}
+                aria-controls="game-mobile-region-systems"
+                aria-expanded={immersiveRailOpen === 'right'}
+                onClick={() => setImmersiveRailOpen((open) => open === 'right' ? null : 'right')}
+              >
+                <span aria-hidden="true">‹</span>
+              </button>
+            </>
+          ) : null}
           <aside
             id="game-mobile-region-profile"
-            className="game-left-rail"
+            className={`game-left-rail${immersiveRailOpen === 'left' ? ' game-immersive-rail--open' : ''}`}
             data-mobile-active={mobileGameRegion === 'profile'}
           >
             <PlayerPanel
@@ -1629,6 +1755,8 @@ export function GameScreen({
               onOverrideChanged={visualSaveId
                 ? () => setAvgVisualOverrideRevision((value) => value + 1)
                 : undefined}
+              immersiveActive={isImmersiveMode}
+              onRequestImmersive={openImmersiveDialog}
               textView={(
                 <StoryLog
                   entries={(historicalRegenerationPreview ?? state).storyLog}
@@ -1767,7 +1895,7 @@ export function GameScreen({
 
           <aside
             id="game-mobile-region-systems"
-            className="game-right-rail"
+            className={`game-right-rail${immersiveRailOpen === 'right' ? ' game-immersive-rail--open' : ''}`}
             data-mobile-active={mobileGameRegion === 'systems'}
             aria-label="功能入口"
           >
@@ -1836,6 +1964,59 @@ export function GameScreen({
           ) : null}
         </footer>
       </section>
+      {isImmersiveDialogOpen ? (
+        <div
+          className="game-immersive-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsImmersiveDialogOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setIsImmersiveDialogOpen(false);
+          }}
+        >
+          <section
+            className="game-immersive-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="game-immersive-dialog-title"
+            aria-describedby="game-immersive-dialog-description"
+          >
+            <header>
+              <div>
+                <span>VIEW MODE</span>
+                <h2 id="game-immersive-dialog-title">进入沉浸式模式</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭沉浸式选择"
+                onClick={() => setIsImmersiveDialogOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <p id="game-immersive-dialog-description">
+              两种模式都会保留顶部时间与天气，并将左右面板收进屏幕边缘；移动到边缘或轻点细线即可展开。
+            </p>
+            <div className="game-immersive-dialog-options">
+              <button type="button" autoFocus onClick={() => enterImmersiveMode(false)}>
+                <strong>页面沉浸</strong>
+                <span>保留浏览器界面，适合随时切换标签页。</span>
+              </button>
+              <button type="button" onClick={() => enterImmersiveMode(true)}>
+                <strong>全屏沉浸</strong>
+                <span>在页面沉浸基础上请求浏览器全屏；按 Esc 可先退出全屏。</span>
+              </button>
+            </div>
+            <footer>
+              <small>全屏请求若被浏览器拦截，会自动保留页面沉浸。</small>
+              <button type="button" onClick={() => setIsImmersiveDialogOpen(false)}>取消</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {immersiveStatus ? (
+        <p className="game-immersive-status" role="status">{immersiveStatus}</p>
+      ) : null}
       {isStoryExportOpen ? (
         <StoryExportModal state={state} onClose={() => setIsStoryExportOpen(false)} />
       ) : null}

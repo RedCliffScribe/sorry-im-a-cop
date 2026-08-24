@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AssetItem, AttributeBlock, RuntimeState, StandardAssetItem } from '../../domain/runtime/types';
 import {
   ATTRIBUTE_POINT_CAP,
@@ -533,6 +534,7 @@ export function PlayerPanel({
   visualRepository,
   visualRefreshKey
 }: PlayerPanelProps) {
+  const [isDutyWeekExpanded, setIsDutyWeekExpanded] = useState(false);
   const playerActor = state.actors[state.player.actorId];
   const age = playerActor ? deriveActorAgeAt(playerActor, state.time) : undefined;
   const equippedItems = (state.assets.equippedItemIds ?? [])
@@ -621,12 +623,7 @@ export function PlayerPanel({
               <dt>
                 所属单位 / Station / Unit
               </dt>
-              <dd>
-                {policeUnit.label}
-                <small className="identity-schedule-line">
-                  值班：{policeDuty.label} · {policeDuty.shiftLabel} {policeDuty.scheduleWindow}
-                </small>
-              </dd>
+              <dd>{policeUnit.label}</dd>
             </div>
           </dl>
         </section>
@@ -651,6 +648,49 @@ export function PlayerPanel({
           visualRefreshKey={visualRefreshKey}
         />
       )}
+
+      {isPoliceIdentity && policeDuty.available ? (
+        <section className="player-duty-week" aria-label="未来七日值班">
+          <header>
+            <div>
+              <h3>未来七日值班</h3>
+              <small>默认显示今天和明天 · 随游戏时间滚动更新</small>
+            </div>
+            <button
+              type="button"
+              className="player-duty-week-toggle"
+              aria-expanded={isDutyWeekExpanded}
+              aria-controls="player-duty-week-list"
+              onClick={() => setIsDutyWeekExpanded((expanded) => !expanded)}
+            >
+              <span>{isDutyWeekExpanded ? '收起' : '展开7天'}</span>
+              <span className="player-duty-week-chevron" aria-hidden="true" />
+            </button>
+          </header>
+          <div className="player-duty-week-current">
+            <p>当前：{policeDuty.currentDutySummary}</p>
+            <strong>{policeDuty.label}</strong>
+          </div>
+          <ol id="player-duty-week-list">
+            {policeDuty.weekSchedule.slice(0, isDutyWeekExpanded ? 7 : 2).map((entry, index) => (
+              <li
+                key={entry.dateKey}
+                className={`${entry.isToday ? 'is-today' : ''} ${entry.isRestDay ? 'is-rest' : ''}`.trim()}
+                data-duty-kind={entry.shiftKind}
+              >
+                <time dateTime={entry.dateKey} aria-current={entry.isToday ? 'date' : undefined}>
+                  <strong>{entry.isToday ? '今天' : index === 1 ? '明天' : entry.dateLabel}</strong>
+                  <small>{entry.weekdayLabel}</small>
+                </time>
+                <span>
+                  <strong>{entry.shiftLabel}</strong>
+                  <small>{entry.scheduleWindow}</small>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       <section className="player-other-info" aria-label="玩家其他信息">
         <dl>

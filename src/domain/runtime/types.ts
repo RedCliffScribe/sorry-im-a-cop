@@ -949,7 +949,105 @@ export interface PoliceCareerPathState {
   opportunities: string[];
   obstacles: string[];
   suggestedActions: string[];
+  promotionProgress?: PolicePromotionProgramState;
+  postingProgress?: PolicePostingProgramState;
   updatedAt?: GameTime;
+}
+
+export type PoliceCareerEvidenceKind =
+  | 'case_activity'
+  | 'judgement'
+  | 'matter_progress'
+  | 'commendation'
+  | 'discipline'
+  | 'training'
+  | 'course'
+  | 'exam'
+  | 'supervision'
+  | 'leadership'
+  | 'supervisor_assessment'
+  | 'selection'
+  | 'appointment'
+  | 'posting';
+
+export interface PoliceCareerEvidenceState {
+  kind: PoliceCareerEvidenceKind;
+  refId: string;
+  canonicalRefId?: string;
+  canonicalFactId?: string;
+  turnId?: TurnId;
+  result?: 'successful' | 'failed' | 'neutral';
+  tags?: string[];
+}
+
+export type PolicePromotionProgramStage =
+  | 'not_eligible'
+  | 'eligible'
+  | 'exam_or_course'
+  | 'awaiting_recommendation'
+  | 'selection'
+  | 'awaiting_vacancy'
+  | 'approved_waiting_post'
+  | 'appointed';
+
+export type PoliceCareerVacancyStatus =
+  | 'unknown'
+  | 'unavailable'
+  | 'expected'
+  | 'available'
+  | 'allocated';
+
+export interface PoliceCareerRequirementState {
+  requirementId: string;
+  status: 'completed' | 'in_progress' | 'pending' | 'blocked';
+  evidenceRefs: string[];
+  summary: string;
+  blockingReason?: string;
+}
+
+export interface PolicePromotionProgramState {
+  routeId: string;
+  worldpackId: string;
+  currentRankCode: string;
+  targetRankCode: string;
+  designation?: 'senior_police_constable';
+  processStage: PolicePromotionProgramStage;
+  serviceBasis: 'established_service' | 'new_recruit' | 'appointed_in_save';
+  rankEffectiveAt: GameTime;
+  vacancyStatus: PoliceCareerVacancyStatus;
+  evidence: PoliceCareerEvidenceState[];
+  processedEventIds?: string[];
+  requirements: PoliceCareerRequirementState[];
+  lawfulNextStages: PolicePromotionProgramStage[];
+  blockingReasons: string[];
+  reviewNotBefore?: GameTime;
+  lastEvaluatedAt: GameTime;
+  lastProgressTurnId?: TurnId;
+}
+
+export type PolicePostingProgramStage =
+  | 'not_selected'
+  | 'interested'
+  | 'eligible'
+  | 'training'
+  | 'awaiting_vacancy'
+  | 'approved_waiting_report'
+  | 'effective';
+
+export interface PolicePostingProgramState {
+  routeId: string;
+  worldpackId: string;
+  sourceDepartment: string;
+  targetDepartment: string;
+  processStage: PolicePostingProgramStage;
+  vacancyStatus: PoliceCareerVacancyStatus;
+  evidence: PoliceCareerEvidenceState[];
+  processedEventIds?: string[];
+  completedEvidenceTags: string[];
+  blockingReasons: string[];
+  reviewNotBefore?: GameTime;
+  lastEvaluatedAt: GameTime;
+  lastProgressTurnId?: TurnId;
 }
 
 export interface PoliceClimateEntry {

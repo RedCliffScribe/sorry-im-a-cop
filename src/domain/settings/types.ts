@@ -101,10 +101,17 @@ export type DisplayFontFamilyId =
 export type UiThemeId = 'dark' | 'light';
 export type StoryPresentationMode = 'auto' | 'avg' | 'text';
 
+export interface AvgPortraitLayoutSettings {
+  scalePercent: number;
+  horizontalOffsetPercent: number;
+  verticalOffsetPercent: number;
+}
+
 export interface DisplaySettings {
   uiTheme: UiThemeId;
   storyPresentationMode?: StoryPresentationMode;
   avgPlayerPortraitMode: AvgPlayerPortraitMode;
+  avgPortraitLayout?: AvgPortraitLayoutSettings;
   interfaceFontFamily: DisplayFontFamilyId;
   narrationFontFamily: DisplayFontFamilyId;
   dialogueFontFamily: DisplayFontFamilyId;

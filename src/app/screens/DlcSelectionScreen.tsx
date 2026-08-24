@@ -63,8 +63,8 @@ export function DlcSelectionScreen({
           返回世界包
         </button>
         <div className="official-dlc-heading">
-          <p className="worldpack-selection-kicker">STORY EXTENSIONS</p>
-          <h1>剧情扩展选择</h1>
+          <p className="worldpack-selection-kicker">OFFICIAL EXTENSIONS</p>
+          <h1>官方扩展选择</h1>
           <p>选择结果只属于这局新存档；所有官方 DLC 默认不勾选。</p>
         </div>
         <div aria-hidden="true" />

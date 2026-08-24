@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { AvgPresentationFrame } from '../../../domain/avgPresentation';
 import { getStoryBlocks, type StoryBlock } from '../../../domain/runtime/storyBlocks';
 import type { RuntimeState, StoryEntry } from '../../../domain/runtime/types';
@@ -16,6 +16,7 @@ import {
 } from './AvgEnvironmentLayer';
 import { readAvgEnvironmentDevPreviewLabel } from './avgEnvironmentDevPreview';
 import { AvgVisualOverrideDialog } from './AvgVisualOverrideDialog';
+import { AvgPortraitViewer } from './AvgPortraitViewer';
 
 interface AvgStoryViewportProps {
   session: AvgPlaybackSessionState;
@@ -91,6 +92,11 @@ export function AvgStoryViewport({
   onRetry,
   onUseTextMode
 }: AvgStoryViewportProps) {
+  const [portraitViewer, setPortraitViewer] = useState<{
+    src: string;
+    alt: string;
+    title: string;
+  }>();
   const sequence = session.sequence;
   const frame = sequence?.frames[session.frameIndex];
   const block = useMemo(
@@ -130,6 +136,7 @@ export function AvgStoryViewport({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (portraitViewer) return;
       if (session.status !== 'ready' || isInteractiveTarget(event.target)) return;
       if (event.key !== ' ' && event.key !== 'Enter') return;
       event.preventDefault();
@@ -137,7 +144,7 @@ export function AvgStoryViewport({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onNext, session.status]);
+  }, [onNext, portraitViewer, session.status]);
 
   if (session.status === 'error') {
     return (
@@ -234,12 +241,29 @@ export function AvgStoryViewport({
           data-portrait-stage={frame.portraitStageMode ?? 'none'}
         >
           {portraitUrl ? (
-            <img
-              data-testid="avg-portrait-image"
-              src={portraitUrl}
-              alt={portraitAlt}
-              onError={() => markFailed(portraitKey)}
-            />
+            <button
+              type="button"
+              className="avg-portrait-hitbox"
+              data-avg-no-advance
+              aria-label={`查看${portraitAlt}大图`}
+              aria-haspopup="dialog"
+              title="点击查看立绘大图"
+              onClick={(event) => {
+                event.stopPropagation();
+                setPortraitViewer({
+                  src: portraitUrl,
+                  alt: portraitAlt,
+                  title: runtimeState.actors[frame.portrait!.actorId]?.name ?? label ?? '剧情人物'
+                });
+              }}
+            >
+              <img
+                data-testid="avg-portrait-image"
+                src={portraitUrl}
+                alt={portraitAlt}
+                onError={() => markFailed(portraitKey)}
+              />
+            </button>
           ) : null}
         </div>
 
@@ -290,6 +314,14 @@ export function AvgStoryViewport({
           <span className="avg-asset-loading" data-avg-no-advance role="status">读取当前画面…</span>
         ) : null}
       </div>
+      {portraitViewer ? (
+        <AvgPortraitViewer
+          src={portraitViewer.src}
+          alt={portraitViewer.alt}
+          title={portraitViewer.title}
+          onClose={() => setPortraitViewer(undefined)}
+        />
+      ) : null}
     </section>
   );
 }

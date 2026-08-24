@@ -154,11 +154,11 @@ export const POLICE_RANK_DEFINITIONS: readonly PoliceRankDefinition[] = [
 ];
 
 const promotionTargets: Partial<Record<PoliceRankCode, string>> = {
-  pc: '高级警员（SPC）',
+  pc: '警长（SGT）',
   spc: '警长（SGT）',
   sgt: '警署警长（SSGT）',
-  ssgt: '督察',
-  pi: '督察',
+  ssgt: '见习督察（PI）',
+  pi: '督察（IP）',
   ip: '高级督察',
   sip: '总督察',
   cip: '警司',

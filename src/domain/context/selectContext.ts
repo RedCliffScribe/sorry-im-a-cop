@@ -1794,7 +1794,7 @@ export function selectContext(state: RuntimeState, playerInput: string, options:
   const weatherProjection = projectWeatherContext(state);
   const assetProjection = selectAssetProjection(state, signals);
   const financeProjection = projectFinanceContext(state);
-  const policeProjection = projectPolicePanelContext(state);
+  const policeProjection = projectPolicePanelContext(state, playerInput);
   const policeDutyProjection = projectPoliceDutyContext({
     time: state.time,
     currentIdentity: state.player.currentIdentity,

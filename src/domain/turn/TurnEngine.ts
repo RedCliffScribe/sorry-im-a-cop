@@ -61,6 +61,10 @@ import type {
 } from '../settings/types';
 import { isSpendableCashAsset } from '../assets/assetWritebackPolicy';
 import type { PlayerPoliceRoleProfilePatch } from '../identity/playerPoliceRoleProfile';
+import {
+  evaluateFixedActorIdentityPatch,
+  fixedActorIdentityMergeConflicts
+} from '../identity/fixedActorIdentityGuard';
 import { VEHICLE_ASSET_WRITEBACK_CONTRACT } from '../assets/assetWritebackContract';
 import {
   indexRawAssetItemsById,
@@ -70,6 +74,11 @@ import {
 } from '../assets/assetWritebackIntent';
 import { recoverCaseWritebackIntents } from '../cases/caseWritebackIntent';
 import { repairExternalCaseLeadWritebacks } from '../cases/caseLeadRecovery';
+import {
+  repairCaseActionIntents,
+  resolveCaseActionIntents,
+  type CaseActionIntent
+} from '../cases/caseActionIntent';
 import { resolvePromptText } from '../prompts/promptRegistry';
 import {
   resolvePlayerVitalsLifecycleReview,
@@ -207,6 +216,7 @@ export type TurnExecutionStage =
 export interface RunPlayerTurnInput {
   state: RuntimeState;
   playerInput: string;
+  caseActionIntent?: CaseActionIntent;
   requestId?: string;
   narrator: NarratorClient;
   memoryEmbedding?: MemoryEmbeddingClient;
@@ -1478,7 +1488,12 @@ function mergeRecoveredActorDependencies(
   const restoredPregnancyResolutions = candidates
     .filter((candidate) => repairedActorIds.has(candidate.actorId))
     .flatMap((candidate) => candidate.pregnancyResolutionPatches);
-  const availableActorIds = new Set([...Object.keys(state.actors), ...repairedActorIds]);
+  const availableActorIds = new Set([
+    state.player.actorId,
+    'player',
+    ...Object.keys(state.actors),
+    ...repairedActorIds
+  ]);
   const safeThreads = restoredThreads.filter((patch) =>
     relationshipPatchActorIds(patch).every((actorId) => availableActorIds.has(actorId))
   );
@@ -2168,7 +2183,7 @@ function createActorProfileEnrichmentPrompt({
     '3. 只有 requestedFields 包含 femaleProfile 时才可补 femaleProfile，且只补公开字段 addressToPlayer / appearanceDescription / bodyDescription / clothingStyle / personalityCore / affectionProgressionCondition / relationshipProgressionCondition；严禁返回 adultPrivateProfile、香闺秘档或怀孕资料。',
     '4. actualIdentitySummary 在没有卧底或伪装事实时，只概括人物实际社会身份；不得凭空制造秘密身份。',
     '5. roleProfiles 只补与 currentIdentity 对应的规范身份资料；attributes 必须完整提供 body/action/perception/thinking/negotiation/will 六项 0-100 数值，并按年龄、职业和经历拉开差异。',
-    '6. relationshipSummary、attitudeTowardPlayer、interactionScore、trustTendency、entanglementSummary 必须反映当前真实接触；尚未建立关系时可写明确的初始中性事实，不得伪造亲密、仇恨或共同经历。',
+    '6. relationshipSummary、attitudeTowardPlayer、interactionScore、trustTendency、entanglementSummary 必须反映当前真实接触；尚未建立关系时可写明确的初始中性事实，不得伪造亲密、仇恨或共同经历。interactionScore 表示已经形成的接触深度与牵连程度，既有人物不得重新估低或降低。',
     '7. longTermMemorySummary / recentInteractionMemory 只有在 requestedFields 明确列出时才可依据已知事实作保守概括；禁止新增 actorMemories、虚构历史事件或关系线程。',
     '8. 禁止返回秘密、物品、剧情正文或 suggestedActions。不得使用待补、未知、暂无资料、N/A、占位符或工程说明。无法可靠补全的字段宁可省略，系统会低频重试。',
     '',
@@ -2632,6 +2647,7 @@ function applyExplicitActorReferenceAliases(
 }
 
 function actorPatchConflictsWithCanonicalIdentity(target: Actor, patch: ActorPatch): boolean {
+  if (evaluateFixedActorIdentityPatch(target, patch)) return true;
   if (patch.gender && target.gender && patch.gender !== target.gender) return true;
   if (patch.policeNumber && target.policeNumber && patch.policeNumber !== target.policeNumber) return true;
   if (patch.birthDate && target.birthDate && patch.birthDate !== target.birthDate) return true;
@@ -2744,7 +2760,7 @@ function createActorIdentityMergePrompt({
     '只有确认同一人时才返回合并项；不合并、延后或拒绝时返回空数组。confidence 使用 high / medium / low。',
     '规则：',
     '1. sourceActorId 必须来自 candidateActorPatches；canonicalActorId 必须来自 existingActorCandidates。targetActorId 作为 canonicalActorId 的兼容别名也可接受。',
-    '2. existingActorCandidates 是完整现有人物目录，必须由你根据本轮叙事、写回与人物资料判断是否同一人；本地没有做姓名、称呼、地点或身份筛选。',
+    '2. existingActorCandidates 只包含本回合上下文已锚定或玩家明确点名的人物；仍须根据本轮叙事、写回与人物资料判断是否同一人。',
     '3. 仅在高置信度确认同一人时返回合并项；不能确认就返回空数组。',
     '4. 禁止合并 player，sourceActorId 与 targetActorId 不得相同。',
     '5. 不得返回 actorPatch，不得新增性格、经历、关系、秘密、物品或其他人物补全内容。',
@@ -2972,6 +2988,14 @@ function applyExistingActorIdentityMerges(
       });
       continue;
     }
+    if (fixedActorIdentityMergeConflicts(target, source)) {
+      diagnostics.push({
+        path: ['writeback', 'actorIdentityMerges', decision.sourceActorId],
+        code: 'actor_identity_merge_rejected',
+        message: `Actor identity merge "${decision.sourceActorId}" -> "${decision.targetActorId}" was rejected because the actors have conflicting fixed identities.`
+      });
+      continue;
+    }
 
     const localAliases = new Map([[decision.sourceActorId, decision.targetActorId]]);
     const actors = { ...nextState.actors };
@@ -3019,6 +3043,14 @@ function applyActorIdentityMergePatches(
         path: ['writeback', 'actorIdentityMerges', decision.sourceActorId],
         code: 'actor_identity_merge_rejected',
         message: `Actor identity merge "${decision.sourceActorId}" -> "${decision.targetActorId}" was rejected because target actor is unavailable.`
+      });
+      return patch;
+    }
+    if (evaluateFixedActorIdentityPatch(target, patch)) {
+      diagnostics.push({
+        path: ['writeback', 'actorIdentityMerges', decision.sourceActorId],
+        code: 'actor_identity_merge_rejected',
+        message: `Actor identity merge "${decision.sourceActorId}" -> "${decision.targetActorId}" was rejected because the patch conflicts with the target's fixed identity.`
       });
       return patch;
     }
@@ -3122,7 +3154,11 @@ async function repairActorIdentityMerges({
     };
   }
 
-  const existingActors = collectActorIdentityRepairCandidates(state);
+  const existingActors = collectActorIdentityRepairCandidates(state).filter(
+    (actor) =>
+      promptAnchoredActorIds.has(actor.actorId) ||
+      playerExplicitlyMentionsActor(actor, playerInput)
+  );
   if (existingActors.length === 0) {
     return {
       state,
@@ -3147,20 +3183,39 @@ async function repairActorIdentityMerges({
       new Set(actorPatches.map((patch) => patch.actorId)),
       new Set(existingActors.map((actor) => actor.actorId))
     );
-    if (parsed.decisions.length === 0) {
+    const locallyRejectedDiagnostics: StoryDiagnosticIssue[] = [];
+    const locallyEligibleDecisions = parsed.decisions.filter((decision) => {
+      const target = state.actors[decision.targetActorId];
+      const sourcePatch = actorPatches.find((patch) => patch.actorId === decision.sourceActorId);
+      if (!target || !sourcePatch) return false;
+      const targetValues = new Set(actorIdentityLookupValues(target));
+      const hasExactIdentityOverlap = patchIdentityLookupValues(sourcePatch).some((value) => targetValues.has(value));
+      if (hasExactIdentityOverlap || playerExplicitlyMentionsActor(target, playerInput)) return true;
+      locallyRejectedDiagnostics.push({
+        path: ['writeback', 'actorIdentityMerges', decision.sourceActorId],
+        code: 'actor_identity_merge_rejected',
+        message: `Actor identity merge "${decision.sourceActorId}" -> "${decision.targetActorId}" was rejected because the target was neither explicitly named by the player nor linked by an exact identity value.`
+      });
+      return false;
+    });
+    if (locallyEligibleDecisions.length === 0) {
       return {
         state,
         response,
         actorIdAliases: deterministicActorIdAliases,
-        diagnostics: [...deterministicDiagnostics, ...parsed.diagnostics]
+        diagnostics: [
+          ...deterministicDiagnostics,
+          ...parsed.diagnostics,
+          ...locallyRejectedDiagnostics
+        ]
       };
     }
 
-    const existingMergeResult = applyExistingActorIdentityMerges(state, parsed.decisions);
+    const existingMergeResult = applyExistingActorIdentityMerges(state, locallyEligibleDecisions);
     const patchMergeResult = applyActorIdentityMergePatches(
       existingMergeResult.state,
       response,
-      parsed.decisions
+      locallyEligibleDecisions
     );
 
     return {
@@ -3174,6 +3229,7 @@ async function repairActorIdentityMerges({
       diagnostics: [
         ...deterministicDiagnostics,
         ...parsed.diagnostics,
+        ...locallyRejectedDiagnostics,
         ...existingMergeResult.diagnostics,
         ...patchMergeResult.diagnostics
       ]
@@ -6324,7 +6380,7 @@ function createCompatibleWritebackRepairPrompt({
     };
     domainInstructions.push(
       '- pregnancyLifecycle 只复核本回合正文已经明确发生的事实，不改正文，不补造医疗结论、亲密行为、流产、分娩或父系信息。',
-      '- 必须返回 pregnancyLifecycleReview。无事件时 changed=false、events=[]；有事件时 changed=true，并逐人使用 pregnancy_risk / pregnancy_confirmed / pregnancy_ended / live_birth。',
+      '- 必须返回 pregnancyLifecycleReview。无事件时 changed=false、events=[]；有事件时 changed=true，并逐人使用 pregnancy_risk / pregnancy_confirmed / pregnancy_ended / live_birth。events 每项必须严格为 { "actorId": "knownAdultFemaleActors 中的稳定 ID", "event": "四个固定英文值之一", "reason": "说明本回合直接依据的单个字符串" }；reason 禁止返回数组、对象或 null。',
       '- 每个 review event 必须有对应写回：pregnancy_risk 对应 pregnancyRiskPatches；其余三种对应同 outcome 的 pregnancyResolutionPatches。不得只写 review 而漏掉补丁。',
       '- 医院或医学检查明确确认已有 suspected 妊娠时使用 pregnancy_confirmed；普通按期阳性验孕不由模型宣布。明确终止已有阳性妊娠时使用 pregnancy_ended；只有进入待产窗口且正文分娩时使用 live_birth。',
       '- 已处于 suspected / confirmed / delivery_due / postpartum 的人物若本回合仍发生受孕风险行为，pregnancyRiskPatches 仍必须返回；本地只追加接触记录，不会创建第二个妊娠。',
@@ -6543,6 +6599,37 @@ interface ParsedPregnancyLifecycleRepair {
   riskPatches: PregnancyRiskPatch[];
   resolutionPatches: PregnancyResolutionPatch[];
   diagnostics: StoryDiagnosticIssue[];
+  fullyReconciled: boolean;
+}
+
+function derivePregnancyLifecycleReviewFromValidatedPatches(
+  riskPatches: PregnancyRiskPatch[],
+  resolutionPatches: PregnancyResolutionPatch[]
+): PregnancyLifecycleReview | undefined {
+  const events = new Map<string, PregnancyLifecycleReviewEvent>();
+  for (const patch of riskPatches) {
+    const event: PregnancyLifecycleReviewEvent = {
+      actorId: patch.actorId,
+      event: 'pregnancy_risk',
+      reason: patch.summary
+    };
+    events.set(`${event.actorId}:${event.event}`, event);
+  }
+  for (const patch of resolutionPatches) {
+    const event: PregnancyLifecycleReviewEvent = {
+      actorId: patch.actorId,
+      event: patch.outcome,
+      reason: patch.summary
+    };
+    events.set(`${event.actorId}:${event.event}`, event);
+  }
+  const recoveredEvents = [...events.values()].slice(0, 4);
+  if (recoveredEvents.length === 0) return undefined;
+  return {
+    changed: true,
+    events: recoveredEvents,
+    reason: `已根据 ${recoveredEvents.length} 条通过严格校验的妊娠状态补丁恢复生命周期复核。`
+  };
 }
 
 function parsePregnancyLifecycleRepairResponse(
@@ -6554,6 +6641,7 @@ function parsePregnancyLifecycleRepairResponse(
     return {
       riskPatches: [],
       resolutionPatches: [],
+      fullyReconciled: false,
       diagnostics: [
         {
           path: ['writebackRepair', 'pregnancyLifecycle'],
@@ -6612,8 +6700,15 @@ function parsePregnancyLifecycleRepairResponse(
     pregnancyResolutionPatchSchema,
     'pregnancyResolutionPatches'
   );
+  const patchValidationFailed = diagnostics.length > 0;
+  const patchDerivedReview = derivePregnancyLifecycleReviewFromValidatedPatches(
+    riskPatches,
+    resolutionPatches
+  );
   const parsedReview = pregnancyLifecycleReviewSchema.safeParse(value.pregnancyLifecycleReview);
   let review: PregnancyLifecycleReview | undefined;
+  let reviewActorValidationFailed = false;
+  let reviewPatchValidationFailed = false;
   if (!parsedReview.success) {
     for (const issue of parsedReview.error.issues) {
       diagnostics.push({
@@ -6622,9 +6717,18 @@ function parsePregnancyLifecycleRepairResponse(
         message: issue.message
       });
     }
+    if (patchDerivedReview) {
+      review = patchDerivedReview;
+      diagnostics.push({
+        path: ['writebackRepair', 'pregnancyLifecycle', 'pregnancyLifecycleReview'],
+        code: 'pregnancy_lifecycle_review_recovered_from_valid_patches',
+        message: `生命周期复核格式无效，但已依据 ${patchDerivedReview.events.length} 条通过严格校验的状态补丁恢复规范复核。`
+      });
+    }
   } else {
     const knownEvents = parsedReview.data.events.filter((event) => {
       if (knownActorIds.has(event.actorId)) return true;
+      reviewActorValidationFailed = true;
       diagnostics.push({
         path: ['writebackRepair', 'pregnancyLifecycle', 'pregnancyLifecycleReview', 'events', event.actorId],
         code: 'pregnancy_repair_unknown_actor',
@@ -6648,6 +6752,7 @@ function parsePregnancyLifecycleRepairResponse(
               (patch) => patch.actorId === event.actorId && patch.outcome === event.event
             );
       if (!hasPatch) {
+        reviewPatchValidationFailed = true;
         diagnostics.push({
           path: ['writebackRepair', 'pregnancyLifecycle', 'pregnancyLifecycleReview', event.actorId],
           code: 'pregnancy_lifecycle_repair_missing_patch',
@@ -6657,7 +6762,17 @@ function parsePregnancyLifecycleRepairResponse(
     }
   }
 
-  return { review, riskPatches, resolutionPatches, diagnostics };
+  return {
+    review,
+    riskPatches,
+    resolutionPatches,
+    diagnostics,
+    fullyReconciled:
+      !patchValidationFailed &&
+      !reviewActorValidationFailed &&
+      !reviewPatchValidationFailed &&
+      (parsedReview.success || Boolean(patchDerivedReview))
+  };
 }
 
 function mergePregnancyLifecycleRepair(
@@ -7040,6 +7155,8 @@ async function repairCompatibleWritebacks({
       diagnostics.push(...parsed.diagnostics);
       if (parsed.review || parsed.riskPatches.length > 0 || parsed.resolutionPatches.length > 0) {
         repairedResponse = mergePregnancyLifecycleRepair(repairedResponse, parsed);
+      }
+      if (parsed.fullyReconciled) {
         diagnostics.push({
           path: ['writeback', 'pregnancyLifecycle'],
           code: 'pregnancy_lifecycle_repair_applied',
@@ -7363,7 +7480,8 @@ export async function runPlayerTurn({
   onJudgementRecoveryTrace,
   onOfficialDlcDramaAudit,
   judgementRoll,
-  enableJudgementPreflight = false
+  enableJudgementPreflight = false,
+  caseActionIntent
 }: RunPlayerTurnInput): Promise<RuntimeState> {
   throwIfTurnAborted(signal);
   const officialDlcAuditRequestId =
@@ -7778,6 +7896,11 @@ export async function runPlayerTurn({
       );
     }
   }
+  const resolvedCaseActionIntents = resolveCaseActionIntents({
+    state,
+    playerInput,
+    intent: caseActionIntent
+  });
   const prompt = composePrompt(foregroundContext, playerInput, {
     narrativeLengthLevel: gameSettings?.narrativeLengthLevel,
     narrativePerspective: gameSettings?.narrativePerspective,
@@ -7785,6 +7908,7 @@ export async function runPlayerTurn({
     locale: gameSettings?.language,
     pregnancyMode: gameSettings?.pregnancyMode,
     npcSimulationPackage: npcSimulationResult.package,
+    caseActionIntents: resolvedCaseActionIntents,
     promptSettings,
     dramaPlanningContext: narratorDramaPlanningContext,
     dramaPlan,
@@ -8487,6 +8611,15 @@ export async function runPlayerTurn({
   });
   throwIfTurnAborted(signal);
   response = repairResult.response;
+  const caseActionRepairResult = await repairCaseActionIntents({
+    state: stateForWriteback,
+    response,
+    intents: resolvedCaseActionIntents,
+    playerInput,
+    writebackRepair: measuredWritebackRepair ?? measuredMainWritebackFallback
+  });
+  throwIfTurnAborted(signal);
+  response = caseActionRepairResult.response;
   turnEndTime = getTurnEndTime(stateForWriteback.time, response);
   const livelihoodAtomicityResult = enforceCivilianLivelihoodWritebackAtomicity(
     stateForWriteback,
@@ -8592,6 +8725,7 @@ export async function runPlayerTurn({
       ...actorProfileEnrichmentResult.diagnostics,
       ...caseIntakeRepairResult.diagnostics,
       ...caseLeadRepairResult.diagnostics,
+      ...caseActionRepairResult.diagnostics,
       ...compatibleRepairResult.diagnostics,
       ...repairResult.diagnostics,
       ...livelihoodAtomicityResult.diagnostics,

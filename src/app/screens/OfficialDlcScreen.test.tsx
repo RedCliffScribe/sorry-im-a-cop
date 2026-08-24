@@ -6,6 +6,7 @@ import {
   urbanLegendsFormalV1Manifest
 } from '../../domain/dlc/urbanLegends/content';
 import { urbanLegendsAlphaManifest } from '../../domain/dlc/urbanLegendsAlpha/content';
+import { policePromotionManifest } from '../../domain/dlc/policePromotion/content';
 import type { OfficialDlcManifest } from '../../domain/dlc/types';
 import type { ExistingSaveDlcCandidate } from '../../domain/dlc/existingSave';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';
@@ -46,13 +47,46 @@ describe('OfficialDlcScreen', () => {
     }]
   };
 
-  it('publishes the formal DLC and keeps frozen Alpha out of the public catalog', () => {
+  it('publishes released official DLCs and keeps frozen Alpha out of the public catalog', () => {
     render(<OfficialDlcScreen onBack={vi.fn()} />);
 
-    expect(screen.getByRole('heading', { name: 'DLC 剧情' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '官方 DLC' })).toBeInTheDocument();
     expect(screen.queryByText('都市怪谈 Alpha')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '都市怪谈' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '警队晋升' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '警队晋升封面' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /开启|关闭|安装|下载/ })).not.toBeInTheDocument();
+  });
+
+  it('offers forward-only old-save activation for police promotion without pause controls', async () => {
+    const state = createInitialRuntimeState({
+      currentIdentity: 'police',
+      officialDlcIds: ['police_promotion']
+    });
+    const onStatusChange = vi.fn();
+    render(
+      <OfficialDlcScreen
+        currentState={state}
+        onBack={vi.fn()}
+        onStatusChange={onStatusChange}
+        onListExistingSaveCandidates={vi.fn().mockResolvedValue([eligibleSave])}
+        onAttachToExistingSave={vi.fn()}
+        availableManifests={[policePromotionManifest]}
+        runtimeManifests={[policePromotionManifest]}
+      />
+    );
+
+    expect(screen.getAllByText('系统扩展')).toHaveLength(2);
+    expect(screen.getByText(/兼容的警察旧档也可从当前游戏时间开始启用/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '将警队晋升加入已有存档' }));
+    const dialog = await screen.findByRole('dialog', { name: '将警队晋升加入已有存档' });
+    expect(within(dialog).getByText('从当前警队状态开始')).toBeInTheDocument();
+    expect(within(dialog).getByText(/不会追溯补算旧回合的立功、考试或推荐/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    fireEvent.click(screen.getByRole('button', { name: '当前 DLC 内容' }));
+    expect(screen.getByRole('heading', { name: '警队晋升' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /暂停后续剧情|恢复后续剧情/ })).not.toBeInTheDocument();
+    expect(onStatusChange).not.toHaveBeenCalled();
   });
 
   it('renders a non-spoiler archive card with the source-release fallback', () => {
@@ -100,7 +134,7 @@ describe('OfficialDlcScreen', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '加入已有存档' }));
+    fireEvent.click(screen.getByRole('button', { name: '将都市怪谈加入已有存档' }));
     const dialog = await screen.findByRole('dialog', { name: '将都市怪谈加入已有存档' });
     expect(onListExistingSaveCandidates).toHaveBeenCalledWith('urban_legends');
     expect(await within(dialog).findByText('旺角旧档')).toBeInTheDocument();
@@ -136,7 +170,7 @@ describe('OfficialDlcScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: '当前 DLC 内容' }));
 
     expect(screen.getByText('本存档没有绑定 DLC')).toBeInTheDocument();
-    expect(screen.getByText(/这是正常状态/)).toBeInTheDocument();
+    expect(screen.getByText(/兼容的扩展可按页面提示加入已有存档/)).toBeInTheDocument();
   });
 
   it('shows a frozen Alpha binding without leaking diagnostics into the player page', () => {

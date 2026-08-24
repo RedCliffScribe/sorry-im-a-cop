@@ -18,6 +18,7 @@ import { AvgPresentationErrorBoundary } from './AvgPresentationErrorBoundary';
 import { AvgStoryViewport } from './AvgStoryViewport';
 import type { AvgPresentationResourceRuntime } from './avgPresentationResourceRuntime';
 import { useAvgPlaybackSession } from './useAvgPlaybackSession';
+import { avgPortraitLayoutStyle } from './avgPortraitLayoutStyle';
 import './avgStoryViewport.css';
 
 export interface StoryPresentationPaneHandle {
@@ -38,6 +39,8 @@ interface StoryPresentationPaneProps {
   imageGenerationService?: AvgImageGenerationService;
   onOpenImageSettings?: () => void;
   onOverrideChanged?: () => void;
+  immersiveActive?: boolean;
+  onRequestImmersive?: () => void;
   textView: ReactNode;
 }
 
@@ -48,6 +51,7 @@ function clampFontSize(value: number | undefined): number {
 
 function avgDisplayStyle(displaySettings: DisplaySettings | undefined): CSSProperties {
   return {
+    ...avgPortraitLayoutStyle(displaySettings?.avgPortraitLayout),
     '--avg-narration-font-family': getDisplayFontStack(
       displaySettings?.narrationFontFamily ?? 'system',
       'system'
@@ -79,6 +83,8 @@ export const StoryPresentationPane = forwardRef<
     imageGenerationService,
     onOpenImageSettings,
     onOverrideChanged,
+    immersiveActive = false,
+    onRequestImmersive,
     textView
   },
   ref
@@ -119,37 +125,55 @@ export const StoryPresentationPane = forwardRef<
 
   return (
     <section
-      className={`story-presentation-pane story-presentation-pane--${effectiveMode}`}
+      className={[
+        'story-presentation-pane',
+        `story-presentation-pane--${effectiveMode}`,
+        immersiveActive ? 'story-presentation-pane--immersive' : ''
+      ].filter(Boolean).join(' ')}
       aria-label="剧情呈现"
       style={avgDisplayStyle(displaySettings)}
     >
-      <header className="story-presentation-toolbar">
-        <div className="story-presentation-mode-toggle" role="group" aria-label="剧情显示模式">
-          <button
-            type="button"
-            className={effectiveMode === 'avg' ? 'active' : ''}
-            aria-pressed={effectiveMode === 'avg'}
-            onClick={() => chooseMode('avg')}
-          >
-            AVG演出
-          </button>
-          <button
-            type="button"
-            className={effectiveMode === 'text' ? 'active' : ''}
-            aria-pressed={effectiveMode === 'text'}
-            onClick={() => chooseMode('text')}
-          >
-            原正文
-          </button>
-        </div>
-        <div className="story-presentation-resource-status" aria-live="polite">
-          {playback.resourceSession
-            ? `${playback.resourceSession.displayName} · ${playback.resourceSession.activePack.basePackVersion}`
-            : playback.resourceStatus === 'loading'
-              ? '读取 AVG 资源…'
-              : '未启用 AVG 资源'}
-        </div>
-      </header>
+      {!immersiveActive ? (
+        <header className="story-presentation-toolbar">
+          <div className="story-presentation-toolbar-controls">
+            <div className="story-presentation-mode-toggle" role="group" aria-label="剧情显示模式">
+              <button
+                type="button"
+                className={effectiveMode === 'avg' ? 'active' : ''}
+                aria-pressed={effectiveMode === 'avg'}
+                onClick={() => chooseMode('avg')}
+              >
+                AVG演出
+              </button>
+              <button
+                type="button"
+                className={effectiveMode === 'text' ? 'active' : ''}
+                aria-pressed={effectiveMode === 'text'}
+                onClick={() => chooseMode('text')}
+              >
+                原正文
+              </button>
+            </div>
+            {onRequestImmersive ? (
+              <button
+                type="button"
+                className="story-presentation-immersive-button"
+                aria-pressed="false"
+                onClick={onRequestImmersive}
+              >
+                沉浸式
+              </button>
+            ) : null}
+          </div>
+          <div className="story-presentation-resource-status" aria-live="polite">
+            {playback.resourceSession
+              ? `${playback.resourceSession.displayName} · ${playback.resourceSession.activePack.basePackVersion}`
+              : playback.resourceStatus === 'loading'
+                ? '读取 AVG 资源…'
+                : '未启用 AVG 资源'}
+          </div>
+        </header>
+      ) : null}
 
       <div className="story-presentation-content">
         <div

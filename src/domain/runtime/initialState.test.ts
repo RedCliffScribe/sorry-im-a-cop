@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hkLateColonialOrganizations } from '../cityPower/hkLateColonialOrganizations';
 import { PLAYER_POLICE_SALARY_CASHFLOW_ID } from '../finance/playerSalaryCashflow';
 import { PLAYER_CIVILIAN_PRIMARY_INCOME_ID } from '../finance/playerCivilianIncomeCashflow';
+import { policePromotionManifest } from '../dlc/policePromotion/content';
 import { createInitialRuntimeState, withRuntimeDefaults } from './initialState';
 import type { DeferredEventSourceModule, OrganizationStructureNode } from './types';
 
@@ -70,6 +71,30 @@ describe('initial runtime state', () => {
       status: 'active',
       activatedAt: expect.any(String)
     }]);
+  });
+
+  it('activates police promotion only when a police new game explicitly selects the system DLC', () => {
+    const unbound = createInitialRuntimeState({ currentIdentity: 'police' });
+    const bound = createInitialRuntimeState({
+      currentIdentity: 'police',
+      officialDlcIds: [policePromotionManifest.dlcId]
+    });
+
+    expect(unbound.world.officialDlcBindings).toEqual([]);
+    expect(unbound.policePanel.careerPath.promotionProgress).toBeUndefined();
+    expect(bound.world.officialDlcBindings).toEqual([{
+      dlcId: policePromotionManifest.dlcId,
+      version: policePromotionManifest.version,
+      status: 'active',
+      activatedAt: expect.any(String)
+    }]);
+    expect(bound.policePanel.careerPath.promotionProgress).toEqual(
+      expect.objectContaining({
+        worldpackId: 'hk_1988',
+        routeId: 'hk1988_pc_to_sgt',
+        processStage: 'not_eligible'
+      })
+    );
   });
 
   it('repairs a legacy weather state with bounded recent condition history', () => {

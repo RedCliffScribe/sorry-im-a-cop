@@ -120,4 +120,79 @@ describe('case runtime state', () => {
       leadActorName: '陈厚生'
     });
   });
+
+  it('deduplicates exact legacy evidence while preserving distinct evidence and remapping references', () => {
+    const state = createInitialRuntimeState({ currentIdentity: 'police' });
+    const sharedEvidence: CaseEvidence = {
+      evidenceId: 'evidence_original',
+      caseId: 'case_duplicate_evidence',
+      title: '大福财务高利贷与夜场账本',
+      evidenceType: 'document',
+      sourceSummary: '由玩家在同一回合提交。',
+      summary: '证明大福财务并非正规放贷，而是涉及洗钱的关键物证。',
+      submittedByActorId: state.player.actorId,
+      submittedAt: { ...state.time },
+      relatedActorIds: [state.player.actorId],
+      relatedPlaceIds: [],
+      visibility: 'player_known',
+      createdAt: { ...state.time },
+      updatedAt: { ...state.time }
+    };
+    state.caseEvidence = {
+      evidence_original: sharedEvidence,
+      evidence_duplicate: {
+        ...sharedEvidence,
+        evidenceId: 'evidence_duplicate'
+      },
+      evidence_distinct: {
+        ...sharedEvidence,
+        evidenceId: 'evidence_distinct',
+        summary: '同一账本中另有一页独立记录，指向另一名收款人。'
+      }
+    };
+    state.cases.case_duplicate_evidence = {
+      caseId: 'case_duplicate_evidence',
+      title: '和胜和高利贷组织犯罪案',
+      caseType: 'organized_financial_crime',
+      status: 'sentenced',
+      playerRole: 'lead',
+      summary: '案件已经判决。',
+      currentFocus: '整理归档。',
+      playerVisibleProgress: '结案文件已经签署。',
+      internalProgressSummary: '等待归档。',
+      relatedActorIds: [state.player.actorId],
+      relatedPlaceIds: [],
+      relatedOrganizationIds: [],
+      evidenceIds: ['evidence_original', 'evidence_duplicate', 'evidence_distinct'],
+      activityLog: [{
+        activityId: 'case_activity_duplicate_refs',
+        kind: 'evidence_added',
+        gameTime: { ...state.time },
+        summary: '两条重复引用来自同一份账本。',
+        relatedEvidenceIds: ['evidence_duplicate', 'evidence_distinct'],
+        relatedActorIds: [],
+        relatedPlaceIds: [],
+        visibleToPlayer: true
+      }],
+      unreadActivityCount: 1,
+      visibility: 'player_known',
+      createdAt: { ...state.time },
+      updatedAt: { ...state.time }
+    };
+
+    const normalized = withRuntimeDefaults(state);
+
+    expect(Object.keys(normalized.caseEvidence)).toEqual([
+      'evidence_original',
+      'evidence_distinct'
+    ]);
+    expect(normalized.cases.case_duplicate_evidence.evidenceIds).toEqual([
+      'evidence_original',
+      'evidence_distinct'
+    ]);
+    expect(normalized.cases.case_duplicate_evidence.activityLog[0].relatedEvidenceIds).toEqual([
+      'evidence_original',
+      'evidence_distinct'
+    ]);
+  });
 });

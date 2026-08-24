@@ -92,6 +92,20 @@ describe('police panel state', () => {
     expect(state.policePanel.careerPath.targetRank).toBe('警司');
   });
 
+  it('does not skip the probationary inspector step in the visible career path', () => {
+    const state = createInitialRuntimeState({
+      lawIdentity: {
+        rank: 'Station Sergeant（警署警长 SSGT）',
+        stationOrPost: 'Wan Chai Police Station',
+        department: 'Uniform Branch',
+        assignmentSummary: 'Shift supervision'
+      }
+    });
+
+    expect(state.policePanel.careerPath.currentRank).toBe('警署警长（SSGT）');
+    expect(state.policePanel.careerPath.targetRank).toBe('见习督察（PI）');
+  });
+
   it.each([
     ['Superintendent（警司 SP）', '高级警司'],
     ['Senior Superintendent（高级警司 SSP）', '总警司'],

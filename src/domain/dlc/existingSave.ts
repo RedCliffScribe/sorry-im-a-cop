@@ -6,6 +6,12 @@ import {
   officialDlcRuntimeManifests
 } from './manifest';
 import type { OfficialDlcManifest, SaveDlcBinding } from './types';
+import { POLICE_PROMOTION_DLC_ID } from '../police/policePromotionRules';
+import {
+  evaluatePolicePromotionExistingSave,
+  initializePolicePromotionExistingSave,
+  type PolicePromotionExistingSaveRejectionCode
+} from './policePromotion/existingSave';
 
 export type ExistingSaveDlcEligibilityCode =
   | 'eligible'
@@ -13,7 +19,9 @@ export type ExistingSaveDlcEligibilityCode =
   | 'incompatible_binding'
   | 'unsupported_worldpack'
   | 'runtime_manifest_unavailable'
-  | 'save_unavailable';
+  | 'save_unavailable'
+  | 'existing_save_attachment_unavailable'
+  | PolicePromotionExistingSaveRejectionCode;
 
 export interface ExistingSaveDlcEligibility {
   eligible: boolean;
@@ -44,12 +52,32 @@ function readBoundDlcIds(state: RuntimeState): Set<string> {
   );
 }
 
+interface ExistingSaveAttachmentAdapter {
+  evaluate: (state: RuntimeState) => { code: ExistingSaveDlcEligibilityCode; reason: string } | undefined;
+  initialize: (beforeBinding: RuntimeState, withBinding: RuntimeState) => RuntimeState;
+}
+
+const existingSaveAttachmentAdapters: Readonly<Record<string, ExistingSaveAttachmentAdapter>> = {
+  [POLICE_PROMOTION_DLC_ID]: {
+    evaluate: evaluatePolicePromotionExistingSave,
+    initialize: initializePolicePromotionExistingSave
+  }
+};
+
 export function evaluateExistingSaveDlcEligibility(
   state: RuntimeState,
   manifest: OfficialDlcManifest,
   runtimeManifests: readonly OfficialDlcManifest[] = officialDlcRuntimeManifests
 ): ExistingSaveDlcEligibility {
   const boundDlcIds = readBoundDlcIds(state);
+
+  if (manifest.existingSaveAttachment?.mode !== 'forward_only') {
+    return {
+      eligible: false,
+      code: 'existing_save_attachment_unavailable',
+      reason: '这项 DLC 当前不提供给已有存档，未进行任何改动。'
+    };
+  }
 
   if (boundDlcIds.has(manifest.dlcId)) {
     return {
@@ -81,6 +109,14 @@ export function evaluateExistingSaveDlcEligibility(
       eligible: false,
       code: 'runtime_manifest_unavailable',
       reason: '当前版本缺少这项 DLC 的精确运行资料，未改动存档。'
+    };
+  }
+
+  const adapterRejection = existingSaveAttachmentAdapters[manifest.dlcId]?.evaluate(state);
+  if (adapterRejection) {
+    return {
+      eligible: false,
+      ...adapterRejection
     };
   }
 
@@ -133,19 +169,23 @@ export function prepareExistingSaveDlcAttachment({
     dlcId: manifest.dlcId,
     version: manifest.version,
     status: 'active',
-    planningEnabled: true,
+    ...(manifest.dramaIntegration?.enabled ? { planningEnabled: true } : {}),
     activatedAt
   };
   const existingBindings = Array.isArray(record.runtimeState.world.officialDlcBindings)
     ? record.runtimeState.world.officialDlcBindings
     : [];
-  const nextState: RuntimeState = {
+  const stateWithBinding: RuntimeState = {
     ...record.runtimeState,
     world: {
       ...record.runtimeState.world,
       officialDlcBindings: [...existingBindings, binding]
     }
   };
+  const adapter = existingSaveAttachmentAdapters[manifest.dlcId];
+  const nextState = adapter
+    ? adapter.initialize(record.runtimeState, stateWithBinding)
+    : stateWithBinding;
 
   return {
     binding,

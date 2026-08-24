@@ -42,6 +42,11 @@ import { formatDramaExecutionPrompt } from '../drama/prompt';
 import type { DramaPlan, DramaPlanningContext, ForegroundContract } from '../drama/types';
 import { VEHICLE_ASSET_WRITEBACK_CONTRACT } from '../assets/assetWritebackContract';
 import { formatHistoricalHongKongNewsAnchorsForPrompt } from '../news/historicalHongKongNewsAnchors';
+import {
+  formatCaseActionIntentsForPrompt,
+  type ResolvedCaseActionIntent
+} from '../cases/caseActionIntent';
+import { POLICE_PROMOTION_DLC_ID } from '../police/policePromotionRules';
 
 export interface ComposePromptOptions {
   narrativeLengthLevel?: NarrativeLengthLevel;
@@ -54,6 +59,7 @@ export interface ComposePromptOptions {
   dramaPlanningContext?: DramaPlanningContext;
   dramaPlan?: DramaPlan;
   foregroundContract?: ForegroundContract;
+  caseActionIntents?: ResolvedCaseActionIntent[];
   localJudgement?: {
     presetRoll: number;
     attributes: AttributeBlock;
@@ -1151,6 +1157,45 @@ function formatPolicePanelProjection(context: PromptContext): string {
   const climate = projection.climate.map(
     (entry) => `- ${entry.key} (${entry.label}) level=${entry.level}: ${entry.summary}`
   );
+  const promotionBinding = context.officialDlcBindings?.find(
+    (binding) => binding.dlcId === POLICE_PROMOTION_DLC_ID
+  );
+  const promotionProgress = projection.careerPath.promotionProgress;
+  const postingProgress = projection.careerPath.postingProgress;
+  const postingRouteIndex = projection.postingRouteIndex
+    .map(
+      (route) =>
+        `${route.routeId}->${route.targetLabel}(${route.resultKind === 'training_rotation' ? 'training_rotation' : 'lateral_transfer'})`
+    )
+    .join(',');
+  const postingOpportunities = projection.postingOpportunities.flatMap((opportunity) => [
+    `postingOpportunity[${opportunity.routeId}]: mode=${opportunity.mode}; target=${opportunity.targetLabel}; result=${opportunity.resultKind}; stage=${opportunity.currentStage ?? 'not_started'}; vacancy=${opportunity.vacancyStatus ?? 'not_confirmed'}`,
+    `  naturalEntry=${opportunity.naturalEntryChannels.join(' / ')}`,
+    `  responsibilitiesAfterEffectivePosting=${opportunity.responsibilitySummary}`,
+    `  dutyAfterEffectivePosting=${opportunity.dutyPatternSummary}`,
+    `  evidenceContracts=${opportunity.evidenceContracts.map((contract) => `${contract.tag}[${contract.label}]<=${contract.acceptedEventTypes.join('|')}`).join(',')}`
+  ]);
+  const structuredCareer = promotionBinding
+    ? [
+        `structuredCareerDlc=${promotionBinding.status}; boundVersion=${promotionBinding.version}`,
+        promotionProgress
+          ? `promotionProgram: route=${promotionProgress.routeId}; stage=${promotionProgress.processStage}; current=${promotionProgress.currentRankCode}; target=${promotionProgress.targetRankCode}; vacancy=${promotionProgress.vacancyStatus}; lawfulNext=${promotionProgress.lawfulNextStages.join(',') || 'none'}; reviewNotBefore=${promotionProgress.reviewNotBefore ? `${promotionProgress.reviewNotBefore.year}-${String(promotionProgress.reviewNotBefore.month).padStart(2, '0')}-${String(promotionProgress.reviewNotBefore.day).padStart(2, '0')} ${String(promotionProgress.reviewNotBefore.hour).padStart(2, '0')}:${String(promotionProgress.reviewNotBefore.minute).padStart(2, '0')}` : 'none'}`
+          : 'promotionProgram: unavailable',
+        promotionProgress
+          ? `promotionRequirements: ${promotionProgress.requirements.map((item) => `${item.requirementId}=${item.status}`).join(',')}`
+          : '',
+        postingProgress
+          ? `postingProgram: route=${postingProgress.routeId}; stage=${postingProgress.processStage}; from=${postingProgress.sourceDepartment}; target=${postingProgress.targetDepartment}; vacancy=${postingProgress.vacancyStatus}; reviewNotBefore=${postingProgress.reviewNotBefore ? `${postingProgress.reviewNotBefore.year}-${String(postingProgress.reviewNotBefore.month).padStart(2, '0')}-${String(postingProgress.reviewNotBefore.day).padStart(2, '0')} ${String(postingProgress.reviewNotBefore.hour).padStart(2, '0')}:${String(postingProgress.reviewNotBefore.minute).padStart(2, '0')}` : 'none'}`
+          : 'postingProgram: none',
+        `postingRouteIndex: ${postingRouteIndex || 'none'}`,
+        ...postingOpportunities,
+        'postingOpportunityBoundary: routeIndex only lists structurally possible directions and is not an offer, recommendation, training place or vacancy. Only a projected postingOpportunity may enter this turn, through an existing supervisor, duty officer, instructor, current work fact or player inquiry. Do not create a new NPC only to deliver career procedure.',
+        'postingInterestBoundary: when the player explicitly asks an existing police contact about exactly one projected postingOpportunity and the narrative actually completes that inquiry, record the expressed intent with kind=posting, the exact routeId, requestedStage=interested and events=[] even when no qualification, recommendation, training place or vacancy exists yet. interested means the player has expressed interest or asked for that one route\'s procedure, not that an application has been filed; wording such as “只了解／先打听流程” still qualifies when it clearly concerns the player and exactly one route. Vague curiosity about several departments does not start a program.',
+        'postingEvidenceBoundary: interest, training, recommendation, qualification, selection, vacancy and formal reporting are separate facts. One fact cannot silently satisfy another; training completion never creates a vacancy; lateral transfer or PTU rotation never changes formal rank.',
+        'careerReviewBoundary: exam_failed, recommendation_declined, selection_failed or vacancy_unavailable may establish a bounded reviewNotBefore window. During that window preserve valid evidence, keep playing normally, and do not request a stage advance; elapsed time only reopens review and never invents a pass, recommendation, vacancy or appointment.',
+        'postingEffectBoundary: before stage=effective, do not change department, responsibilities or duty roster. At effective, pair the posting progress with one complete matching policeRoleProfilePatch; the local system will update responsibilities and the seven-day duty projection from the applied role.'
+      ].filter(Boolean)
+    : [];
 
   return [
     'POLICE_CONTEXT_PROJECTION',
@@ -1180,8 +1225,11 @@ function formatPolicePanelProjection(context: PromptContext): string {
     formatList(projection.careerPath.obstacles.map((item) => `- ${item}`)),
     'actionHints:',
     formatList(projection.actionHints.map((item) => `- ${item}`)),
+    ...structuredCareer,
     `diagnostics: selectedClimate=${projection.diagnostics.selectedClimateKeys.join(',') || 'none'} omittedClimate=${projection.diagnostics.omittedClimateCount}`,
-    'Rule: use this panel as police institution context. Do not auto-promote, auto-discipline, or rewrite police career progress unless playerPatch.policePanel explicitly updates it. A formally completed same-identity police station, department, operational-unit or posting transfer must use policeRoleProfilePatch.'
+    promotionBinding
+      ? 'Rule: use this panel as police institution context. The bound structured career program is authoritative: do not directly change currentRank or use same-identity correction. Propose only one lawful program step with policeCareerProgressPatch; a formal posting or appointment that changes role data must also provide the matching complete policeRoleProfilePatch.'
+      : 'Rule: use this panel as police institution context. Do not auto-promote, auto-discipline, or rewrite police career progress unless playerPatch.policePanel explicitly updates it. A formally completed same-identity police station, department, operational-unit or posting transfer must use policeRoleProfilePatch.'
   ].join('\n');
 }
 
@@ -1195,6 +1243,10 @@ function formatPoliceDutyProjection(context: PromptContext): string {
     `当前安排：${projection.currentDutySummary}`,
     `下一更：${projection.nextDutySummary}`,
     `轮班规则：${projection.rosterSummary}`,
+    '未来七日班表（从当前游戏日期起滚动更新）：',
+    ...projection.weekSchedule.map(
+      (entry) => `- ${entry.isToday ? '今天 · ' : ''}${entry.summary}`
+    ),
     projection.summary,
     '规则：',
     ...projection.ordinaryTurnRules.map((rule) => `- ${rule}`)
@@ -1630,7 +1682,18 @@ function createTurnResponseExample(
   pregnancyMode: PregnancyMode = 'standard',
   dramaPlanningContext?: DramaPlanningContext,
   dramaPlan?: DramaPlan,
-  localJudgementInput?: ComposePromptOptions['localJudgement']
+  localJudgementInput?: ComposePromptOptions['localJudgement'],
+  policePromotionDlcBound = false,
+  policePostingExample?: {
+    routeId: string;
+    requestedStage:
+      | 'interested'
+      | 'eligible'
+      | 'training'
+      | 'awaiting_vacancy'
+      | 'approved_waiting_report'
+      | 'effective';
+  }
 ) {
   const localJudgement = localJudgementInput ?? {
     presetRoll: 50,
@@ -1786,7 +1849,11 @@ function createTurnResponseExample(
         policePanel: {
           unitSummary: '只有警队单位、岗位理解或职责边界确实变化时才写。',
           careerPath: {
-            currentRank: '只有正式晋升、降职、复职或职级纠正确已生效时才写完整现职级，例如 Inspector（督察 IP）；仅获推荐、候选、面试或等待任命时禁止提前更新。',
+            ...(policePromotionDlcBound
+              ? {}
+              : {
+                  currentRank: '只有正式晋升、降职、复职或职级纠正确已生效时才写完整现职级，例如 Inspector（督察 IP）；仅获推荐、候选、面试或等待任命时禁止提前更新。'
+                }),
             targetRank: '现职级正式变化后，写下一合理目标职级；没有明确目标时可以省略。',
             routeSummary: '概括现职级已经生效以及下一阶段晋升路径；不要把尚未生效的推荐写成既成晋升。',
             dynamicAssessment: {
@@ -1805,35 +1872,38 @@ function createTurnResponseExample(
           actionHints: []
         }
       },
-      policeRoleProfilePatch: {
-        reason: '只在玩家当前公开身份仍为 police，且正式调令、借调、归队或转岗已经生效并完成报到时写；口头讨论、申请、候选、面试、等待调令或临时协助不得提前改档。',
-        stationOrPost: '完整的新驻点、警署、总部或派驻地点；必须重写完整当前值，不能沿用旧单位。',
-        department: '完整的新部门或行动单位，例如 Criminal Investigation Department（刑事侦缉处 CID）。',
-        assignmentSummary: '已经生效的新岗位与职责摘要。',
-        postRole: '已确认的新岗位称谓。',
-        publicIdentity: '对外可见的当前警察职务；省略时本地会由职级、部门和岗位重建。',
-        supervisorActorIds: ['actor_existing_or_created_this_turn'],
-        peerActorIds: ['actor_existing_or_created_this_turn'],
-        authoritySummary: '新岗位实际拥有的权限边界。',
-        accessSummary: '新岗位实际可接触的资料与资源。',
-        dutySummary: '新岗位已经成立的日常职责。'
-      },
-      civilianRoleProfilePatch: {
-        reason: '只在当前公开身份仍为市民、且本回合已经正式入职、离职、失业、升职、转岗、换地点或转为自营时写；没有生效变化时必须省略整个对象。正式受雇与 active civilian salary 必须同回合原子写入，缺一不可；正式离职也必须同时结束原固定工资。',
-        employmentStatusId: 'employed',
-        publicOccupation: '本回合已经生效的新职业',
-        employerOrganizationId: 'org_existing_or_created_this_turn',
-        employerRelationType: 'employee',
-        workplacePlaceId: 'place_existing_or_created_this_turn',
-        workUnitSummary: '已确认的科室、班组、门店或部门',
-        positionSummary: '已确认的岗位',
-        dutySummary: '已经成立的日常职责',
-        decisionScopeSummary: '玩家可以自行决定和需要协调的边界',
-        accessSummary: '该岗位实际能够接触的信息与资源',
-        sectorIds: ['open_registered_sector_tag'],
-        roleTags: ['open_registered_role_tag'],
-        livelihoodActorIds: ['actor_existing_or_created_this_turn']
-      },
+      ...(policePromotionDlcBound
+        ? {
+            policeCareerProgressPatch: policePostingExample
+              ? {
+                  kind: 'posting' as const,
+                  routeId: policePostingExample.routeId,
+                  requestedStage: policePostingExample.requestedStage,
+                  events: [],
+                  reason:
+                    '只在本回合自然形成该调动程序的下一个合法步骤时提交；训练、推荐、资格、空缺和正式报到必须分别使用投影合同允许的 event。'
+                }
+              : {
+                  kind: 'promotion' as const,
+                  routeId: '使用 POLICE_CONTEXT_PROJECTION 中当前晋升路线的稳定 routeId',
+                  requestedStage: 'eligible' as const,
+                  events: [
+                    {
+                      eventId: '本回合职业程序事实的稳定且唯一 ID',
+                      eventType: 'judgement_recorded' as const,
+                      summary: '只记录本回合已经实际应用的正式程序或职业事实。',
+                      supportRef: {
+                        kind: 'judgement' as const,
+                        refId: '本回合实际写入的 judgement checkId'
+                      },
+                      tags: ['performance']
+                    }
+                  ],
+                  reason:
+                    '说明为什么本回合只推进这一个程序步骤；正文口头称赞或玩家要求不能作为正式证据。'
+                }
+          }
+        : {}),
       financePatch: {
         cashDelta: 0,
         bankDelta: 0,
@@ -2493,6 +2563,33 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
   const conflict = formatConflictProjection(context);
   const weather = formatWeatherProjection(context);
   const policePanel = formatPolicePanelProjection(context);
+  const policePromotionDlcBound = Boolean(
+    context.officialDlcBindings?.some((binding) => binding.dlcId === POLICE_PROMOTION_DLC_ID)
+  );
+  const focusedPosting = context.policeProjection.postingOpportunities[0];
+  const postingExampleNextStage = focusedPosting
+    ? {
+        not_selected: 'interested',
+        interested: 'eligible',
+        eligible: 'training',
+        training: 'awaiting_vacancy',
+        awaiting_vacancy: 'approved_waiting_report',
+        approved_waiting_report: 'effective'
+      }[focusedPosting.currentStage ?? 'not_selected']
+    : undefined;
+  const policePostingExample =
+    focusedPosting && postingExampleNextStage
+      ? {
+          routeId: focusedPosting.routeId,
+          requestedStage: postingExampleNextStage as
+            | 'interested'
+            | 'eligible'
+            | 'training'
+            | 'awaiting_vacancy'
+            | 'approved_waiting_report'
+            | 'effective'
+        }
+      : undefined;
   const policeDuty = formatPoliceDutyProjection(context);
   const grayNetwork = formatGrayNetworkProjection(context);
   const identityContext = formatIdentityContextProjection(context);
@@ -2503,7 +2600,9 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
       pregnancyMode,
       options.dramaPlanningContext,
       options.dramaPlan,
-      options.localJudgement
+      options.localJudgement,
+      policePromotionDlcBound,
+      policePostingExample
     ),
     null,
     2
@@ -2554,6 +2653,9 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
     section('NPC 记忆投影', npcMemories),
     section('在场 NPC 反应候选', presentActorReactions),
     section('相关案件', cases),
+    ...(options.caseActionIntents?.length
+      ? [section('案件面板行动合同', formatCaseActionIntentsForPrompt(options.caseActionIntents))]
+      : []),
     section('相关物品与资产', assets),
     section('金钱与收支', finance),
     section('声誉与口碑投影', reputation),
@@ -2601,9 +2703,14 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         '如果本回合确认投稿、报案、交付、换装、付款、拘捕、提交证据、完成谈话或离开地点等已完成事实，turnSummary 必须明确写“已经/已/完成/交付/提交/离开”等完成状态，后续不得再把同一动作写成待办。',
         `篇幅硬合同：常规回合 narrativeText 目标 ${narrativeLengthProfile.turnTarget} 个中文字符且不得少于 ${narrativeLengthProfile.turnMinimum} 个中文字符；复杂回合目标 ${narrativeLengthProfile.complexTurnTarget} 个中文字符。简单、等待、文书和过渡回合也不得自行降档。围绕同一事务纵向展开有效行动过程、NPC 回应与对白、信息交换、现实限制和直接后果，不设固定段落数；禁止重复同一反应、换词复述、堆环境细节或新造无关钩子凑长度。`,
         '只写本回合明确产生或需要更新的结构化字段；未变化的模块可以省略或留空数组。',
+        'policeRoleProfilePatch 与 civilianRoleProfilePatch 是条件式可选模块：没有已经生效的警队岗位或市民职业变化时，必须省略整个字段，禁止输出 null、空对象或由 null、空字符串、空数组组成的占位对象。正式警队岗位变化的最小完整格式为 policeRoleProfilePatch={"reason":"正式变化依据","stationOrPost":"完整驻点","department":"完整部门","assignmentSummary":"已生效职责"}；正式市民职业变化至少写 civilianRoleProfilePatch={"reason":"正式变化依据","publicOccupation":"已生效职业"}，需要清除已存在字段时才在有非空 reason 的真实变更中写 null。',
         '不要通过正文暗示状态变化；正文不是写回来源。',
-        '警察玩家的正式晋升、降职、复职或职级纠正确已生效时，必须写 playerPatch.policePanel.careerPath.currentRank，并使用完整的新职级名称；同一警察身份内的职级变化不是身份转换，禁止为此写 identityContextPatch。仅获推荐、候选、面试、署任讨论或等待任命时不得更新 currentRank。',
-        '玩家仍是 police、但同一警察身份内正式调往新警署、部门或行动单位，或新岗位已经生效时，必须写 policeRoleProfilePatch，完整重写 stationOrPost、department、assignmentSummary 和 reason；不要只改 playerPatch.policePanel.unitSummary，也不要写 identityContextPatch。口头申请、等待调令、临时支援或尚未报到时不得提前更新。',
+        policePromotionDlcBound
+          ? '本存档已绑定结构化警队晋升系统。禁止直接写 playerPatch.policePanel.careerPath.currentRank 或同身份 identityContextPatch 改警衔；晋升只可按 promotionProgram 的 routeId、当前 stage 与 lawfulNext 推进，调动只可使用当前 postingProgram 或本回合投影出的 postingOpportunity 稳定 routeId，每回合最多推进一个合法阶段。玩家明确向既有警队联系人询问唯一投影路线且本回合确已完成该询问时，必须用 requestedStage=interested、events=[]记录调动意向；这不代表已具备资格。考试、课程、训练、资格、推荐、遴选、名额、空缺、任命和报到都必须作为本回合实际发生且符合 evidenceContracts 的结构化 event 提交；正文口头称赞、玩家要求、关系好感和未应用写回不算正式证据。'
+          : '警察玩家的正式晋升、降职、复职或职级纠正确已生效时，必须写 playerPatch.policePanel.careerPath.currentRank，并使用完整的新职级名称；同一警察身份内的职级变化不是身份转换，禁止为此写 identityContextPatch。仅获推荐、候选、面试、署任讨论或等待任命时不得更新 currentRank。',
+        policePromotionDlcBound
+          ? '结构化晋升或调动只有在程序进入 appointed/effective 且本回合正式生效时才可同时写 policeRoleProfilePatch，完整重写 stationOrPost、department、assignmentSummary、dutySummary 和 reason；本地会原子核对警衔、部门与岗位，并据已生效岗位重算值班。申请、候选、训练、等待空缺、口头调令、临时支援或尚未报到时不得提前改档；横向调动和 PTU 轮调不得改变正式警衔。'
+          : '玩家仍是 police、但同一警察身份内正式调往新警署、部门或行动单位，或新岗位已经生效时，必须写 policeRoleProfilePatch，完整重写 stationOrPost、department、assignmentSummary 和 reason；不要只改 playerPatch.policePanel.unitSummary，也不要写 identityContextPatch。口头申请、等待调令、临时支援或尚未报到时不得提前更新。',
         '电话报案、上级派警、电台通报、线人报料、场方/住户/店主求助或投诉等“事件来源”一旦写进正文，必须写入 currentMatterPatches.summary/currentHook、casePatches.activityLog 或 memories；后续相关报案人、场方、店方不能完全忘记自己/本方曾经报过警，只能对报警目的、范围或后果改口。',
         'currentMatterPatches.status 必须明确表达事项生命周期：仍在发展写 active；暂时安静、等待材料、等待通知、移交他人但仍可能发展写 dormant；真正结束且无实质后续写 resolved；仅在需要保留历史记录时写 archived。不要用“初步闭环、暂时解除、告一段落、暂无后续”等正文措辞代替结构化 status。',
         'currentMatterPatches.visibility 只能写 known 或 hidden：玩家当前已知事项写 known，尚未进入玩家认知的信息写 hidden；不要使用其他模块的 player_known/public/private 枚举。',
@@ -2617,8 +2724,8 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         'timePatch 是唯一时间来源：短动作写 elapsedMinutes；跨日、跨周、轮值、等待、养伤、旅行或任何正文明确跳到具体日期/时刻时，必须写 targetTime={year,month,day,hour,minute}。targetTime 不得早于当前时间；如果 elapsedMinutes 与 targetTime 同时存在，以 targetTime 为准。',
         '新人物必须用 actorPatches 创建。actorId 必须稳定、可复用。',
         '既有 Actor 可以只写变化字段；新 Actor 创建必须完整，至少包含姓名、性别、年龄、当前身份、公开身份、实际身份摘要、角色定位、人物简介、外貌、衣着、性格、说话风格、动机、长期目标、价值观、六维、与玩家关系、态度、往来度、信任/戒备、牵连、长期记忆、最近记忆、当前状态、在场状态、可见性和重要度。',
-        'NPC 在 narrativeText 中明确进入、离开、换到另一房间，或只通过隔门、电话、电台发声时，必须至少同步更新对应 actorPatches.presence；已知新地点/场景时再更新 currentPlaceId/currentSceneId，并按需更新 scenePatches.presentActorIds。presence=present 只用于与玩家处在同一可见场景，nearby 用于同一地点但不在同一镜头，mentioned 用于已经离开当前现场。禁止只在 statusSummary/recentInteractionMemory 写“离开”却让旧 presentActorIds 保留。',
-        '往来度 interactionScore 只能是 0-100 的整数，表示接触频率/牵连深浅，不代表喜欢或讨厌；仇恨、敌意、戒备、恐惧写入 attitudeTowardPlayer、relationshipSummary、trustTendency 或 entanglementSummary，不能用负数往来度表达。',
+        'NPC 在 narrativeText 中明确进入、离开、换到另一房间，或只通过隔门、电话、电台发声时，必须至少同步更新对应 actorPatches.presence；已知新地点/场景时再更新 currentPlaceId/currentSceneId，并按需更新 scenePatches.presentActorIds。既有远场、absent 或 mentioned 人物进入当前现场并写 presence=present 时，必须同时提供与玩家当前结构化地点一致的 currentPlaceId 或 currentSceneId，不能只靠 present 标签把远场人物搬进镜头。presence=present 只用于与玩家处在同一可见场景，nearby 用于同一地点但不在同一镜头，mentioned 用于已经离开当前现场。禁止只在 statusSummary/recentInteractionMemory 写“离开”却让旧 presentActorIds 保留。',
+        '往来度 interactionScore 只能是 0-100 的整数，表示已经形成的接触深度/牵连程度，不代表喜欢或讨厌。既有 Actor 只在本回合形成新的持续接触或牵连时上调，不得重新估低或降低；仇恨、敌意、疏远、戒备、恐惧写入 attitudeTowardPlayer、relationshipSummary、trustTendency 或 entanglementSummary，不能用降低往来度表达。',
         '新普通 NPC 的 name 必须是可长期绑定身份的完整姓名，不能只写“阿强”“红姑”“肥仔森”、单个英文名或职业称呼；外号、花名和日常称呼写入 callName/aliases。',
         '如果本回合只知道外号但该人物已经重要到必须建档，请按时代、身份和场景生成合理完整姓名，同时把原外号保留在 callName/aliases；不要照抄固定示例姓名。',
         '既有 NPC 后来确认真实姓名、英文名或身份证姓名时，必须复用原 actorId 更新 actorPatches；旧称呼写入 aliases/callName，不要另建新 Actor。',
@@ -2635,7 +2742,7 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         '玩家当前身份、公开身份、实际身份摘要或跨身份 roleProfiles 发生变化时，必须只写 writeback.identityContextPatch，完整提供 transitionId/kind/fromIdentity/toIdentity/publicIdentity/reason/targetRoleProfile/secretFactPatches；不要用 actorPatches 修改这些字段。目标身份切换为 police 时可提供 policeNumber（只能是四位数字）；当前没有警号且未提供时，由系统确定性分配，并原子同步到 Player 与 Actor。',
         'identityContextPatch.kind 只能使用 join / leave / cover_enter / cover_exit / exposure / correction：普通市民加入警队或社团用 join，进入卧底公开身份用 cover_enter，卧底任务确已结束并恢复原真实身份时用 cover_exit；禁止输出 status_change。transitionId 必须是本次转换独有且稳定的非空字符串。targetRoleProfile 必须严格写成 {"identity":"police|gang_member|civilian","profile":{...}}，identity 必须等于 toIdentity；禁止写成 {"police":{...}}、{"triad":{...}} 或 {"civilian":{...}}。targetRoleProfile.profile 必须使用规范字段：社团用 organizationId/societyName/roleTitle/rankSummary/territorySummary/patronActorIds/peerActorIds/rivalActorIds/coverIdentitySummary/obligationSummary/riskSummary，警队用 agencyId/stationOrPost/department/rank/assignmentSummary/postRole/authoritySummary/accessSummary/dutySummary。',
         'identityContextPatch.secretFactPatches 只允许 {"operation":"upsert","fact":{"secretId":"...","ownerType":"player","ownerId":"player","kind":"identity|loyalty|relationship|risk|control|other","summary":"...","playerCharacterKnown":true|false,"publicKnown":true|false,"knownByActorIds":[],"revealState":"hidden|known_to_player_character|known_to_some_actors|publicly_revealed","revealConditions":[],"visibility":"hidden|player_known|public","importance":0-100}} 或 {"operation":"remove","secretId":"..."}；禁止使用 add/factId/factType/description 这类别名结构。',
-        '身份没有真正改变时通常不得输出 identityContextPatch。唯一例外：社团玩家的正式职务、层级、活动区域或直属关系已由剧情明确生效时，允许写 kind="correction" 且 fromIdentity=toIdentity="gang_member"，完整重写 targetRoleProfile；普通交代、好感变化、口头赏识、候选或尚未生效的提拔不得使用。警察同身份职级变化只写 policePanel.careerPath.currentRank；警察同身份单位/岗位调动写 policeRoleProfilePatch。卧底不是第四种 currentIdentity：警察卧底社团写 toIdentity=gang_member，社团人员卧底警队写 toIdentity=police；真实效忠与知情边界写 secretFactPatches。',
+        `身份没有真正改变时通常不得输出 identityContextPatch。唯一例外：社团玩家的正式职务、层级、活动区域或直属关系已由剧情明确生效时，允许写 kind="correction" 且 fromIdentity=toIdentity="gang_member"，完整重写 targetRoleProfile；普通交代、好感变化、口头赏识、候选或尚未生效的提拔不得使用。${policePromotionDlcBound ? '绑定结构化晋升系统后，警察同身份职级与岗位程序只写 policeCareerProgressPatch，正式调动/任命生效时再配套 policeRoleProfilePatch；禁止同身份 correction。' : '警察同身份职级变化只写 policePanel.careerPath.currentRank；警察同身份单位/岗位调动写 policeRoleProfilePatch。'}卧底不是第四种 currentIdentity：警察卧底社团写 toIdentity=gang_member，社团人员卧底警队写 toIdentity=police；真实效忠与知情边界写 secretFactPatches。`,
         '卧底任务结束不是 leave 或新建身份：必须写 kind="cover_exit"，fromIdentity=当前卧底公开身份，toIdentity=进入卧底前保存的真实身份。警察从社团掩护返回 police，社团成员从警察掩护返回 gang_member；本地会恢复原 roleProfile、界面和该身份已暂停的固定收支，并暂停掩护身份绑定的收支。',
         '身份转换的正文如果明确发生换装，必须同步写 playerPatch.clothing；领取或更换当前随身装备时，必须用 assetPatch.upsertItems 建立或更新真实物品，并用 assetPatch.equippedItemIds 引用这些稳定 itemId。不得只在 narrativeText 或 playerPatch.equipment 自由文本里写领装。',
         '新增或更新秘密事实但不切换玩家身份时，写 writeback.secretFactPatches；不得只把秘密写进 narrativeText、memories、actualIdentitySummary 或 hidden roleProfiles。',
@@ -2659,7 +2766,7 @@ export function composePrompt(context: PromptContext, playerInput: string, optio
         'adultPrivateProfile 允许逐步建立：只写本回合新确认或确实变化的字段，资料尚未齐全时 profileStatus 用 developing；只有 womb、胸部/小穴/屁穴三项 partProfiles、fetishNotes 与 sensitivePoints 都已有具体稳定事实时才用 ready。description 采用直白、具体、可感的档案写法，只写对应部位，不混入姓名、脸、职业、收入、恋爱保障、家庭背景或人物性格；不要使用“甬道”等含糊器官隐喻。partProfiles 每项可以额外写 imagePromptAnchor；imagePromptAnchor 是独立的文生图可画标签，可保留如玉、细腻这类可画风格词、镜头词或质感词，但不得替代 description，也不得反灌到 description。fetishNotes 只写已经形成依据的成人性偏好，不得用价值观、信任条件或关系总结代替。不要写英文状态占位、中文待补内容、无记录占位、元说明、工程说明或泛化一致性说明，也不得用通用默认值或无依据内容补全。',
         '已有成年香闺秘档且本回合明确形成相关即时身体变化时，可以只写 adultPrivateProfile.womb.cervixStatus；没有实际变化就省略，不得沿抄旧值。该字段只承接短期剧情反馈，本地会在 12 个游戏小时后恢复常态；不得用它创建新香闺秘档或代替怀孕生命周期。',
         '普通人物档案补全任务禁止生成 femaleProfile.adultPrivateProfile。pregnancyRiskPatches 只报告正文中已发生的受孕风险事件；成年女性尚无香闺秘档时，本地引擎只会按需建立最小 womb 跟踪，不会因此补造部位、性癖或敏感点。不得写 pregnancy、lastPregnancyCheck、pregnancyHistory，也不得用 womb.status 或 records 自行判定/覆盖怀孕；概率、验孕、孕期和孩子建档由本地引擎独占。',
-        '每回合必须返回顶层 pregnancyLifecycleReview。changed=false 时 events=[]；正文明确发生受孕风险、医院/医学检查确认妊娠、妊娠终止或分娩时 changed=true，并为每名相关人物列出 pregnancy_risk / pregnancy_confirmed / pregnancy_ended / live_birth 事件。复核只声明本回合事实，不能替代 writeback 内的对应补丁。',
+        '每回合必须返回顶层 pregnancyLifecycleReview。changed=false 时 events=[]；正文明确发生受孕风险、医院/医学检查确认妊娠、妊娠终止或分娩时 changed=true，并为每名相关人物列出 pregnancy_risk / pregnancy_confirmed / pregnancy_ended / live_birth 事件。events 每项必须严格为 { "actorId": "稳定人物ID", "event": "四个固定英文值之一", "reason": "说明本回合直接依据的单个字符串" }；reason 禁止返回数组、对象或 null。复核只声明本回合事实，不能替代 writeback 内的对应补丁。',
         pregnancyMode === 'off'
           ? '当前怀孕机制已关闭：不得输出 pregnancyRiskPatches；但已有孕期的医学确认、终止或分娩仍必须按事实写 pregnancyLifecycleReview 与 pregnancyResolutionPatches。'
           : '正文明确发生可能导致受孕的成年行为时，必须写 pregnancyRiskPatches：unprotected=无保护风险，tryingToConceive=明确尝试受孕，reducedRisk=已采取避孕但仍有残余风险。只报告事件，不得自行宣布本次已经怀孕或未怀孕；同一人物同一回合最多写一条。即使该人物已经处于疑似、确认、待产或产后阶段，仍要写该风险事件：本地只追加接触记录，不会建立第二个妊娠。若同一事件或风险窗口涉及多名可能父亲，必须在该条 paternityCandidates 中列出全部候选，不得只保留一人；visibility 只反映玩家实际知情范围，不得猜测。同一游戏日的风险由本地引擎合并，跨游戏日分别排期；较早判定成功后，后续待判定会自动取消。',

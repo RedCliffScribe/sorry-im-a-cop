@@ -138,6 +138,10 @@ function formatOpeningPoliceDuty(initialState: RuntimeState): string {
     `- 当前安排：${projection.currentDutySummary}`,
     `- 下一更：${projection.nextDutySummary}`,
     `- 轮班规则：${projection.rosterSummary}`,
+    '- 未来七日班表（从开局日期起滚动）：',
+    ...projection.weekSchedule.map(
+      (entry) => `  - ${entry.isToday ? '今天 · ' : ''}${entry.summary}`
+    ),
     `- ${projection.summary}`,
     ...projection.openingRules.map((rule) => `- ${rule}`)
   ].join('\n');

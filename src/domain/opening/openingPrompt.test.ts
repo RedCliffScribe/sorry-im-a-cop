@@ -343,6 +343,9 @@ describe('opening prompt', () => {
     expect(prompt).toContain('- 班别：晚更');
     expect(prompt).toContain('- 时段：14:00–22:45');
     expect(prompt).toContain('- 下一更：1988年9月13日 星期二 晚更 14:00–22:45');
+    expect(prompt).toContain('- 未来七日班表（从开局日期起滚动）');
+    expect(prompt).toContain('今天 · 1988年9月12日 星期一 晚更 14:00–22:45');
+    expect(prompt).toContain('1988年9月17日 星期六 轮休');
     expect(prompt).toContain('不要因为玩家是警察就自动安排新报案、新上级任务或连续加班');
     expect(prompt).toContain('可以写下班、休班、补眠、私人生活、人脉、家庭、娱乐、街坊关系或城市日常');
   });

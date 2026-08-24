@@ -15,6 +15,7 @@ import {
   urbanLegendsFormalV1_1Manifest,
   urbanLegendsFormalV1Manifest
 } from './urbanLegends/content';
+import { policePromotionManifest } from './policePromotion/content';
 import {
   normalizeSaveDlcBindings,
   updateSaveDlcStatus,
@@ -23,15 +24,20 @@ import {
 
 describe('official DLC framework', () => {
   it('separates the public new-game catalog from frozen runtime compatibility manifests', () => {
-    expect(officialDlcManifests).toEqual([urbanLegendsFormalManifest]);
+    expect(officialDlcManifests).toEqual([
+      urbanLegendsFormalManifest,
+      policePromotionManifest
+    ]);
     expect(officialDlcRuntimeManifests).toEqual([
       urbanLegendsAlphaManifest,
       urbanLegendsFormalV1Manifest,
       urbanLegendsFormalV1_1Manifest,
-      urbanLegendsFormalManifest
+      urbanLegendsFormalManifest,
+      policePromotionManifest
     ]);
     expect(getOfficialDlcManifest('urban_legends_alpha')).toBe(urbanLegendsAlphaManifest);
     expect(getOfficialDlcManifest('urban_legends')).toBe(urbanLegendsFormalManifest);
+    expect(getOfficialDlcManifest('police_promotion')).toBe(policePromotionManifest);
     expect(getOfficialDlcRuntimeManifest('urban_legends_alpha', '1.0.0')).toBe(
       urbanLegendsAlphaManifest
     );
@@ -45,10 +51,24 @@ describe('official DLC framework', () => {
     expect(getOfficialDlcRuntimeManifest('urban_legends', '1.2.0')).toBe(
       urbanLegendsFormalManifest
     );
+    expect(getOfficialDlcRuntimeManifest('police_promotion', '1.0.0')).toBe(
+      policePromotionManifest
+    );
     expect(resolveOfficialDlcBindings(['urban_legends_alpha'], 'hk_1988')).toEqual([]);
     expect(
       resolveOfficialDlcBindings(['urban_legends_alpha', 'urban_legends'], 'hk_1988')
     ).toEqual([{ dlcId: 'urban_legends', version: '1.2.0', status: 'active' }]);
+    expect(
+      resolveOfficialDlcBindings(['urban_legends', 'police_promotion'], 'hk_1988')
+    ).toEqual([
+      { dlcId: 'urban_legends', version: '1.2.0', status: 'active' },
+      { dlcId: 'police_promotion', version: '1.0.0', status: 'active' }
+    ]);
+  });
+
+  it('declares forward-only existing-save support for both released DLC types', () => {
+    expect(urbanLegendsFormalManifest.existingSaveAttachment).toEqual({ mode: 'forward_only' });
+    expect(policePromotionManifest.existingSaveAttachment).toEqual({ mode: 'forward_only' });
   });
 
   it('does not create a binding for an unknown or unsupported manifest', () => {

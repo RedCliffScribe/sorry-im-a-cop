@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { selectContext } from '../../src/domain/context/selectContext';
 import { officialDlcManifests, officialDlcRuntimeManifests } from '../../src/domain/dlc/manifest';
+import { policePromotionManifest } from '../../src/domain/dlc/policePromotion/content';
 import { urbanLegendsFormalManifest } from '../../src/domain/dlc/urbanLegends/content';
 import { urbanLegendsFormalProvider } from '../../src/domain/dlc/urbanLegends/provider';
 import { urbanLegendsFormalSourceRef } from '../../src/domain/dlc/urbanLegends/stagePayload';
@@ -18,8 +19,12 @@ import {
 
 describe('Official DLC Phase 3 candidate registry', () => {
   it('uses the production release-candidate registration without mutating it', () => {
-    expect(officialDlcManifests).toEqual([urbanLegendsFormalManifest]);
+    expect(officialDlcManifests).toEqual([
+      urbanLegendsFormalManifest,
+      policePromotionManifest
+    ]);
     expect(officialDlcRuntimeManifests).toContain(urbanLegendsFormalManifest);
+    expect(officialDlcRuntimeManifests).toContain(policePromotionManifest);
     expect(phase3CandidateManifests).toEqual([urbanLegendsFormalManifest]);
 
     const state = createInitialRuntimeState({ currentIdentity: 'police' });
@@ -52,7 +57,11 @@ describe('Official DLC Phase 3 candidate registry', () => {
     expect(listProjectedDramaSources(context)).toContainEqual(
       expect.objectContaining({ ref: urbanLegendsFormalSourceRef })
     );
-    expect(officialDlcManifests).toEqual([urbanLegendsFormalManifest]);
+    expect(officialDlcManifests).toEqual([
+      urbanLegendsFormalManifest,
+      policePromotionManifest
+    ]);
     expect(officialDlcRuntimeManifests).toContain(urbanLegendsFormalManifest);
+    expect(officialDlcRuntimeManifests).toContain(policePromotionManifest);
   });
 });

@@ -11,6 +11,18 @@ export type PoliceDutyStatus =
 
 export type PoliceShiftKind = 'not_applicable' | 'day' | 'evening' | 'night' | 'office' | 'rest';
 
+export interface PoliceDutyDayProjection {
+  dateKey: string;
+  dateLabel: string;
+  weekdayLabel: string;
+  isToday: boolean;
+  isRestDay: boolean;
+  shiftKind: PoliceShiftKind;
+  shiftLabel: string;
+  scheduleWindow: string;
+  summary: string;
+}
+
 export interface PoliceDutyContextProjection {
   available: boolean;
   status: PoliceDutyStatus;
@@ -21,6 +33,8 @@ export interface PoliceDutyContextProjection {
   currentDutySummary: string;
   nextDutySummary: string;
   rosterSummary: string;
+  weekSchedule: PoliceDutyDayProjection[];
+  weekScheduleSummary: string;
   summary: string;
   ordinaryTurnRules: string[];
   openingRules: string[];
@@ -116,6 +130,10 @@ function formatDate(time: Pick<GameTime, 'year' | 'month' | 'day'>): string {
   return `${time.year}年${time.month}月${time.day}日 ${getWeekdayLabel(time)}`;
 }
 
+function formatDateKey(time: Pick<GameTime, 'year' | 'month' | 'day'>): string {
+  return `${String(time.year).padStart(4, '0')}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`;
+}
+
 function formatShiftWindow(shift: PoliceShiftDefinition): string {
   return `${formatMinute(shift.startMinute)}–${shift.overnight ? '次日' : ''}${formatMinute(shift.endMinute)}`;
 }
@@ -125,7 +143,7 @@ function containsAny(text: string, needles: string[]): boolean {
   return needles.some((needle) => lower.includes(needle.toLowerCase()));
 }
 
-function isUniformOrStationDuty(lawIdentity: LawIdentityRuntime): boolean {
+function isRotatingOperationalDuty(lawIdentity: LawIdentityRuntime): boolean {
   const text = [
     lawIdentity.department,
     lawIdentity.assignmentSummary,
@@ -141,12 +159,20 @@ function isUniformOrStationDuty(lawIdentity: LawIdentityRuntime): boolean {
     'beat',
     'report room',
     'station duty',
+    'traffic',
+    'emergency unit',
+    'police tactical unit',
     '军装',
     '巡逻',
     '巡逻警',
     '报案室',
     '值日',
-    '值班'
+    '值班',
+    '交通',
+    '冲锋',
+    '衝鋒',
+    '机动部队',
+    '機動部隊'
   ]);
 }
 
@@ -236,6 +262,39 @@ function findNextDuty(
   return '下一更尚未排定';
 }
 
+function buildRollingWeekSchedule(
+  time: GameTime,
+  assignmentForDate: (date: Pick<GameTime, 'year' | 'month' | 'day'>) => PoliceRosterAssignment
+): PoliceDutyDayProjection[] {
+  return Array.from({ length: 7 }, (_, dayOffset) => {
+    const date = shiftDate(time, dayOffset);
+    const assignment = assignmentForDate(date);
+    const isRestDay = assignment.kind === 'rest';
+    const scheduleWindow = isRestDay ? '休班' : formatShiftWindow(assignment);
+
+    return {
+      dateKey: formatDateKey(date),
+      dateLabel: `${date.month}月${date.day}日`,
+      weekdayLabel: getWeekdayLabel(date),
+      isToday: dayOffset === 0,
+      isRestDay,
+      shiftKind: assignment.kind,
+      shiftLabel: assignment.label,
+      scheduleWindow,
+      summary: `${formatDate(date)} ${assignment.label}${isRestDay ? '' : ` ${scheduleWindow}`}`
+    };
+  });
+}
+
+function formatWeekScheduleSummary(schedule: PoliceDutyDayProjection[]): string {
+  return schedule
+    .map(
+      (entry) =>
+        `${entry.isToday ? '今天 · ' : ''}${entry.dateLabel} ${entry.weekdayLabel}：${entry.shiftLabel}${entry.isRestDay ? '' : ` ${entry.scheduleWindow}`}`
+    )
+    .join('；');
+}
+
 function createRules(status: PoliceDutyStatus): Pick<PoliceDutyContextProjection, 'ordinaryTurnRules' | 'openingRules'> {
   const ordinaryTurnRules = [
     '不要因为玩家是警察就每回合自动新增报案、上级任务、无线电通报、纪律压力或连续加班。',
@@ -281,13 +340,15 @@ export function projectPoliceDutyContext({
       currentDutySummary: '玩家当前没有有效警务班表。',
       nextDutySummary: '不适用',
       rosterSummary: '不适用',
+      weekSchedule: [],
+      weekScheduleSummary: '不适用',
       summary: '玩家当前没有有效警务值班节奏；不要调用警务日程压力。',
       ...createRules('not_applicable')
     };
   }
 
-  const uniformLike = isUniformOrStationDuty(lawIdentity);
-  const assignmentForDate = uniformLike ? uniformAssignmentForDate : weekdayOfficeAssignment;
+  const rotatingDuty = isRotatingOperationalDuty(lawIdentity);
+  const assignmentForDate = rotatingDuty ? uniformAssignmentForDate : weekdayOfficeAssignment;
   const current = currentAssignment(time, assignmentForDate);
   const status = current.status;
   const labelByStatus: Record<PoliceDutyStatus, string> = {
@@ -300,8 +361,8 @@ export function projectPoliceDutyContext({
   };
   const summaryByStatus: Record<PoliceDutyStatus, string> = {
     not_applicable: '玩家当前没有有效警务值班节奏；不要调用警务日程压力。',
-    on_duty: uniformLike
-      ? '当前可按军装/巡逻/报案室当值处理，但本回合不必自动新增报案；例行巡逻、文书、等待和普通观察都可以成立。'
+    on_duty: rotatingDuty
+      ? '当前可按一线轮班或警署值日岗位当值处理，但本回合不必自动新增报案；例行巡逻、文书、等待和普通观察都可以成立。'
       : '当前可按警务办公或案件工作时段处理，但不要把身份自动等同于每回合都有新任务。',
     near_shift_end:
       '当前临近交班，优先允许收尾、交接、写记录、下班、补眠、私人生活或自主安排；除非已有事件明确推进，不要强塞新警务压力。',
@@ -323,9 +384,10 @@ export function projectPoliceDutyContext({
       : current.carriesFromPreviousNight
         ? `${assignment.label}（昨日${formatMinute(assignment.startMinute)}–今日${formatMinute(assignment.endMinute)}）`
         : `${formatDate(current.assignmentDate)} ${assignment.label} ${formatShiftWindow(assignment)}`;
-  const rosterSummary = uniformLike
-    ? '循环轮班：4天晚更 → 2天轮休 → 4天夜更 → 2天轮休 → 4天早更 → 2天轮休。'
+  const rosterSummary = rotatingDuty
+    ? '一线岗位循环轮班：4天晚更 → 2天轮休 → 4天夜更 → 2天轮休 → 4天早更 → 2天轮休。'
     : '日勤安排：周一至周五 09:00–18:00；周六、周日休班。';
+  const weekSchedule = buildRollingWeekSchedule(time, assignmentForDate);
 
   return {
     available: true,
@@ -337,6 +399,8 @@ export function projectPoliceDutyContext({
     currentDutySummary,
     nextDutySummary: findNextDuty(time, assignmentForDate),
     rosterSummary,
+    weekSchedule,
+    weekScheduleSummary: formatWeekScheduleSummary(weekSchedule),
     summary: `${summaryByStatus[status]} 当前安排：${currentDutySummary}。`,
     ...createRules(status)
   };

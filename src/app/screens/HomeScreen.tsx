@@ -282,10 +282,10 @@ export function HomeScreen({
           <button
             type="button"
             data-index="04"
-            aria-label="DLC剧情"
+            aria-label="官方DLC"
             onClick={openOfficialDlc}
           >
-            DLC剧情
+            官方DLC
           </button>
           {workshopEnabled ? (
             <button

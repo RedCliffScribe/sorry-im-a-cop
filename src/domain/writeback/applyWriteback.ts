@@ -17,6 +17,7 @@ import { synchronizeNpcMemoryCaches } from '../memory/npcMemoryLayers';
 import { normalizeMemoryTemporalText } from '../time/memoryTemporal';
 import { enforcePlayerNewsworthiness } from '../news/newsworthiness';
 import { enforcePlayerCaseLead } from '../cases/caseLeadContract';
+import { deduplicateExactCaseEvidence } from '../cases/caseEvidenceDeduplication';
 import { settleTurnExperience } from '../progression/turnExperience';
 import {
   actorMatchesSeedIdentity,
@@ -49,6 +50,11 @@ import {
   remapTriadOrganizationStateActorIds
 } from '../grayNetwork/triadOrganizationState';
 import { applyPolicePanelPatch, type PolicePanelPatch } from '../police/policePanel';
+import {
+  applyPoliceCareerProgress,
+  isPolicePromotionDlcBound,
+  type PoliceCareerProgressPatch
+} from '../police/policeCareerProgress';
 import { synchronizePlayerPoliceRank } from '../police/playerPoliceRank';
 import { applyPregnancyLifecycle } from '../pregnancy/pregnancyLifecycle';
 import { evaluateRelationshipCreationEvidence } from '../relationship/relationshipEvidence';
@@ -81,6 +87,10 @@ import {
   applyPlayerCivilianRoleProfilePatch,
   type PlayerCivilianRoleProfilePatch
 } from '../identity/playerCivilianRoleProfile';
+import {
+  actorNameMatchesFixedIdentity,
+  evaluateFixedActorIdentityPatch
+} from '../identity/fixedActorIdentityGuard';
 import {
   applyPlayerPoliceRoleProfilePatch,
   type PlayerPoliceRoleProfilePatch
@@ -120,6 +130,7 @@ import type {
   StoryTurnMetrics,
   Trait,
   TraitProgress,
+  TurnId,
   Vitals
 } from '../runtime/types';
 import { createStoryVisualContext } from '../runtime/storyVisualContext';
@@ -166,6 +177,24 @@ function addMinutes(time: GameTime, elapsedMinutes: number): GameTime {
 
 function cloneGameTime(time: GameTime): GameTime {
   return { ...time };
+}
+
+function appendTurnDiagnostics(
+  state: RuntimeState,
+  turnId: TurnId,
+  diagnostics: readonly StoryDiagnosticIssue[]
+): RuntimeState {
+  if (diagnostics.length === 0) return state;
+  let appended = false;
+  const storyLog = state.storyLog.map((entry) => {
+    if (appended || entry.turnId !== turnId || entry.speaker !== 'narrator') return entry;
+    appended = true;
+    return {
+      ...entry,
+      writebackDiagnostics: [...(entry.writebackDiagnostics ?? []), ...diagnostics]
+    };
+  });
+  return appended ? { ...state, storyLog } : state;
 }
 
 const RETAINED_HEAVY_NARRATOR_TURNS = 10;
@@ -890,6 +919,22 @@ function stableSeedNameMatch(value: string | undefined): SeedIdentityMatch | und
     : undefined;
 }
 
+function recoverUninstantiatedSeedActorIdentity(
+  actors: Record<string, Actor>,
+  patch: ActorPatch
+): SeedIdentityMatch | undefined {
+  if (!patch.actorId.startsWith('npc_seed_') || actors[patch.actorId]) return undefined;
+
+  const actorIdMatch = findSeedIdentityByCanonicalId(patch.actorId.slice('npc_seed_'.length));
+  const displayNameMatch = stableSeedNameMatch(patch.name);
+  const englishNameMatch = stableSeedNameMatch(patch.englishName);
+  if (!actorIdMatch || !displayNameMatch || !englishNameMatch) return undefined;
+  if (displayNameMatch.canonicalSeedId !== englishNameMatch.canonicalSeedId) return undefined;
+  return displayNameMatch.canonicalSeedId === actorIdMatch.canonicalSeedId
+    ? undefined
+    : displayNameMatch;
+}
+
 function findSeedIdentityMatchForActorPatch(
   actors: Record<string, Actor>,
   patch: ActorPatch
@@ -1148,6 +1193,43 @@ function setActorScene(actor: Actor, sceneId: string | undefined): Actor {
 
   const { currentSceneId: _currentSceneId, ...actorWithoutScene } = actor;
   return actorWithoutScene;
+}
+
+function actorHasCurrentLocalAnchor(
+  actor: Actor,
+  location: RuntimeState['location']
+): boolean {
+  if (actor.presence !== 'present' && actor.presence !== 'nearby') return false;
+  if (
+    location.currentSceneId &&
+    actor.currentSceneId === location.currentSceneId
+  ) {
+    return true;
+  }
+  if (actor.currentPlaceId === location.currentPlaceId) return true;
+  return !actor.currentPlaceId && !actor.currentSceneId;
+}
+
+function actorPatchHasCurrentLocationAnchor(
+  patch: Pick<ActorPatch, 'currentPlaceId' | 'currentSceneId'>,
+  location: RuntimeState['location']
+): boolean {
+  const hasExplicitAnchor =
+    patch.currentPlaceId !== undefined || patch.currentSceneId !== undefined;
+  if (!hasExplicitAnchor) return false;
+  if (
+    patch.currentPlaceId !== undefined &&
+    patch.currentPlaceId !== location.currentPlaceId
+  ) {
+    return false;
+  }
+  if (
+    patch.currentSceneId !== undefined &&
+    patch.currentSceneId !== location.currentSceneId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function normalizeActorsForCurrentLocation(
@@ -1823,12 +1905,14 @@ export function applyCasePatch(existing: CaseFile | undefined, patch: CasePatch,
     patch.conflictSummary ??
     existing?.internalProgressSummary ??
     '';
+  const requestedStatus = patch.status ?? existing?.status ?? 'investigating';
+  const status = existing?.status === 'archived' ? 'archived' : requestedStatus;
 
   return {
     caseId: patch.caseId,
     title: patch.title ?? existing?.title ?? patch.caseId,
     caseType: patch.caseType ?? patch.type ?? existing?.caseType ?? 'general_case',
-    status: patch.status ?? existing?.status ?? 'investigating',
+    status,
     playerRole: patch.playerRole ?? existing?.playerRole ?? 'aware',
     leadActorId: patch.leadActorId ?? existing?.leadActorId,
     leadActorName: patch.leadActorName ?? existing?.leadActorName,
@@ -1847,7 +1931,9 @@ export function applyCasePatch(existing: CaseFile | undefined, patch: CasePatch,
     visibility: patch.visibility ?? existing?.visibility ?? 'player_known',
     createdAt: cloneGameTime(patch.createdAt ?? existing?.createdAt ?? time),
     updatedAt: cloneGameTime(updatedAt),
-    archivedAt: patch.archivedAt ? cloneGameTime(patch.archivedAt) : existing?.archivedAt
+    archivedAt: status === 'archived'
+      ? cloneGameTime(patch.archivedAt ?? existing?.archivedAt ?? time)
+      : undefined
   };
 }
 
@@ -2201,11 +2287,15 @@ export function applyNarratorResponse(
   let location = state.location;
   let policePanel = state.policePanel;
   let environment = refreshWeatherIfExpired(state.environment, nextTime);
+  const policePromotionDlcBound = isPolicePromotionDlcBound(state);
+  let deferredPoliceRoleProfilePatch: PlayerPoliceRoleProfilePatch | undefined;
+  let attemptedDirectPoliceRank: string | undefined;
   const applicationDiagnostics: StoryDiagnosticIssue[] = [
     ...assetPurchaseAtomicity.diagnostics,
     ...organizationIdentityResolution.diagnostics
   ];
   const actorIdAliases = new Map(Object.entries(meta.actorIdAliases ?? {}));
+  const actorIdsWithIdentityConflict = new Set<string>();
   const patchedPlaceIds = new Set<string>();
   const patchedSceneIds: string[] = [];
   const updatedCurrentMatterIds: string[] = [];
@@ -2234,7 +2324,25 @@ export function applyNarratorResponse(
   }
 
   for (const [index, rawPatch] of response.writeback.actorPatches.entries()) {
-    const screenCharacterIdentityResolution = normalizeScreenCharacterActorPatch(actors, rawPatch);
+    const recoveredSeedIdentity = recoverUninstantiatedSeedActorIdentity(actors, rawPatch);
+    const identityCandidatePatch = recoveredSeedIdentity
+      ? { ...rawPatch, actorId: recoveredSeedIdentity.runtimeActorId }
+      : rawPatch;
+    const rawResolution = resolveActorReferenceWithAliases(actors, actorIdAliases, identityCandidatePatch.actorId);
+    const fixedIdentityConflict = evaluateFixedActorIdentityPatch(
+      actors[rawResolution.actorId],
+      identityCandidatePatch
+    );
+    if (fixedIdentityConflict) {
+      actorIdsWithIdentityConflict.add(rawPatch.actorId);
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index],
+        code: 'actor_fixed_identity_conflict',
+        message: `Actor patch "${rawPatch.actorId}" was ignored because stable identity "${fixedIdentityConflict.expected.displayName}" conflicts with ${fixedIdentityConflict.conflicting.map((item) => `"${item.displayName}"`).join(', ')}.`
+      });
+      continue;
+    }
+    const screenCharacterIdentityResolution = normalizeScreenCharacterActorPatch(actors, identityCandidatePatch);
     const seedIdentityResolution = screenCharacterIdentityResolution.match
       ? { patch: screenCharacterIdentityResolution.patch }
       : normalizeSeedActorPatch(actors, screenCharacterIdentityResolution.patch);
@@ -2356,21 +2464,57 @@ export function applyNarratorResponse(
     } = actorPatch;
     const effectiveActorPatch = isPlayerActorPatch ? nonIdentityActorPatch : actorPatch;
     const effectiveRoleProfiles = isPlayerActorPatch ? undefined : roleProfiles;
+    const rejectsUnanchoredPresentTransition = Boolean(
+      actor &&
+        effectiveActorPatch.presence === 'present' &&
+        !actorHasCurrentLocalAnchor(actor, location) &&
+        !actorPatchHasCurrentLocationAnchor(effectiveActorPatch, location)
+    );
+    if (rejectsUnanchoredPresentTransition) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index, 'presence'],
+        code: 'actor_present_requires_location_anchor',
+        message: `Actor patch "${resolution.actorId}" could not move an existing remote actor into the visible scene without an explicit current place or scene anchor. Other safe actor fields were still applied.`
+      });
+    }
+    const {
+      presence: _unanchoredPresent,
+      ...actorPatchWithoutUnanchoredPresent
+    } = effectiveActorPatch;
+    const presenceSafeActorPatch = rejectsUnanchoredPresentTransition
+      ? actorPatchWithoutUnanchoredPresent
+      : effectiveActorPatch;
     const locationAwareActorPatch =
-      effectivePatch.presence === 'present'
+      !rejectsUnanchoredPresentTransition && effectiveActorPatch.presence === 'present'
         ? {
             ...effectiveActorPatch,
-            currentPlaceId: effectivePatch.currentPlaceId ?? location.currentPlaceId,
-            ...(effectivePatch.currentSceneId ?? location.currentSceneId
-              ? { currentSceneId: effectivePatch.currentSceneId ?? location.currentSceneId }
+            currentPlaceId: effectiveActorPatch.currentPlaceId ?? location.currentPlaceId,
+            ...(effectiveActorPatch.currentSceneId ?? location.currentSceneId
+              ? { currentSceneId: effectiveActorPatch.currentSceneId ?? location.currentSceneId }
               : {})
           }
-        : effectiveActorPatch;
+        : presenceSafeActorPatch;
+    const requestedInteractionScore = locationAwareActorPatch.interactionScore;
+    const preservesExistingInteractionScore = Boolean(
+      actor &&
+        requestedInteractionScore !== undefined &&
+        requestedInteractionScore < actor.interactionScore
+    );
+    if (preservesExistingInteractionScore && actor && requestedInteractionScore !== undefined) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorPatches', index, 'interactionScore'],
+        code: 'actor_interaction_score_decrease_preserved',
+        message: `Actor "${actor.actorId}" kept its cumulative interaction score (${actor.interactionScore} -> ${requestedInteractionScore} was not applied). Hostility or distance must be recorded in relationship text fields instead of lowering established interaction depth.`
+      });
+    }
+    const interactionScoreSafeActorPatch = preservesExistingInteractionScore && actor
+      ? { ...locationAwareActorPatch, interactionScore: actor.interactionScore }
+      : locationAwareActorPatch;
     const hasRoleProfiles = Object.keys(effectiveRoleProfiles ?? {}).length > 0;
     const baseActor =
       actor ??
       createActorDefaults({
-        ...locationAwareActorPatch,
+        ...interactionScoreSafeActorPatch,
         actorId: resolution.actorId,
         name: effectivePatch.name ?? effectivePatch.publicIdentity ?? effectivePatch.actorId,
         currentIdentity: effectivePatch.currentIdentity ?? 'civilian',
@@ -2398,7 +2542,7 @@ export function applyNarratorResponse(
     }
     const patchedActorBase = normalizeActor({
       ...baseActor,
-      ...locationAwareActorPatch,
+      ...interactionScoreSafeActorPatch,
       actorId: baseActor.actorId,
       name: effectivePatch.name ?? baseActor.name,
       currentIdentity: isPlayerActorPatch ? baseActor.currentIdentity : effectivePatch.currentIdentity ?? baseActor.currentIdentity,
@@ -2453,27 +2597,41 @@ export function applyNarratorResponse(
       response.writeback.identityContextPatch as PlayerIdentityContextPatch,
       actorIdAliases
     );
-    const identityResult = applyPlayerIdentityContextPatch(
-      {
-        ...state,
-        time: nextTime,
-        player,
-        actors,
-        secretFacts,
-        lawIdentity,
-        policePanel,
-        finance
-      },
-      identityContextPatch
-    );
-    if (identityResult.applied) {
+    const isBoundPoliceCorrection =
+      policePromotionDlcBound &&
+      identityContextPatch.kind === 'correction' &&
+      identityContextPatch.fromIdentity === 'police' &&
+      identityContextPatch.toIdentity === 'police';
+    if (isBoundPoliceCorrection) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'identityContextPatch'],
+        code: 'police_identity_rank_bypass_blocked',
+        message: 'Same-identity police corrections cannot bypass the bound promotion and posting program.'
+      });
+    }
+    const identityResult = isBoundPoliceCorrection
+      ? undefined
+      : applyPlayerIdentityContextPatch(
+          {
+            ...state,
+            time: nextTime,
+            player,
+            actors,
+            secretFacts,
+            lawIdentity,
+            policePanel,
+            finance
+          },
+          identityContextPatch
+        );
+    if (identityResult?.applied) {
       player = identityResult.state.player;
       actors = identityResult.state.actors;
       secretFacts = identityResult.state.secretFacts;
       lawIdentity = identityResult.state.lawIdentity;
       policePanel = identityResult.state.policePanel;
       finance = identityResult.state.finance;
-    } else if (identityResult.diagnostic) {
+    } else if (identityResult?.diagnostic) {
       applicationDiagnostics.push({
         path: ['writeback', 'identityContextPatch'],
         code: 'identity_context_patch_rejected',
@@ -2493,27 +2651,31 @@ export function applyNarratorResponse(
         ? { peerActorIds: remapActorIds(rawPatch.peerActorIds, actorIdAliases) }
         : {})
     };
-    const roleProfileResult = applyPlayerPoliceRoleProfilePatch(
-      {
-        ...state,
-        time: nextTime,
-        player,
-        actors,
-        lawIdentity,
-        policePanel
-      },
-      policeRoleProfilePatch
-    );
-    if (roleProfileResult.applied) {
-      actors = roleProfileResult.state.actors;
-      lawIdentity = roleProfileResult.state.lawIdentity;
-      policePanel = roleProfileResult.state.policePanel;
-    } else if (roleProfileResult.diagnostic) {
-      applicationDiagnostics.push({
-        path: ['writeback', 'policeRoleProfilePatch'],
-        code: 'police_role_profile_patch_rejected',
-        message: roleProfileResult.diagnostic
-      });
+    if (policePromotionDlcBound) {
+      deferredPoliceRoleProfilePatch = policeRoleProfilePatch;
+    } else {
+      const roleProfileResult = applyPlayerPoliceRoleProfilePatch(
+        {
+          ...state,
+          time: nextTime,
+          player,
+          actors,
+          lawIdentity,
+          policePanel
+        },
+        policeRoleProfilePatch
+      );
+      if (roleProfileResult.applied) {
+        actors = roleProfileResult.state.actors;
+        lawIdentity = roleProfileResult.state.lawIdentity;
+        policePanel = roleProfileResult.state.policePanel;
+      } else if (roleProfileResult.diagnostic) {
+        applicationDiagnostics.push({
+          path: ['writeback', 'policeRoleProfilePatch'],
+          code: 'police_role_profile_patch_rejected',
+          message: roleProfileResult.diagnostic
+        });
+      }
     }
   }
 
@@ -2525,14 +2687,24 @@ export function applyNarratorResponse(
     }
   }
   if (response.writeback.playerPatch?.policePanel) {
-    policePanel = applyPolicePanelPatch(policePanel, response.writeback.playerPatch.policePanel as PolicePanelPatch, nextTime);
-    const currentRank = response.writeback.playerPatch.policePanel.careerPath?.currentRank?.trim();
-    if (currentRank) {
+    const rawPolicePanelPatch = response.writeback.playerPatch.policePanel as PolicePanelPatch;
+    attemptedDirectPoliceRank = rawPolicePanelPatch.careerPath?.currentRank?.trim();
+    const policePanelPatch = policePromotionDlcBound && rawPolicePanelPatch.careerPath
+      ? {
+          ...rawPolicePanelPatch,
+          careerPath: {
+            ...rawPolicePanelPatch.careerPath,
+            currentRank: undefined
+          }
+        }
+      : rawPolicePanelPatch;
+    policePanel = applyPolicePanelPatch(policePanel, policePanelPatch, nextTime);
+    if (!policePromotionDlcBound && attemptedDirectPoliceRank) {
       const synchronizedRank = synchronizePlayerPoliceRank({
         lawIdentity,
         policePanel,
         playerActor: actors[player.actorId],
-        rank: currentRank
+        rank: attemptedDirectPoliceRank
       });
       lawIdentity = synchronizedRank.lawIdentity;
       policePanel = synchronizedRank.policePanel;
@@ -2594,10 +2766,17 @@ export function applyNarratorResponse(
 
   location = applyLocationPatch(location, response.writeback.locationPatch, scenes);
 
+  const caseStatusBeforeWriteback = new Map<string, CaseFile['status'] | undefined>();
+  const touchedCaseIds = new Set<string>();
   for (const patch of response.writeback.casePatches) {
-    cases[patch.caseId] = enforcePlayerCaseLead({
+    const previousCase = cases[patch.caseId];
+    if (!caseStatusBeforeWriteback.has(patch.caseId)) {
+      caseStatusBeforeWriteback.set(patch.caseId, previousCase?.status);
+    }
+    touchedCaseIds.add(patch.caseId);
+    const nextCase = enforcePlayerCaseLead({
       caseFile: applyCasePatch(
-        cases[patch.caseId],
+        previousCase,
         {
           ...patch,
           relatedActorIds: remapActorIds(patch.relatedActorIds, actorIdAliases),
@@ -2615,6 +2794,37 @@ export function applyNarratorResponse(
       playerActorId: player.actorId,
       playerActorName: actors[player.actorId]?.name
     });
+    cases[patch.caseId] = nextCase;
+  }
+
+  const newlyArchivedCases = [...touchedCaseIds]
+    .filter((caseId) => caseStatusBeforeWriteback.get(caseId) !== 'archived' && cases[caseId]?.status === 'archived')
+    .map((caseId) => cases[caseId]);
+  for (const caseFile of newlyArchivedCases) {
+    const archiveSummary = [...caseFile.activityLog]
+      .reverse()
+      .find((activity) => activity.kind === 'archived' && activity.visibleToPlayer !== false)
+      ?.summary.trim();
+    const text = archiveSummary
+      ? `案件【${caseFile.title}】已正式归档：${archiveSummary}`
+      : `案件【${caseFile.title}】已正式归档。`;
+    const memoryId = nextAvailableId('memory', memories);
+    memories[memoryId] = {
+      memoryId,
+      text,
+      kind: 'case',
+      tier: 'short_term',
+      relatedActorIds: [...caseFile.relatedActorIds],
+      relatedCaseIds: [caseFile.caseId],
+      relatedPlaceIds: [...caseFile.relatedPlaceIds],
+      relatedOrganizationIds: [...caseFile.relatedOrganizationIds],
+      relatedTurnId: turnId,
+      gameTime: cloneGameTime(nextTime),
+      importance: 85,
+      visibility: 'player_known',
+      certainty: 'fact',
+      embeddingText: text
+    };
   }
 
   for (const patch of response.writeback.caseEvidencePatches) {
@@ -2764,6 +2974,21 @@ export function applyNarratorResponse(
   }
 
   for (const [index, patch] of response.writeback.relationshipThreadPatches.entries()) {
+    const relationshipActorIds = [
+      ...(patch.relatedActorIds ?? []),
+      ...(patch.primaryActorId ? [patch.primaryActorId] : [])
+    ];
+    const conflictingActorIds = [...new Set(
+      relationshipActorIds.filter((actorId) => actorIdsWithIdentityConflict.has(actorId))
+    )];
+    if (conflictingActorIds.length > 0) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'relationshipThreadPatches', index],
+        code: 'relationship_actor_identity_conflict_rejected',
+        message: `Relationship thread "${patch.threadId}" was ignored because its actor patch had a fixed identity conflict: ${conflictingActorIds.join(', ')}.`
+      });
+      continue;
+    }
     const remappedRelatedActorIds = remapActorIds(patch.relatedActorIds, actorIdAliases);
     const remappedPrimaryActorId = patch.primaryActorId ? actorIdAliases.get(patch.primaryActorId) ?? patch.primaryActorId : undefined;
     const identityResolution = resolveRelationshipThreadIdentity(
@@ -2825,7 +3050,12 @@ export function applyNarratorResponse(
     for (const warning of result.diagnostics) {
       applicationDiagnostics.push({
         path: ['writeback', 'relationshipThreadPatches', index],
-        code: 'relationship_thread_patch_warning',
+        code:
+          result.rejectionCode === 'missing_actor'
+            ? 'relationship_missing_actor_rejected'
+            : result.rejectionCode === 'incomplete_creation'
+              ? 'relationship_creation_rejected'
+              : 'relationship_thread_patch_warning',
         message: warning
       });
     }
@@ -2937,19 +3167,7 @@ export function applyNarratorResponse(
   }
 
   for (const [index, suggestion] of response.writeback.actorMemories.entries()) {
-    const memorySeedMatch = findSeedIdentityMatch(suggestion.actorName);
-    const seedActorId = memorySeedMatch ? findExistingActorIdForSeedIdentity(actors, memorySeedMatch) : undefined;
-    const memoryCityPowerMatch = memorySeedMatch ? undefined : findCityPowerIdentityMatch(suggestion.actorName);
-    const cityPowerActorId = memoryCityPowerMatch
-      ? findExistingActorIdForCityPowerIdentity(actors, memoryCityPowerMatch)
-      : undefined;
-    const memoryActorId = seedActorId ?? cityPowerActorId ?? suggestion.actorId;
-    const memoryActorName = memorySeedMatch
-      ? memorySeedMatch.displayName
-      : memoryCityPowerMatch
-        ? memoryCityPowerMatch.displayName
-        : suggestion.actorName;
-    const resolution = resolveActorReferenceWithAliases(actors, actorIdAliases, memoryActorId);
+    const resolution = resolveActorReferenceWithAliases(actors, actorIdAliases, suggestion.actorId);
 
     const actor = actors[resolution.actorId];
     if (!actor) {
@@ -2957,6 +3175,14 @@ export function applyNarratorResponse(
         path: ['writeback', 'actorMemories', index, 'actorId'],
         code: 'missing_actor_reference',
         message: `Actor memory "${suggestion.actorId}" was ignored because no existing actor could be found.`
+      });
+      continue;
+    }
+    if (!actorNameMatchesFixedIdentity(actor, suggestion.actorName)) {
+      applicationDiagnostics.push({
+        path: ['writeback', 'actorMemories', index, 'actorName'],
+        code: 'actor_memory_identity_conflict',
+        message: `Actor memory for "${suggestion.actorId}" was ignored because actorName "${suggestion.actorName}" conflicts with the resolved actor "${actor.name}".`
       });
       continue;
     }
@@ -2988,15 +3214,17 @@ export function applyNarratorResponse(
     const sanitizedSuggestion = actorSeedMatch
       ? {
           ...suggestion,
-          actorName: memoryActorName ? redactSeedProtectedNames(memoryActorName, actorSeedMatch) : memoryActorName,
+          actorName: suggestion.actorName
+            ? redactSeedProtectedNames(suggestion.actorName, actorSeedMatch)
+            : suggestion.actorName,
           text: redactSeedProtectedNames(suggestion.text, actorSeedMatch)
         }
       : actorCityPowerMatch
         ? {
             ...suggestion,
-            actorName: memoryActorName
-              ? redactCityPowerProtectedNames(memoryActorName, actorCityPowerMatch)
-              : memoryActorName,
+            actorName: suggestion.actorName
+              ? redactCityPowerProtectedNames(suggestion.actorName, actorCityPowerMatch)
+              : suggestion.actorName,
             text: redactCityPowerProtectedNames(suggestion.text, actorCityPowerMatch)
           }
       : suggestion;
@@ -3068,6 +3296,7 @@ export function applyNarratorResponse(
   }
   actors = promoteCurrentMatterActorsAtLocation(actors, dynamicEvents, updatedCurrentMatterIds, location, state.player.actorId, nextTime);
   ({ cases, dynamicEvents } = syncPoliceCurrentMattersToCases(cases, dynamicEvents, updatedCurrentMatterIds, player, turnId, nextTime));
+  ({ cases, caseEvidence } = deduplicateExactCaseEvidence(cases, caseEvidence));
 
   location = normalizeLocationScene(location, scenes);
   actors = normalizeActorsForCurrentLocation(actors, scenes, location, state.player.actorId, nextTime);
@@ -3230,6 +3459,46 @@ export function applyNarratorResponse(
     } as CombatEventPatch);
   }
   linkConflictRecordsToStoryEntry(nextState, turnId);
+  if (policePromotionDlcBound) {
+    const rawCareerPatch = response.writeback.policeCareerProgressPatch as
+      | PoliceCareerProgressPatch
+      | undefined;
+    const careerPatch = rawCareerPatch
+      ? {
+          ...rawCareerPatch,
+          events: rawCareerPatch.events.map((event) => ({
+            ...event,
+            ...(event.actorId
+              ? { actorId: remapActorIds([event.actorId], actorIdAliases)?.[0] ?? event.actorId }
+              : {})
+          }))
+        }
+      : undefined;
+    const rankBeforeCareerApply = nextState.lawIdentity.rank;
+    const careerResult = applyPoliceCareerProgress({
+      beforeState: state,
+      afterState: nextState,
+      patch: careerPatch,
+      roleProfilePatch: deferredPoliceRoleProfilePatch,
+      attemptedDirectRank: attemptedDirectPoliceRank,
+      turnId
+    });
+    nextState = appendTurnDiagnostics(careerResult.state, turnId, careerResult.diagnostics);
+    if (nextState.lawIdentity.rank !== rankBeforeCareerApply) {
+      const synchronizedFinance = syncPlayerPoliceSalaryCashflow({
+        finance: nextState.finance,
+        time: nextTime,
+        currentIdentity: nextState.player.currentIdentity,
+        lawIdentity: nextState.lawIdentity,
+        identityHistory: nextState.player.identityHistory
+      });
+      nextState = {
+        ...nextState,
+        finance: synchronizedFinance,
+        player: syncPlayerEconomyWithFinance(nextState.player, synchronizedFinance)
+      };
+    }
+  }
   nextState = settleTurnExperience({
     beforeState: state,
     afterState: nextState,

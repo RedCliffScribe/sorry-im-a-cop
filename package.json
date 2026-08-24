@@ -1,7 +1,7 @@
 {
   "name": "sorry-im-a-cop-v2",
   "private": true,
-  "version": "2.0.4",
+  "version": "2.0.20",
   "author": "RedCliffScribe",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -61,6 +61,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",

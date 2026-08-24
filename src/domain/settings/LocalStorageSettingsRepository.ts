@@ -6,6 +6,7 @@ import { resolveAppLocale } from '../localization/appLocale';
 import type { AiSettings } from './types';
 import { normalizeDramaticContentSettings } from '../drama/settings';
 import { normalizePersistentPromptEntries } from '../prompts/persistentPrompt';
+import { normalizeAvgPortraitLayout } from './avgPortraitLayout';
 
 export const AI_SETTINGS_STORAGE_KEY = 'sorry-im-a-cop-v2-ai-settings';
 
@@ -51,7 +52,8 @@ export class LocalStorageSettingsRepository {
               ? parsed.display.storyPresentationMode
               : 'auto',
           avgPlayerPortraitMode:
-            parsed.display?.avgPlayerPortraitMode === 'show' ? 'show' : 'hidden'
+            parsed.display?.avgPlayerPortraitMode === 'show' ? 'show' : 'hidden',
+          avgPortraitLayout: normalizeAvgPortraitLayout(parsed.display?.avgPortraitLayout)
         },
         prompts: {
           ...defaults.prompts,

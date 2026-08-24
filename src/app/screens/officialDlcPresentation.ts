@@ -6,6 +6,11 @@ import type {
   DlcCompatibilityStatus,
   OfficialDlcManifest
 } from '../../domain/dlc/types';
+import policePromotionCover from '../../assets/dlc/police-promotion-cover.webp';
+
+const officialDlcCoverImages: Readonly<Record<string, string>> = {
+  'police_promotion@1.0.0': policePromotionCover
+};
 
 const compatibilityLabels: Record<DlcCompatibilityStatus, string> = {
   supported: '支持',
@@ -62,9 +67,12 @@ export function getOfficialDlcContentHighlights(
   return manifest.presentation?.contentHighlights ?? [];
 }
 
-/** Optional cover artwork is distributed separately from this source snapshot. */
+/**
+ * Cover art is resolved against the exact immutable content version so an old
+ * save never receives artwork that belongs to a newer runtime manifest.
+ */
 export function getOfficialDlcCoverImage(
-  _manifest: OfficialDlcManifest
+  manifest: OfficialDlcManifest
 ): string | undefined {
-  return undefined;
+  return officialDlcCoverImages[`${manifest.dlcId}@${manifest.version}`];
 }

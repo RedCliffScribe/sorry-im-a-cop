@@ -15,6 +15,7 @@ import {
   urbanLegendsAlphaNewsTemplate,
   urbanLegendsAlphaPlaces
 } from '../urbanLegendsAlpha/content';
+import { policePromotionManifest } from '../policePromotion/content';
 import {
   urbanLegendsAlphaToFormalIdentityAudit,
   urbanLegendsEntryRouteMatrix,
@@ -46,13 +47,17 @@ function alphaAssetIds(): string[] {
 }
 
 describe('Urban Legends formal Phase 2A + 2B content', () => {
-  it('freezes Alpha for existing saves and publishes only the formal package to new saves', () => {
-    expect(officialDlcManifests).toEqual([urbanLegendsFormalManifest]);
+  it('freezes Alpha for existing saves and keeps only the formal package among public narrative DLCs', () => {
+    expect(officialDlcManifests).toEqual([
+      urbanLegendsFormalManifest,
+      policePromotionManifest
+    ]);
     expect(officialDlcRuntimeManifests).toEqual([
       urbanLegendsAlphaManifest,
       urbanLegendsFormalV1Manifest,
       urbanLegendsFormalV1_1Manifest,
-      urbanLegendsFormalManifest
+      urbanLegendsFormalManifest,
+      policePromotionManifest
     ]);
     expect(getOfficialDlcManifest(urbanLegendsAlphaManifest.dlcId)).toBe(
       urbanLegendsAlphaManifest

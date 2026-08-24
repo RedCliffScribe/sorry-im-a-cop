@@ -185,6 +185,10 @@ describe('context selection', () => {
     expect(prompt).toContain('时段：14:00–22:45');
     expect(prompt).toContain('下一更：1988年9月13日 星期二 晚更 14:00–22:45');
     expect(prompt).toContain('4天晚更 → 2天轮休');
+    expect(prompt).toContain('未来七日班表（从当前游戏日期起滚动更新）');
+    expect(prompt).toContain('今天 · 1988年9月12日 星期一 晚更 14:00–22:45');
+    expect(prompt).toContain('1988年9月17日 星期六 轮休');
+    expect(prompt).toContain('1988年9月18日 星期日 夜更 22:00–次日06:45');
     expect(prompt).toContain('不要因为玩家是警察就每回合自动新增报案');
     expect(prompt).toContain('交班、下班、补眠、私人生活');
   });
@@ -1718,6 +1722,15 @@ describe('context selection', () => {
     expect(prompt).toContain('同一警察身份内的职级变化不是身份转换');
     expect(prompt).toContain('同一警察身份内正式调往新警署、部门或行动单位');
     expect(prompt).toContain('必须写 policeRoleProfilePatch');
+    expect(prompt).toContain('禁止输出 null、空对象或由 null、空字符串、空数组组成的占位对象');
+    expect(prompt).toContain(
+      'policeRoleProfilePatch={"reason":"正式变化依据","stationOrPost":"完整驻点","department":"完整部门","assignmentSummary":"已生效职责"}'
+    );
+    expect(prompt).toContain(
+      'civilianRoleProfilePatch={"reason":"正式变化依据","publicOccupation":"已生效职业"}'
+    );
+    expect(prompt).not.toContain('"policeRoleProfilePatch": {');
+    expect(prompt).not.toContain('"civilianRoleProfilePatch": {');
     expect(prompt).toContain('narrativeText');
     expect(prompt).toContain('writebackVersion');
     expect(prompt).toContain('writeback');
@@ -1737,6 +1750,7 @@ describe('context selection', () => {
     expect(prompt).toContain('actorId 必须稳定');
     expect(prompt).toContain('NPC 在 narrativeText 中明确进入、离开、换到另一房间');
     expect(prompt).toContain('必须至少同步更新对应 actorPatches.presence');
+    expect(prompt).toContain('必须同时提供与玩家当前结构化地点一致的 currentPlaceId 或 currentSceneId');
     expect(prompt).toContain('presence=present 只用于与玩家处在同一可见场景');
     expect(prompt).toContain('禁止只在 statusSummary/recentInteractionMemory 写“离开”却让旧 presentActorIds 保留');
     expect(prompt).toContain('新普通 NPC 的 name 必须是可长期绑定身份的完整姓名');
@@ -2552,6 +2566,8 @@ describe('context selection', () => {
     expect(prompt).toContain('pregnancyRiskPatches');
     expect(prompt).toContain('pregnancyLifecycleReview');
     expect(prompt).toContain('pregnancy_confirmed');
+    expect(prompt).toContain('"actorId": "稳定人物ID"');
+    expect(prompt).toContain('reason 禁止返回数组、对象或 null');
     expect(prompt).toContain('本地只追加接触记录，不会建立第二个妊娠');
     expect(prompt).toContain('paternityCandidates');
     expect(prompt).toContain('列出全部候选');

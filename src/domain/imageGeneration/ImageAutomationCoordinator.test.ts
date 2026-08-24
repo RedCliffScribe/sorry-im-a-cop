@@ -67,7 +67,66 @@ describe('automatic image coordination', () => {
     ]);
   });
 
-  it('hard-blocks before prompt conversion when exact real generation evidence is absent and stays idempotent', async () => {
+  it('detects an existing actor when they enter the scene or first speak in the rewritten turn', () => {
+    const previous = createInitialRuntimeState();
+    const existing = { ...npc('npc_existing'), name: '温碧霞', presence: 'absent' as const };
+    const previousWithActor = {
+      ...previous,
+      actors: { ...previous.actors, [existing.actorId]: existing }
+    };
+    const current = {
+      ...previousWithActor,
+      actors: {
+        ...previousWithActor.actors,
+        [existing.actorId]: { ...existing, presence: 'present' as const }
+      },
+      storyLog: [...previousWithActor.storyLog, {
+        turnId: 'turn_first_appearance',
+        speaker: 'narrator' as const,
+        text: '【温碧霞】你终于来了。',
+        gameTime: previous.time,
+        blocks: [{
+          type: 'dialogue' as const,
+          speakerLabel: '温碧霞',
+          text: '你终于来了。',
+          emotion: 'happy' as const
+        }]
+      }]
+    };
+
+    const subjects = detectAutomaticImageSubjects(previousWithActor, current);
+
+    expect(subjects.actors.map((actor) => actor.actorId)).toEqual(['npc_existing']);
+    expect(subjects.narratorEntries.map((entry) => entry.turnId)).toEqual(['turn_first_appearance']);
+  });
+
+  it('detects first dialogue appearance without repeating an unchanged established speaker', () => {
+    const previous = createInitialRuntimeState();
+    const existing = { ...npc('npc_existing'), name: '温碧霞', presence: 'present' as const };
+    const previousWithActor = {
+      ...previous,
+      actors: { ...previous.actors, [existing.actorId]: existing }
+    };
+    const entry = {
+      turnId: 'turn_dialogue_appearance',
+      speaker: 'narrator' as const,
+      text: '【温碧霞】第一次开口。',
+      gameTime: previous.time,
+      blocks: [{
+        type: 'dialogue' as const,
+        speakerLabel: '温碧霞',
+        text: '第一次开口。',
+        emotion: 'neutral' as const
+      }]
+    };
+    const current = { ...previousWithActor, storyLog: [...previousWithActor.storyLog, entry] };
+
+    expect(detectAutomaticImageSubjects(previousWithActor, current).actors.map((actor) => actor.actorId))
+      .toEqual(['npc_existing']);
+    expect(detectAutomaticImageSubjects(current, current).actors).toEqual([]);
+  });
+
+  it('hard-blocks before prompt conversion and retries only once before any provider submission', async () => {
     const profileRepository = new IndexedDbImageProfileRepository(`auto-profile-${crypto.randomUUID()}`);
     const profile = createDefaultImageApiProfile('openai-images', 'profile_auto') as OpenAiImagesProfile;
     profile.enabled = true;
@@ -104,10 +163,17 @@ describe('automatic image coordination', () => {
 
     await coordinator.processTransition('save_auto', previous, current);
     await coordinator.processTransition('save_auto', previous, current);
+    await coordinator.processTransition('save_auto', previous, current);
 
     const records = await runtimeRepository.listForSave('save_auto');
     expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({ status: 'blocked', blockerCode: 'runtime-evidence-missing', taskIds: [] });
+    expect(records[0]).toMatchObject({
+      status: 'blocked',
+      blockerCode: 'runtime-evidence-missing',
+      taskIds: [],
+      retryCount: 1,
+      maxRetries: 1
+    });
     expect(createPromptConversion).not.toHaveBeenCalled();
   });
 

@@ -27,15 +27,20 @@ import {
 } from './content';
 import { urbanLegendsFormalProvider } from './provider';
 import { urbanLegendsFormalSourceRef } from './stagePayload';
+import { policePromotionManifest } from '../policePromotion/content';
 
 describe('Urban Legends formal controlled registration', () => {
-  it('publishes only the formal package while retaining exact Alpha runtime compatibility', () => {
-    expect(officialDlcManifests).toEqual([urbanLegendsFormalManifest]);
+  it('publishes the formal narrative package while retaining exact Alpha runtime compatibility', () => {
+    expect(officialDlcManifests).toEqual([
+      urbanLegendsFormalManifest,
+      policePromotionManifest
+    ]);
     expect(officialDlcRuntimeManifests).toEqual([
       urbanLegendsAlphaManifest,
       urbanLegendsFormalV1Manifest,
       urbanLegendsFormalV1_1Manifest,
-      urbanLegendsFormalManifest
+      urbanLegendsFormalManifest,
+      policePromotionManifest
     ]);
     expect(
       getOfficialDlcRuntimeManifest('urban_legends_alpha', '1.0.0')

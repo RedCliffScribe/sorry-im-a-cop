@@ -253,7 +253,34 @@ describe('CaseArchiveModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '申请归档' }));
 
-    expect(onDraftPlayerAction).toHaveBeenCalledWith('我申请将【酒吧伤人案】归档，并说明理由。');
+    expect(onDraftPlayerAction).toHaveBeenCalledWith(
+      '我申请将【酒吧伤人案】归档，并说明理由。',
+      { kind: 'archive_request', caseId: 'case_bar_assault' }
+    );
+  });
+
+  it('does not offer lead actions after a case has already been archived', () => {
+    const state = createState();
+    state.cases = {
+      case_archived: caseFile('case_archived', {
+        title: '已经归档的案件',
+        status: 'archived',
+        playerRole: 'lead',
+        archivedAt: time
+      })
+    };
+
+    render(
+      <CaseArchiveModal
+        state={state}
+        onClose={vi.fn()}
+        onStateChange={vi.fn()}
+        onDraftPlayerAction={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: '申请归档' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '提交检控意见' })).not.toBeInTheDocument();
   });
 
   it('submits matching asset evidence into the case and removes it from assets', () => {

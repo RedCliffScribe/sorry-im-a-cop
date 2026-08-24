@@ -82,8 +82,11 @@ export function OfficialDlcScreen({
 
   async function attachToExistingSave(candidate: ExistingSaveDlcCandidate) {
     if (!attachmentManifest || !onAttachToExistingSave || !candidate.eligibility.eligible) return;
+    const attachmentPromise = attachmentManifest.type === 'system'
+      ? '加入前会自动建立独立备份。晋升进度从存档当前游戏时间开始，既有警衔、单位、岗位、权限和经历保持不变，也不会追溯补算过去的立功、考试或推荐。'
+      : '加入前会自动建立独立备份。扩展从当前游戏时间开始寻找自然入口，不补写过去，也不会改动已有角色、关系、案件、新闻或记忆。';
     const confirmed = window.confirm(
-      `将《${attachmentManifest.title}》加入“${candidate.saveName}”？\n\n加入前会自动建立独立备份。扩展从当前游戏时间开始寻找自然入口，不补写过去，也不会改动已有角色、关系、案件、新闻或记忆。`
+      `将《${attachmentManifest.title}》加入“${candidate.saveName}”？\n\n${attachmentPromise}`
     );
     if (!confirmed) return;
 
@@ -105,9 +108,9 @@ export function OfficialDlcScreen({
           返回首页
         </button>
         <div className="official-dlc-heading">
-          <p className="worldpack-selection-kicker">OFFICIAL STORY ARCHIVE</p>
-          <h1>DLC 剧情</h1>
-          <p>浏览官方剧情档案，或管理当前存档已经选择的扩展。</p>
+          <p className="worldpack-selection-kicker">OFFICIAL EXTENSIONS</p>
+          <h1>官方 DLC</h1>
+          <p>浏览官方扩展档案，或管理当前存档已经选择的内容。</p>
         </div>
         <div aria-hidden="true" />
       </header>
@@ -244,7 +247,7 @@ function AvailableDlcList({
     return (
       <div className="official-dlc-empty">
         <strong>当前没有已发布的官方 DLC</strong>
-        <p>这里会展示可用于新存档的官方剧情档案。尚未发布的内容不会提前出现在选择列表。</p>
+        <p>这里会展示可用于新存档的官方扩展。尚未发布的内容不会提前出现在选择列表。</p>
       </div>
     );
   }
@@ -289,12 +292,17 @@ function AvailableDlcList({
               })}
             </div>
             <p className="official-dlc-card-note">
-              新游戏可在选择世界包后直接勾选；兼容的已有存档也可以从当前游戏时间安全加入。
+              {manifest.type === 'narrative'
+                ? '新游戏可在选择世界包后直接勾选；兼容的已有存档也可以从当前游戏时间安全加入。'
+                : manifest.existingSaveAttachment?.mode === 'forward_only'
+                  ? '新游戏可在选择世界包后主动勾选；兼容的警察旧档也可从当前游戏时间开始启用，不追溯补算履历。'
+                  : '新游戏可在选择世界包后主动勾选；系统扩展不会自动替玩家晋升或调职。'}
             </p>
-            {manifest.type === 'narrative' && onAttachToExistingSave ? (
+            {manifest.existingSaveAttachment?.mode === 'forward_only' && onAttachToExistingSave ? (
               <button
                 type="button"
                 className="official-dlc-attach-button"
+                aria-label={`将${manifest.title}加入已有存档`}
                 onClick={() => onAttachToExistingSave(manifest)}
               >
                 加入已有存档
@@ -344,8 +352,12 @@ function ExistingSaveDlcAttachmentDialog({
         </header>
 
         <div className="official-dlc-attachment-notice">
-          <strong>从存档当前时间开始</strong>
-          <p>不会补写过去，不会重置人物、关系、案件、新闻或记忆；确认后会先自动建立一份加入前备份。</p>
+          <strong>{manifest.type === 'system' ? '从当前警队状态开始' : '从存档当前时间开始'}</strong>
+          <p>
+            {manifest.type === 'system'
+              ? '不会追溯补算旧回合的立功、考试或推荐，也不会改变当前警衔、单位、岗位和权限；确认后会先自动建立一份加入前备份。'
+              : '不会补写过去，不会重置人物、关系、案件、新闻或记忆；确认后会先自动建立一份加入前备份。'}
+          </p>
         </div>
 
         {isLoading ? (
@@ -412,7 +424,7 @@ function CurrentDlcList({
     return (
       <div className="official-dlc-empty">
         <strong>本存档没有绑定 DLC</strong>
-        <p>这是正常状态。你可以切换到“可用 DLC”，主动把兼容扩展加入已有存档；系统不会自动添加。</p>
+        <p>这是正常状态。兼容的扩展可按页面提示加入已有存档；不兼容的扩展会明确说明，系统不会自动添加。</p>
       </div>
     );
   }

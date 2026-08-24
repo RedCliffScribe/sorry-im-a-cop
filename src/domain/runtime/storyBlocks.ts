@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  resolveCanonicalActorId,
   resolveStoryDialogueActorId
 } from './storyDialogueActors';
 import type { Actor, ActorId, StoryEntry } from './types';
@@ -225,7 +226,29 @@ export function getStoryBlocks(
     playerActorId?: ActorId;
   } = {}
 ): StoryBlock[] {
-  if (entry.blocks) return entry.blocks;
+  if (entry.blocks) {
+    if (!context.actors) return entry.blocks;
+
+    return entry.blocks.map((block) => {
+      if (block.type !== 'dialogue') return block;
+
+      const canonicalFrozenActorId = block.speakerActorId
+        ? resolveCanonicalActorId(
+            block.speakerActorId,
+            context.actors!,
+            context.actorIdAliases
+          )
+        : undefined;
+      const speakerActorId = canonicalFrozenActorId ?? resolveStoryDialogueActorId(
+        entry,
+        block.speakerLabel,
+        context.actors!,
+        context.actorIdAliases
+      );
+      if (!speakerActorId || speakerActorId === block.speakerActorId) return block;
+      return { ...block, speakerActorId };
+    });
+  }
 
   const parsedBlocks = parseStoryTextToBlocks(entry.text);
   const dialogueSpeakerActorIds: Record<string, ActorId> = {};

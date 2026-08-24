@@ -1,5 +1,10 @@
 import { createInitialPolicePanel } from './policePanel';
 import type { PoliceCareerPathState, PoliceClimateEntry, PolicePanelState, RuntimeState } from '../runtime/types';
+import {
+  projectPolicePostingOpportunities,
+  type PolicePostingOpportunityProjection,
+  type PolicePostingRouteIndexEntry
+} from './policePostingContent';
 
 export interface PolicePanelProjection {
   available: boolean;
@@ -11,6 +16,8 @@ export interface PolicePanelProjection {
   unitSummary: string;
   rankBoundary: PolicePanelState['rankBoundary'];
   careerPath: PoliceCareerPathState;
+  postingRouteIndex: PolicePostingRouteIndexEntry[];
+  postingOpportunities: PolicePostingOpportunityProjection[];
   climate: PoliceClimateEntry[];
   relatedActorIds: string[];
   actionHints: string[];
@@ -20,7 +27,10 @@ export interface PolicePanelProjection {
   };
 }
 
-export function projectPolicePanelContext(state: RuntimeState): PolicePanelProjection {
+export function projectPolicePanelContext(
+  state: RuntimeState,
+  playerInput = ''
+): PolicePanelProjection {
   const playerActor = state.actors[state.player.actorId] ?? {
     actorId: state.player.actorId,
     currentIdentity: state.player.currentIdentity
@@ -28,6 +38,7 @@ export function projectPolicePanelContext(state: RuntimeState): PolicePanelProje
   const basePanel = state.policePanel ?? createInitialPolicePanel(playerActor, state.lawIdentity, state.time);
   const available = state.player.currentIdentity === 'police' && state.lawIdentity.status === 'active';
   const climate = basePanel.climate.slice(0, 4);
+  const postingOpportunities = projectPolicePostingOpportunities(state, playerInput);
 
   return {
     available,
@@ -50,6 +61,8 @@ export function projectPolicePanelContext(state: RuntimeState): PolicePanelProje
       suggestedActions: basePanel.careerPath.suggestedActions.slice(0, 4),
       dynamicAssessment: { ...basePanel.careerPath.dynamicAssessment }
     },
+    postingRouteIndex: postingOpportunities.routeIndex,
+    postingOpportunities: postingOpportunities.opportunities,
     climate,
     relatedActorIds: basePanel.relatedActorIds.slice(0, 8),
     actionHints: basePanel.actionHints.slice(0, 4),

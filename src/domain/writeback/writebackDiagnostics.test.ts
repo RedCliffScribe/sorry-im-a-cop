@@ -37,6 +37,27 @@ describe('writeback diagnostics final reconciliation', () => {
     expect(collectUnresolvedPartialWritebackDiagnostics([invalid, repaired])).toEqual([]);
   });
 
+  it('suppresses a malformed pregnancy review only after validated pregnancy patches were applied', () => {
+    const invalidEvent = issue(
+      ['writebackRepair', 'pregnancyLifecycle', 'pregnancyLifecycleReview', 'events', 0, 'event'],
+      'invalid_value'
+    );
+    const invalidReason = issue(
+      ['writebackRepair', 'pregnancyLifecycle', 'pregnancyLifecycleReview', 'events', 0, 'reason'],
+      'invalid_type'
+    );
+    const repaired = issue(
+      ['writeback', 'pregnancyLifecycle'],
+      'pregnancy_lifecycle_repair_applied'
+    );
+
+    expect(collectUnresolvedPartialWritebackDiagnostics([invalidEvent, invalidReason, repaired])).toEqual([]);
+    expect(collectUnresolvedPartialWritebackDiagnostics([invalidEvent, invalidReason])).toEqual([
+      invalidEvent,
+      invalidReason
+    ]);
+  });
+
   it('does not let a repair receipt hide a later failure from the same domain', () => {
     const invalid = issue(
       ['writeback', 'actorPatches', 0, 'currentIdentity'],

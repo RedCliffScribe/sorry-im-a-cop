@@ -1,6 +1,6 @@
 import type { AppLocale } from '../domain/localization/appLocale';
 
-export const APP_VERSION = '2.0.4';
+export const APP_VERSION = '2.0.20';
 export const APP_VERSION_LABEL = `v${APP_VERSION}`;
 export const APP_COPYRIGHT_YEAR = '2026';
 export const APP_COPYRIGHT_OWNER = 'RedCliffScribe';

@@ -1,5 +1,4 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-// @ts-expect-error The app tsconfig intentionally omits Node ambient types; this test only reads CSS text.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialRuntimeState } from '../../domain/runtime/initialState';

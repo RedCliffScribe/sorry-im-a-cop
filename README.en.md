@@ -6,7 +6,7 @@
 
 A local-first, AI-driven interactive narrative RPG set in Hong Kong from 1980 to 1996.
 
-[Play online](https://simc.pages.dev/) · [简体中文](README.md) · **v2.0.4**
+[Play online](https://simc.pages.dev/) · [简体中文](README.md) · **v2.0.20**
 
 </div>
 
@@ -18,12 +18,13 @@ This is not a fixed quest tree or a game that reduces Hong Kong life to police p
 
 ## Current release
 
-The v2.0.4 public source snapshot includes:
+The v2.0.20 public source snapshot includes:
 
 - **Three origins and persistent identities** — Police, triad, and civilian starts have different openings, authority, work schedules, and social ties without erasing prior life when identity changes.
 - **Long-save world state** — Character archives, NPC memory, networks and close bonds, cases, matters, news, assets, finances, weather, experience, reputation, and organisation evolution persist locally.
 - **Local checks and writeback safeguards** — Checks, progression, case ownership, relationship evidence, and long narrative arcs are validated locally so a malformed model field does not casually destroy the turn.
 - **Official narrative DLC: Urban Legends** — Select it for a new game or safely attach it to a compatible Hong Kong 1988 save. Long-running stories retain a unique identity and support pause, resume, and continuation.
+- **Official system DLC: Police Promotion** — Career progression is grounded in verifiable service history, courses and examinations, recommendations, selection, vacancies, and formal appointments. It is available for new games and can be safely attached to a compatible existing police save from its current state.
 - **AVG story presentation** — Narration, dialogue, portraits, scenes, turn replay, and switching back to the original prose. Saves continue normally without the optional resource pack.
 - **Custom content and Creative Workshop** — Custom characters, events, and content projects, plus public preset browsing, validation, and import paths.
 - **Multiple model and image providers** — Narrative, repair, memory, embeddings, background evolution, and image generation can use separate compatible service profiles.

@@ -31,6 +31,7 @@ const SUCCESSFUL_WRITEBACK_RECOVERY_CODES = new Set([
   'case_intent_recovered',
   'combat_event_structure_recovered',
   'player_vitals_lifecycle_review_applied',
+  'pregnancy_lifecycle_repair_applied',
   'relationship_omission_repair_applied',
   'relationship_structure_repair_applied',
   'writeback_location_reconciled',
@@ -39,8 +40,11 @@ const SUCCESSFUL_WRITEBACK_RECOVERY_CODES = new Set([
 ]);
 
 const EXPECTED_LOCAL_GUARDRAIL_CODES = new Set([
+  'actor_fixed_identity_conflict',
   'actor_identity_merge_rejected',
+  'actor_interaction_score_decrease_preserved',
   'actor_invalid_birth_date_ignored',
+  'actor_memory_identity_conflict',
   'relationship_creation_rejected',
   'writeback_repair_advisory_ignored',
   'writeback_repair_noop_payload_ignored'

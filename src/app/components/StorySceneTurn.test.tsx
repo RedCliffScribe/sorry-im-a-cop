@@ -1,5 +1,4 @@
 import 'fake-indexeddb/auto';
-// @ts-expect-error The app tsconfig intentionally omits Node ambient types; this test only reads CSS text.
 import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

@@ -148,17 +148,73 @@ export const playerVitalsReviewSchema = z.object({
   reason: z.string().trim().min(1)
 });
 
+const pregnancyLifecycleEventAliases: Record<string, string> = {
+  pregnancy_risk: 'pregnancy_risk',
+  pregnancyrisk: 'pregnancy_risk',
+  risk: 'pregnancy_risk',
+  '受孕风险': 'pregnancy_risk',
+  '妊娠风险': 'pregnancy_risk',
+  pregnancy_confirmed: 'pregnancy_confirmed',
+  pregnancyconfirmed: 'pregnancy_confirmed',
+  confirmed: 'pregnancy_confirmed',
+  '确认怀孕': 'pregnancy_confirmed',
+  '已确认怀孕': 'pregnancy_confirmed',
+  '妊娠确认': 'pregnancy_confirmed',
+  pregnancy_ended: 'pregnancy_ended',
+  pregnancyended: 'pregnancy_ended',
+  ended: 'pregnancy_ended',
+  pregnancy_termination: 'pregnancy_ended',
+  '妊娠终止': 'pregnancy_ended',
+  '怀孕终止': 'pregnancy_ended',
+  '妊娠结束': 'pregnancy_ended',
+  live_birth: 'live_birth',
+  livebirth: 'live_birth',
+  birth: 'live_birth',
+  delivery: 'live_birth',
+  '活产': 'live_birth',
+  '分娩': 'live_birth',
+  '已分娩': 'live_birth'
+};
+
+function normalizePregnancyLifecycleEvent(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  const normalizedKey = trimmed.toLowerCase().replace(/[\s-]+/g, '_');
+  return pregnancyLifecycleEventAliases[normalizedKey] ?? pregnancyLifecycleEventAliases[trimmed] ?? value;
+}
+
+function normalizePregnancyLifecycleReason(value: unknown): unknown {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string')) {
+    return value.map((item) => item.trim()).filter(Boolean).join('；');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  for (const key of ['reason', 'summary', 'description', 'detail', 'text']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+    if (Array.isArray(candidate) && candidate.length > 0 && candidate.every((item) => typeof item === 'string')) {
+      const joined = candidate.map((item) => item.trim()).filter(Boolean).join('；');
+      if (joined) return joined;
+    }
+  }
+  return value;
+}
+
 export const pregnancyLifecycleReviewEventSchema = z.object({
-  actorId: z.string().min(1),
-  event: z.enum(['pregnancy_risk', 'pregnancy_confirmed', 'pregnancy_ended', 'live_birth']),
-  reason: z.string().trim().min(1)
+  actorId: z.string().trim().min(1),
+  event: z.preprocess(
+    normalizePregnancyLifecycleEvent,
+    z.enum(['pregnancy_risk', 'pregnancy_confirmed', 'pregnancy_ended', 'live_birth'])
+  ),
+  reason: z.preprocess(normalizePregnancyLifecycleReason, z.string().trim().min(1))
 });
 
 export const pregnancyLifecycleReviewSchema = z
   .object({
     changed: z.boolean(),
     events: z.array(pregnancyLifecycleReviewEventSchema).max(4).default([]),
-    reason: z.string().trim().min(1)
+    reason: z.preprocess(normalizePregnancyLifecycleReason, z.string().trim().min(1))
   })
   .superRefine((review, context) => {
     if (review.changed && review.events.length === 0) {
@@ -325,6 +381,98 @@ export const playerPoliceRoleProfilePatchSchema = z
     dutySummary: z.string().trim().min(1).optional()
   })
   .strict();
+
+const policeCareerEventTypeSchema = z.enum([
+  'case_activity_recorded',
+  'judgement_recorded',
+  'matter_progressed',
+  'commendation_recorded',
+  'discipline_recorded',
+  'training_completed',
+  'course_completed',
+  'qualification_confirmed',
+  'training_slot_allocated',
+  'rotation_arranged',
+  'unit_need_confirmed',
+  'exam_passed',
+  'exam_failed',
+  'supervision_recorded',
+  'leadership_recorded',
+  'formal_recommendation',
+  'recommendation_declined',
+  'selection_passed',
+  'selection_failed',
+  'vacancy_unavailable',
+  'vacancy_expected',
+  'vacancy_available',
+  'vacancy_allocated',
+  'appointment_effective',
+  'posting_effective'
+]);
+
+const policeCareerSupportingRefPatchSchema = z
+  .object({
+    kind: z.enum(['case_activity', 'judgement', 'current_matter']),
+    refId: z.string().trim().min(1)
+  })
+  .strict();
+
+const policeCareerEventPatchSchema = z
+  .object({
+    eventId: z.string().trim().min(1),
+    eventType: policeCareerEventTypeSchema,
+    summary: z.string().trim().min(1),
+    actorId: z.string().trim().min(1).optional(),
+    supportRef: policeCareerSupportingRefPatchSchema.optional(),
+    tags: z.array(z.string().trim().min(1)).max(12).optional()
+  })
+  .strict();
+
+const policePromotionProgressPatchSchema = z
+  .object({
+    kind: z.literal('promotion'),
+    routeId: z.string().trim().min(1),
+    requestedStage: z
+      .enum([
+        'not_eligible',
+        'eligible',
+        'exam_or_course',
+        'awaiting_recommendation',
+        'selection',
+        'awaiting_vacancy',
+        'approved_waiting_post',
+        'appointed'
+      ])
+      .optional(),
+    events: z.array(policeCareerEventPatchSchema).max(6).default([]),
+    reason: z.string().trim().min(1)
+  })
+  .strict();
+
+const policePostingProgressPatchSchema = z
+  .object({
+    kind: z.literal('posting'),
+    routeId: z.string().trim().min(1),
+    requestedStage: z
+      .enum([
+        'not_selected',
+        'interested',
+        'eligible',
+        'training',
+        'awaiting_vacancy',
+        'approved_waiting_report',
+        'effective'
+      ])
+      .optional(),
+    events: z.array(policeCareerEventPatchSchema).max(6).default([]),
+    reason: z.string().trim().min(1)
+  })
+  .strict();
+
+export const policeCareerProgressPatchSchema = z.discriminatedUnion('kind', [
+  policePromotionProgressPatchSchema,
+  policePostingProgressPatchSchema
+]);
 
 const actorRoleProfilesPatchSchema = z
   .object({
@@ -2476,6 +2624,7 @@ export const writebackSchema = z
     playerPatch: playerPatchSchema.optional(),
     identityContextPatch: identityContextPatchSchema.optional(),
     policeRoleProfilePatch: playerPoliceRoleProfilePatchSchema.optional(),
+    policeCareerProgressPatch: policeCareerProgressPatchSchema.optional(),
     civilianRoleProfilePatch: playerCivilianRoleProfilePatchSchema.optional(),
     secretFactPatches: z.array(secretFactPatchSchema).default([]),
     locationPatch: locationPatchSchema.optional(),
@@ -2511,6 +2660,7 @@ function createEmptyWriteback() {
     actorPatches: [],
     identityContextPatch: undefined,
     policeRoleProfilePatch: undefined,
+    policeCareerProgressPatch: undefined,
     civilianRoleProfilePatch: undefined,
     secretFactPatches: [],
     locationPatch: undefined,

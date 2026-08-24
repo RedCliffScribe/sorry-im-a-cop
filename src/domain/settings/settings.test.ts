@@ -341,6 +341,47 @@ describe('AI settings', () => {
     expect((await repository.load()).display.avgPlayerPortraitMode).toBe('show');
   });
 
+  it('migrates missing AVG portrait layouts and clamps persisted layout values', async () => {
+    const repository = new LocalStorageSettingsRepository('cop-v2-test-ai-settings');
+    const settings = createDefaultAiSettings();
+
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({
+        ...settings,
+        display: {
+          ...settings.display,
+          avgPortraitLayout: undefined
+        }
+      })
+    );
+    expect((await repository.load()).display.avgPortraitLayout).toEqual({
+      scalePercent: 100,
+      horizontalOffsetPercent: 0,
+      verticalOffsetPercent: 0
+    });
+
+    localStorage.setItem(
+      'cop-v2-test-ai-settings',
+      JSON.stringify({
+        ...settings,
+        display: {
+          ...settings.display,
+          avgPortraitLayout: {
+            scalePercent: 260,
+            horizontalOffsetPercent: -80,
+            verticalOffsetPercent: 12.4
+          }
+        }
+      })
+    );
+    expect((await repository.load()).display.avgPortraitLayout).toEqual({
+      scalePercent: 180,
+      horizontalOffsetPercent: -40,
+      verticalOffsetPercent: 12
+    });
+  });
+
   it('allows Ollama profiles without an API key', () => {
     const settings = createDefaultAiSettings();
     const ollamaProfile: ApiProfile = {

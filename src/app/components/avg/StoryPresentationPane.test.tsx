@@ -763,6 +763,100 @@ describe('StoryPresentationPane', () => {
     expect(state.storyLog).toEqual([storyEntry]);
   });
 
+  it('applies saved portrait layout and opens a zoomable portrait viewer', async () => {
+    const { runtime } = createResourceRuntime();
+    const storyEntry = entry(9, [
+      dialogue('让我看清楚。', 'serious'),
+      dialogue('这句不能因为查看立绘而提前出现。', 'neutral')
+    ]);
+    const displaySettings: DisplaySettings = {
+      ...avgDisplaySettings(),
+      avgPortraitLayout: {
+        scalePercent: 132,
+        horizontalOffsetPercent: -11,
+        verticalOffsetPercent: 7
+      }
+    };
+    render(
+      <StoryPresentationPane
+        entries={[storyEntry]}
+        runtimeState={createState([storyEntry], 9)}
+        saveId="save-portrait-viewer"
+        displaySettings={displaySettings}
+        resourceRuntime={runtime}
+        textView={<div>原正文视图</div>}
+      />
+    );
+
+    const pane = screen.getByRole('region', { name: '剧情呈现' });
+    expect(pane.style.getPropertyValue('--avg-portrait-user-scale')).toBe('1.32');
+    expect(pane.style.getPropertyValue('--avg-portrait-user-offset-x')).toBe('-11%');
+    expect(pane.style.getPropertyValue('--avg-portrait-user-offset-y')).toBe('7%');
+
+    const portraitButton = await screen.findByRole('button', { name: '查看陈探员立绘大图' });
+    const viewport = screen.getByRole('region', { name: 'AVG 剧情演出' });
+    const dialogueBeforeOpen = viewport.querySelector('.avg-dialogue-text')?.textContent;
+    const frameBeforeOpen = viewport.querySelector('.avg-frame-counter')?.textContent;
+    fireEvent.click(portraitButton);
+    expect(viewport.querySelector('.avg-dialogue-text')?.textContent).toBe(dialogueBeforeOpen);
+    expect(viewport.querySelector('.avg-frame-counter')?.textContent).toBe(frameBeforeOpen);
+    const dialog = screen.getByRole('dialog', { name: '陈探员立绘大图' });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.querySelector('.avg-portrait-viewer-dialog')).not.toBeInTheDocument();
+    expect(dialog.querySelector('.avg-portrait-viewer-artwork')).toHaveAttribute(
+      'alt',
+      '陈探员立绘'
+    );
+    expect(screen.getByText('100%')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '放大立绘' }));
+    expect(screen.getByText('125%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭立绘大图' }));
+    expect(screen.queryByRole('dialog', { name: '陈探员立绘大图' })).not.toBeInTheDocument();
+  });
+
+  it('mounts the portrait viewer inside the active fullscreen element', async () => {
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(
+      document,
+      'fullscreenElement'
+    );
+    const fullscreenHost = document.createElement('div');
+    document.body.append(fullscreenHost);
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => fullscreenHost
+    });
+
+    try {
+      const { runtime } = createResourceRuntime();
+      const storyEntry = entry(10, [dialogue('全屏里也要看清楚。', 'serious')]);
+      render(
+        <StoryPresentationPane
+          entries={[storyEntry]}
+          runtimeState={createState([storyEntry], 10)}
+          saveId="save-fullscreen-portrait-viewer"
+          displaySettings={avgDisplaySettings()}
+          resourceRuntime={runtime}
+          textView={<div>原正文视图</div>}
+        />
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: '查看陈探员立绘大图' }));
+      const dialog = screen.getByRole('dialog', { name: '陈探员立绘大图' });
+      expect(fullscreenHost).toContainElement(dialog);
+
+      fireEvent.click(screen.getByRole('button', { name: '关闭立绘大图' }));
+      expect(screen.queryByRole('dialog', { name: '陈探员立绘大图' })).not.toBeInTheDocument();
+    } finally {
+      if (originalFullscreenElement) {
+        Object.defineProperty(document, 'fullscreenElement', originalFullscreenElement);
+      } else {
+        Reflect.deleteProperty(document, 'fullscreenElement');
+      }
+      fullscreenHost.remove();
+    }
+  });
+
   it('keeps heavy rain outside an indoor police scene and leaves dialogue controls ungraded', async () => {
     const { runtime } = createResourceRuntime();
     const storyEntry = entry(5, [dialogue('室内雨夜仍然清楚。', 'serious')], {

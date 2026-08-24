@@ -41,6 +41,21 @@ describe('policeRankCatalog', () => {
     expect(isPoliceCommandRank('警务处长（CP）')).toBe(true);
   });
 
+  it('treats SPC as a designation and sends both PC and SPC toward Sergeant', () => {
+    expect(getNextPoliceRankTarget('Police Constable（警员 PC）')).toBe('警长（SGT）');
+    expect(getNextPoliceRankTarget('Senior Police Constable（高级警员 SPC）')).toBe(
+      '警长（SGT）'
+    );
+  });
+
+  it('keeps the supported junior promotion chain aligned with formal ranks', () => {
+    expect(getNextPoliceRankTarget('Sergeant（警长 SGT）')).toBe('警署警长（SSGT）');
+    expect(getNextPoliceRankTarget('Station Sergeant（警署警长 SSGT）')).toBe(
+      '见习督察（PI）'
+    );
+    expect(getNextPoliceRankTarget('Probationary Inspector（见习督察 PI）')).toBe('督察（IP）');
+  });
+
   it('returns the canonical bilingual display for senior ranks', () => {
     expect(normalizePoliceRankDisplay('Deputy Commissioner of Police（副处长 DCP）')).toEqual({
       code: 'dcp',

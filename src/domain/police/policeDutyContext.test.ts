@@ -36,8 +36,47 @@ describe('police duty context projection', () => {
     expect(projection.currentDutySummary).toContain('1988年9月12日 星期一 晚更 14:00–22:45');
     expect(projection.nextDutySummary).toContain('1988年9月13日 星期二 晚更 14:00–22:45');
     expect(projection.rosterSummary).toContain('4天晚更');
+    expect(projection.weekSchedule).toHaveLength(7);
+    expect(projection.weekSchedule.map((entry) => entry.shiftLabel)).toEqual([
+      '晚更',
+      '晚更',
+      '晚更',
+      '晚更',
+      '轮休',
+      '轮休',
+      '夜更'
+    ]);
+    expect(projection.weekSchedule[0]).toMatchObject({
+      dateKey: '1988-09-12',
+      dateLabel: '9月12日',
+      weekdayLabel: '星期一',
+      isToday: true,
+      scheduleWindow: '14:00–22:45'
+    });
+    expect(projection.weekScheduleSummary).toContain('今天 · 9月12日 星期一：晚更 14:00–22:45');
+    expect(projection.weekScheduleSummary).toContain('9月17日 星期六：轮休');
     expect(projection.ordinaryTurnRules.join('\n')).toContain('不要因为玩家是警察就每回合自动新增报案');
     expect(projection.ordinaryTurnRules.join('\n')).toContain('交班、下班、补眠、私人生活');
+  });
+
+  it('rolls the seven-day schedule forward with the current game date', () => {
+    const nextDay = projectPoliceDutyContext({
+      time: { year: 1988, month: 9, day: 13, hour: 10, minute: 0 },
+      currentIdentity: 'police',
+      lawIdentity: createLawIdentity()
+    });
+
+    expect(nextDay.weekSchedule[0]).toMatchObject({
+      dateKey: '1988-09-13',
+      isToday: true,
+      shiftLabel: '晚更'
+    });
+    expect(nextDay.weekSchedule.at(-1)).toMatchObject({
+      dateKey: '1988-09-19',
+      isToday: false,
+      shiftLabel: '夜更'
+    });
+    expect(nextDay.weekSchedule.some((entry) => entry.dateKey === '1988-09-12')).toBe(false);
   });
 
   it('assigns one actual uniform shift instead of treating all three shifts as simultaneous duty', () => {
@@ -106,8 +145,37 @@ describe('police duty context projection', () => {
     expect(monday.shiftLabel).toBe('日勤');
     expect(monday.scheduleWindow).toBe('09:00–18:00');
     expect(monday.rosterSummary).toContain('周一至周五');
+    expect(monday.weekSchedule.map((entry) => entry.shiftLabel)).toEqual([
+      '日勤',
+      '日勤',
+      '日勤',
+      '日勤',
+      '日勤',
+      '轮休',
+      '轮休'
+    ]);
     expect(saturday.status).toBe('rest_day');
     expect(saturday.nextDutySummary).toContain('1988年9月19日 星期一 日勤 09:00–18:00');
+  });
+
+  it.each([
+    ['Traffic Branch（交通部）', '道路巡逻与交通事故处置。'],
+    ['Emergency Unit（冲锋队 EU）', '冲锋车紧急响应。'],
+    ['Police Tactical Unit（警察机动部队 PTU）', '机动部队驻队与公共秩序支援。']
+  ])('keeps operational transfer %s on a rotating duty roster', (department, dutySummary) => {
+    const projection = projectPoliceDutyContext({
+      time: { year: 1988, month: 9, day: 12, hour: 10, minute: 0 },
+      currentIdentity: 'police',
+      lawIdentity: createLawIdentity({
+        department,
+        assignmentSummary: dutySummary,
+        dutySummary
+      })
+    });
+
+    expect(projection.shiftLabel).toBe('晚更');
+    expect(projection.status).toBe('before_shift');
+    expect(projection.rosterSummary).toContain('一线岗位循环轮班');
   });
 
   it('does not project police duty pressure for non-police identities', () => {
@@ -120,5 +188,6 @@ describe('police duty context projection', () => {
     expect(projection.available).toBe(false);
     expect(projection.status).toBe('not_applicable');
     expect(projection.shiftKind).toBe('not_applicable');
+    expect(projection.weekSchedule).toEqual([]);
   });
 });

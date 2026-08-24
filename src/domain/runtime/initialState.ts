@@ -14,6 +14,7 @@ import { createInitialFinanceState, normalizeFinanceState, syncPlayerEconomyWith
 import { syncPlayerPoliceSalaryCashflow } from '../finance/playerSalaryCashflow';
 import { syncPlayerCivilianOpeningIncome } from '../finance/playerCivilianIncomeCashflow';
 import { createInitialPolicePanel } from '../police/policePanel';
+import { normalizePoliceCareerProgress } from '../police/policeCareerProgress';
 import { synchronizePlayerPoliceRank } from '../police/playerPoliceRank';
 import { createInitialGrayNetworks } from '../grayNetwork/grayNetwork';
 import { createInitialTriadOrganizations, mergeInitialTriadDetails } from '../grayNetwork/initialTriadOrganizations';
@@ -26,6 +27,7 @@ import {
 import { hkLateColonialOrganizations } from '../cityPower/hkLateColonialOrganizations';
 import { normalizeDramaticContentSettings } from '../drama/settings';
 import { enforcePlayerCaseLead } from '../cases/caseLeadContract';
+import { deduplicateExactCaseEvidence } from '../cases/caseEvidenceDeduplication';
 import { getCantoneseFlavorProfile } from '../settings/cantoneseFlavor';
 import { normalizeGameDifficulty } from '../settings/gameDifficulty';
 import { normalizeNarrativeArcs } from '../drama/narrativeArc';
@@ -832,7 +834,7 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
     }
   };
 
-  return {
+  const initialState: RuntimeState = {
     runtimeVersion: 1,
     world: {
       worldpackId: 'hk_1988',
@@ -960,6 +962,7 @@ export function createInitialRuntimeState(setup: OpeningSetup = {}): RuntimeStat
     ],
     turnCounter: 0
   };
+  return normalizePoliceCareerProgress(initialState);
 }
 
 export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
@@ -1051,7 +1054,7 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
       state.player.clothingState ??
       createInitialClothingState(state.player.clothing ?? defaults.player.clothing, state.time, state.player.currentIdentity)
   };
-  const cases = Object.fromEntries(
+  const normalizedCases = Object.fromEntries(
     Object.entries(state.cases ?? defaults.cases).map(([caseId, caseFile]) => [
       caseId,
       enforcePlayerCaseLead({
@@ -1061,6 +1064,10 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
       })
     ])
   ) as RuntimeState['cases'];
+  const normalizedCaseEvidence = deduplicateExactCaseEvidence(
+    normalizedCases,
+    stateWithOptionalAssets.caseEvidence ?? defaults.caseEvidence
+  );
   const assets: RuntimeAssetsState = {
     items: {
       ...(stateWithOptionalAssets.assets?.items ?? defaults.assets.items)
@@ -1107,7 +1114,7 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     identityHistory: player.identityHistory
   });
 
-  return {
+  const normalizedState: RuntimeState = {
     ...state,
     world: {
       ...defaults.world,
@@ -1172,8 +1179,8 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     relationshipThreads,
     judgementChecks: stateWithOptionalAssets.judgementChecks ?? defaults.judgementChecks,
     combatEvents: stateWithOptionalAssets.combatEvents ?? defaults.combatEvents,
-    cases,
-    caseEvidence: stateWithOptionalAssets.caseEvidence ?? defaults.caseEvidence,
+    cases: normalizedCaseEvidence.cases,
+    caseEvidence: normalizedCaseEvidence.caseEvidence,
     deferredEvents: stateWithOptionalAssets.deferredEvents ?? defaults.deferredEvents,
     pressures: state.pressures ?? defaults.pressures,
     lawIdentity,
@@ -1184,4 +1191,5 @@ export function withRuntimeDefaults(state: RuntimeState): RuntimeState {
     assets: syncedHomeBaseState.assets,
     places: mergeWorldpackPlaces(state.places ?? defaults.places)
   };
+  return normalizePoliceCareerProgress(normalizedState);
 }

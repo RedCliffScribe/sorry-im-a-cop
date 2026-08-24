@@ -523,8 +523,8 @@ async function enterHongKongOpeningWizard() {
   fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
   expect(await screen.findByRole('heading', { name: '选择世界包' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
-  await screen.findByRole('heading', { name: /^(剧情扩展选择|开局向导)$/ });
-  if (screen.queryByRole('heading', { name: '剧情扩展选择' })) {
+  await screen.findByRole('heading', { name: /^(官方扩展选择|开局向导)$/ });
+  if (screen.queryByRole('heading', { name: '官方扩展选择' })) {
     fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
   }
   expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
@@ -641,8 +641,8 @@ describe('App', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'DLC剧情' }));
-    fireEvent.click(await screen.findByRole('button', { name: '加入已有存档' }));
+    fireEvent.click(screen.getByRole('button', { name: '官方DLC' }));
+    fireEvent.click(await screen.findByRole('button', { name: '将都市怪谈加入已有存档' }));
 
     const dialog = await screen.findByRole('dialog', { name: '将都市怪谈加入已有存档' });
     const saveRow = (await within(dialog).findByText('save_existing_dlc')).closest('li');
@@ -679,6 +679,64 @@ describe('App', () => {
     confirm.mockRestore();
   });
 
+  it('backs up and safely enables police promotion for a compatible old police save', async () => {
+    const repository = new IndexedDbSaveRepository();
+    const record = createStoredSave('save_existing_police_dlc', 'chain_existing_police_dlc');
+    record.runtimeState.turnCounter = 132;
+    record.turnCounter = 132;
+    record.runtimeState.lawIdentity.rank = '警员';
+    record.runtimeState.lawIdentity.department = '军装巡逻';
+    record.runtimeState.lawIdentity.stationOrPost = '旺角警署';
+    record.runtimeState.policePanel.unitName = '旺角警署军装巡逻小队';
+    record.runtimeState.player.economy.cashOnHand = 477;
+    const protectedFacts = {
+      lawIdentity: structuredClone(record.runtimeState.lawIdentity),
+      unitName: record.runtimeState.policePanel.unitName,
+      player: structuredClone(record.runtimeState.player)
+    };
+    await repository.save(record);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '官方DLC' }));
+    fireEvent.click(await screen.findByRole('button', { name: '将警队晋升加入已有存档' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '将警队晋升加入已有存档' });
+    const saveRow = (await within(dialog).findByText('save_existing_police_dlc')).closest('li');
+    expect(saveRow).not.toBeNull();
+    fireEvent.click(within(saveRow as HTMLElement).getByRole('button', { name: '加入并读取' }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/不会追溯补算过去的立功、考试或推荐/));
+    expect(
+      await screen.findByRole('button', { name: '执行行动' }, { timeout: 5_000 })
+    ).toBeInTheDocument();
+
+    await waitFor(async () => {
+      expect(await repository.list()).toHaveLength(2);
+    });
+    const updated = await repository.load(record.saveId);
+    expect(updated?.runtimeState.world.officialDlcBindings).toEqual([expect.objectContaining({
+      dlcId: 'police_promotion',
+      version: '1.0.0',
+      status: 'active'
+    })]);
+    expect(updated?.runtimeState.policePanel.careerPath.promotionProgress).toMatchObject({
+      routeId: 'hk1988_pc_to_sgt',
+      processStage: 'not_eligible',
+      evidence: []
+    });
+    expect(updated?.runtimeState.lawIdentity).toEqual(protectedFacts.lawIdentity);
+    expect(updated?.runtimeState.policePanel.unitName).toBe(protectedFacts.unitName);
+    expect(updated?.runtimeState.player).toEqual(protectedFacts.player);
+
+    const backupSummary = (await repository.list()).find((save) => save.saveId !== record.saveId);
+    expect(backupSummary?.saveName).toBe('save_existing_police_dlc（加入警队晋升前备份）');
+    const backup = await repository.load(backupSummary!.saveId);
+    expect(backup?.runtimeState.world.officialDlcBindings).toEqual([]);
+    expect(backup?.runtimeState.policePanel.careerPath.promotionProgress).toBeUndefined();
+    confirm.mockRestore();
+  });
+
   it('routes new games through the worldpack selection before the Hong Kong opening guide', async () => {
     render(<App />);
 
@@ -694,7 +752,7 @@ describe('App', () => {
     expect(screen.getByRole('status')).toHaveTextContent('圣·德拉罗仍在预研阶段');
 
     fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
-    expect(await screen.findByRole('heading', { name: '剧情扩展选择' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '官方扩展选择' })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '将都市怪谈加入本局' })).not.toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
     expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
@@ -801,7 +859,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始游戏' }));
     expect(screen.queryByRole('dialog', { name: '重要说明' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '选择香港 1988世界包' }));
-    expect(await screen.findByRole('heading', { name: '剧情扩展选择' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '官方扩展选择' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '继续开局' }));
     expect(await screen.findByRole('heading', { name: '开局向导' })).toBeInTheDocument();
   });

@@ -48,6 +48,8 @@ export interface RelationshipThreadPatch {
 export interface ApplyRelationshipThreadResult {
   thread?: RelationshipThread;
   diagnostics: string[];
+  rejectionCode?: 'incomplete_creation' | 'missing_actor';
+  missingActorIds?: ActorId[];
 }
 
 export interface RelationshipHeartbeatOptions {
@@ -125,13 +127,18 @@ export function applyRelationshipThreadPatch(
 ): ApplyRelationshipThreadResult {
   const existing = existingThreads[patch.threadId];
   const diagnostics: string[] = [];
+  const incomingRelatedActorIds = uniqueActorIds(patch.relatedActorIds);
+  const requestedActorIds = uniqueActorIds([
+    ...incomingRelatedActorIds,
+    ...(patch.primaryActorId ? [patch.primaryActorId] : [])
+  ]);
+  const missingActors = missingActorIds(requestedActorIds, actors);
+  const validIncomingRelatedActorIds = incomingRelatedActorIds.filter(
+    (actorId) => actorId === 'player' || Boolean(actors[actorId])
+  );
   const relatedActorIds = existing
-    ? uniqueActorIds([...existing.relatedActorIds, ...(patch.relatedActorIds ?? [])])
-    : uniqueActorIds(patch.relatedActorIds);
-  const missingActors = missingActorIds(relatedActorIds, actors);
-  if (missingActors.length > 0) {
-    diagnostics.push(`Relationship thread "${patch.threadId}" references missing actors: ${missingActors.join(', ')}.`);
-  }
+    ? uniqueActorIds([...existing.relatedActorIds, ...validIncomingRelatedActorIds])
+    : incomingRelatedActorIds;
 
   if (!existing) {
     const missingFields: string[] = [];
@@ -142,11 +149,25 @@ export function applyRelationshipThreadPatch(
     if (!patch.relationshipRole) missingFields.push('relationshipRole');
     if (missingFields.length > 0) {
       return {
+        rejectionCode: 'incomplete_creation',
         diagnostics: [
           `New relationship thread "${patch.threadId}" requires ${missingFields.join(', ')}.`
         ]
       };
     }
+    if (missingActors.length > 0) {
+      return {
+        rejectionCode: 'missing_actor',
+        missingActorIds: missingActors,
+        diagnostics: [
+          `New relationship thread "${patch.threadId}" was not created because its actor archive is missing: ${missingActors.join(', ')}.`
+        ]
+      };
+    }
+  } else if (missingActors.length > 0) {
+    diagnostics.push(
+      `Relationship thread "${patch.threadId}" ignored missing actor references: ${missingActors.join(', ')}.`
+    );
   }
 
   if (existing?.primaryActorId && patch.primaryActorId && patch.primaryActorId !== existing.primaryActorId) {

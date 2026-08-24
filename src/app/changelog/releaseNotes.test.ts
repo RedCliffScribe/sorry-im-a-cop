@@ -8,8 +8,8 @@ import {
 } from './releaseNotes';
 import { APP_VERSION_LABEL } from '../releaseIdentity';
 
-const previousReleaseNotes = currentReleaseNotes.slice(1);
-const historicalReleaseNotes = currentReleaseNotes.slice(9);
+const previousReleaseNotes = currentReleaseNotes.slice(7);
+const historicalReleaseNotes = currentReleaseNotes.slice(15);
 const releaseNotes = historicalReleaseNotes.slice(4);
 
 describe('releaseNotes', () => {
@@ -18,6 +18,132 @@ describe('releaseNotes', () => {
   it('groups updates by day and keeps every day newest-first with explicit times', () => {
     expect(currentReleaseNotes[0]?.updates[0]?.version).toBe(APP_VERSION_LABEL);
     expect(currentReleaseNotes[0]).toMatchObject({
+      id: '2026-08-24',
+      updates: [
+        {
+          id: '2026-08-24-v2.0.20-police-promotion-official-dlc',
+          time: '22:46',
+          version: 'v2.0.20',
+          title: '《警队晋升》官方 DLC 上线'
+        },
+        {
+          id: '2026-08-24-v2.0.19-interaction-score-stability',
+          time: '17:05',
+          version: 'v2.0.19',
+          title: '人物往来度稳定性修复'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[1]).toMatchObject({
+      id: '2026-08-23',
+      updates: [
+        {
+          id: '2026-08-23-v2.0.18-actor-relationship-writeback-consistency',
+          time: '11:20',
+          version: 'v2.0.18',
+          title: '人物志与人脉写入稳定性修复'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[2]).toMatchObject({
+      id: '2026-08-22',
+      updates: [
+        {
+          id: '2026-08-22-v2.0.17-case-archive-target-and-state-guard',
+          time: '18:25',
+          version: 'v2.0.17',
+          title: '案件归档精确绑定优化'
+        },
+        {
+          id: '2026-08-22-v2.0.16-multi-case-archive-continuity',
+          time: '15:04',
+          version: 'v2.0.16',
+          title: '多案件归档与结案记忆修复'
+        },
+        {
+          id: '2026-08-22-v2.0.15-avg-first-encounter-image-recovery',
+          time: '12:32',
+          version: 'v2.0.15',
+          title: 'AVG 首次相遇图像稳定性修复'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[3]).toMatchObject({
+      id: '2026-08-21',
+      updates: [
+        {
+          id: '2026-08-21-v2.0.14-case-archive-and-evidence-deduplication',
+          time: '19:18',
+          version: 'v2.0.14',
+          title: '案件归档与重复证据修复'
+        },
+        {
+          id: '2026-08-21-v2.0.13-npc-presence-route-guard',
+          time: '18:45',
+          version: 'v2.0.13',
+          title: 'NPC在场与远场归属修复'
+        },
+        {
+          id: '2026-08-21-v2.0.12-optional-role-writeback-stability',
+          time: '10:00',
+          version: 'v2.0.12',
+          title: '身份与岗位写回提示优化'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[4]).toMatchObject({
+      id: '2026-08-19',
+      updates: [
+        {
+          id: '2026-08-19-v2.0.11-actor-identity-memory-guard',
+          time: '22:10',
+          version: 'v2.0.11',
+          title: '人物身份与记忆归属修复'
+        },
+        {
+          id: '2026-08-19-v2.0.10-fullscreen-portrait-viewer',
+          time: '13:19',
+          version: 'v2.0.10',
+          title: '全屏沉浸式立绘查看修复'
+        },
+        {
+          id: '2026-08-19-v2.0.9-pregnancy-writeback-recovery',
+          time: '12:18',
+          version: 'v2.0.9',
+          title: '怀孕状态写回稳定性修复'
+        },
+        {
+          id: '2026-08-19-v2.0.8-avg-portrait-layout-and-viewer',
+          time: '10:57',
+          version: 'v2.0.8',
+          title: 'AVG立绘布局与大图查看'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[5]).toMatchObject({
+      id: '2026-08-18',
+      updates: [
+        {
+          id: '2026-08-18-v2.0.7-immersive-story-mode',
+          time: '23:08',
+          version: 'v2.0.7',
+          title: '沉浸式剧情阅读模式'
+        },
+        {
+          id: '2026-08-18-v2.0.6-tea-restaurant-scene-matching',
+          time: '21:35',
+          version: 'v2.0.6',
+          title: '旺角冰室场景匹配修复'
+        },
+        {
+          id: '2026-08-18-v2.0.5-seven-day-police-duty-roster',
+          time: '10:04',
+          version: 'v2.0.5',
+          title: '七日值班安排与界面优化'
+        }
+      ]
+    });
+    expect(currentReleaseNotes[6]).toMatchObject({
       id: '2026-08-17',
       updates: [
         {

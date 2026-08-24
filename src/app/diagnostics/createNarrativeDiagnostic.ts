@@ -9,6 +9,7 @@ import type { JudgementRecoveryTrace } from '../../domain/conflict/judgementReco
 import { formatGameTimeWithWeekday } from '../../domain/time/gameTime';
 import { collectUnresolvedPartialWritebackDiagnostics } from '../../domain/writeback/writebackDiagnostics';
 import type { OfficialDlcDramaAuditRecord } from '../../domain/dlc/dramaAudit';
+import { POLICE_PROMOTION_DLC_ID } from '../../domain/police/policePromotionRules';
 
 const DIAGNOSTIC_STORY_TURN_LIMIT = 10;
 
@@ -290,6 +291,73 @@ function formatLatestExperienceAward(state: RuntimeState): string {
     `levelsGained=${award.levelsGained}`,
     `attributePointsGained=${award.attributePointsGained}`
   ].join('\n');
+}
+
+function formatPoliceCareerProgramDiagnostics(state: RuntimeState): string {
+  const binding = state.world.officialDlcBindings?.find(
+    (candidate) => candidate.dlcId === POLICE_PROMOTION_DLC_ID
+  );
+  if (!binding) return '- 当前存档未绑定警队晋升与调动 DLC。';
+
+  const promotion = state.policePanel.careerPath.promotionProgress;
+  const posting = state.policePanel.careerPath.postingProgress;
+  const recentIssues = [...state.storyLog]
+    .reverse()
+    .flatMap((entry) =>
+      (entry.writebackDiagnostics ?? [])
+        .filter((issue) => issue.code?.startsWith('police_'))
+        .map((issue) => ({ turnId: entry.turnId, issue }))
+    )
+    .slice(0, 20);
+  const lines = [
+    `bindingStatus=${binding.status}`,
+    `bindingVersion=${binding.version}`,
+    promotion
+      ? [
+          `promotion route=${promotion.routeId}`,
+          `stage=${promotion.processStage}`,
+          `rank=${promotion.currentRankCode}`,
+          `target=${promotion.targetRankCode}`,
+          `vacancy=${promotion.vacancyStatus}`,
+          `reviewNotBefore=${promotion.reviewNotBefore ? formatGameTime(promotion.reviewNotBefore) : 'none'}`,
+          `lawfulNext=${promotion.lawfulNextStages.join(',') || 'none'}`,
+          `blocking=${promotion.blockingReasons.join(',') || 'none'}`,
+          `evidence=${promotion.evidence
+            .slice(-20)
+            .map((item) => `${item.kind}:${item.canonicalRefId ?? item.refId}`)
+            .join(',') || 'none'}`,
+          `processedEventIds=${promotion.processedEventIds?.slice(-20).join(',') || 'none'}`,
+          `lastProgressTurnId=${promotion.lastProgressTurnId ?? 'none'}`
+        ].join(' ')
+      : 'promotion=not_initialized',
+    posting
+      ? [
+          `posting route=${posting.routeId}`,
+          `stage=${posting.processStage}`,
+          `source=${posting.sourceDepartment}`,
+          `target=${posting.targetDepartment}`,
+          `vacancy=${posting.vacancyStatus}`,
+          `reviewNotBefore=${posting.reviewNotBefore ? formatGameTime(posting.reviewNotBefore) : 'none'}`,
+          `blocking=${posting.blockingReasons.join(',') || 'none'}`,
+          `evidence=${posting.evidence
+            .slice(-20)
+            .map((item) => `${item.kind}:${item.canonicalRefId ?? item.refId}`)
+            .join(',') || 'none'}`,
+          `processedEventIds=${posting.processedEventIds?.slice(-20).join(',') || 'none'}`,
+          `lastProgressTurnId=${posting.lastProgressTurnId ?? 'none'}`
+        ].join(' ')
+      : 'posting=not_started',
+    'recentDiagnostics:',
+    recentIssues.length
+      ? recentIssues
+          .map(
+            ({ turnId, issue }) =>
+              `turnId=${turnId} code=${issue.code} path=${issue.path.join('.')} message=${issue.message}`
+          )
+          .join('\n')
+      : '- none'
+  ];
+  return lines.join('\n');
 }
 
 function getStoryEntryTurnNumber(entry: StoryEntry): number | null {
@@ -1080,6 +1148,15 @@ export function createNarrativeDiagnostic({
   const relationshipRecoveryDiagnostics = (latestRelationshipRecoveryEntry?.writebackDiagnostics ?? [])
     .filter((issue) => issue.code?.startsWith('relationship_'))
     .slice(-20);
+  const latestInteractionScoreDiagnosticEntry = [...state.storyLog]
+    .reverse()
+    .find((entry) =>
+      entry.speaker === 'narrator' &&
+      entry.writebackDiagnostics?.some((issue) => issue.code === 'actor_interaction_score_decrease_preserved')
+    );
+  const interactionScoreDiagnostics = (latestInteractionScoreDiagnosticEntry?.writebackDiagnostics ?? [])
+    .filter((issue) => issue.code === 'actor_interaction_score_decrease_preserved')
+    .slice(-10);
   const recentErrorText = lastError?.trim()
     ? lastError.trim()
     : latestWritebackIssue
@@ -1144,6 +1221,19 @@ export function createNarrativeDiagnostic({
         )
       ].join('\n\n')
     : '- 无';
+  const interactionScoreDiagnosticText = latestInteractionScoreDiagnosticEntry
+    ? [
+        `turnId=${latestInteractionScoreDiagnosticEntry.turnId}`,
+        `gameTime=${formatGameTime(latestInteractionScoreDiagnosticEntry.gameTime)}`,
+        ...interactionScoreDiagnostics.map((issue) =>
+          [
+            `code=${issue.code}`,
+            `path=${issue.path?.join('.') || '(root)'}`,
+            `message=${issue.message}`
+          ].join('\n')
+        )
+      ].join('\n\n')
+    : '- 无';
   const currentJudgementRecoveryText = formatJudgementRecoveryTrace(
     lastJudgementRecoveryTrace
   );
@@ -1195,6 +1285,12 @@ export function createNarrativeDiagnostic({
     '',
     '## 最近已写入回合的关系证据恢复诊断',
     relationshipRecoveryDiagnosticText,
+    '',
+    '## 最近往来度写回诊断',
+    interactionScoreDiagnosticText,
+    '',
+    '## 警队晋升与调动程序诊断',
+    formatPoliceCareerProgramDiagnostics(state),
     '',
     '## 最近经验结算',
     latestExperienceAwardText,

@@ -44,7 +44,7 @@ const menuItems: Array<{ id: SettingsPage; label: string }> = [
   { id: 'gameplay', label: '玩法设置' },
   { id: 'display', label: '显示设置' },
   { id: 'api', label: 'API 配置' },
-  { id: 'avgResources', label: 'AVG 演出资源' },
+  { id: 'avgResources', label: 'AVG 演出设置' },
   { id: 'imageGeneration', label: '文生图设置' },
   { id: 'features', label: '功能配置' },
   { id: 'prompts', label: '提示词管理' },

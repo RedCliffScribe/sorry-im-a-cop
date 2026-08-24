@@ -1,5 +1,4 @@
 import 'fake-indexeddb/auto';
-// @ts-expect-error Vitest 在 Node 中运行；产品 tsconfig 有意不加载整套 Node 类型。
 import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -46,10 +45,10 @@ describe('SettingsScreen AVG resource destination', () => {
       />
     );
 
-    expect(screen.getByRole('heading', { name: 'AVG 演出资源' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'AVG 演出资源' })).toHaveClass('active');
+    expect(screen.getByRole('heading', { name: 'AVG 演出设置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'AVG 演出设置' })).toHaveClass('active');
     expect(await screen.findByText('未安装')).toBeInTheDocument();
-    expect(screen.getByText(/存档、玩家图片、剧情 DLC 分开保存/u)).toBeInTheDocument();
+    expect(screen.getByText(/存档、玩家图片和剧情 DLC 分开保存/u)).toBeInTheDocument();
   });
 });
 

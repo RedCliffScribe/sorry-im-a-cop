@@ -45,10 +45,53 @@ class BrokenNpcSimulationClient implements NarratorClient {
   }
 }
 
+function createRoutedNpcSimulationContext(playerInput: string) {
+  const state = createInitialRuntimeState();
+  const context = selectContext(state, playerInput);
+  context.presentActorReactionProjection = {
+    candidates: [
+      {
+        actorId: 'npc_sergeant_chan',
+        actorName: '陈强',
+        triggerReasons: ['当前场景在场人物'],
+        basis: ['值日警长'],
+        reactionHint: '根据现场行动作出反应。',
+        score: 100
+      }
+    ],
+    diagnostics: {
+      sourceActorCount: 1,
+      selectedActorIds: ['npc_sergeant_chan'],
+      omittedActorCount: 0
+    }
+  };
+  context.remoteNpcPresenceProjection = {
+    candidates: [
+      {
+        actorId: 'npc_ah_ling',
+        actorName: '阿玲',
+        source: 'relationshipHeartbeat',
+        sourceId: 'relationship_ah_ling',
+        title: '远场关系动态',
+        triggerReasons: ['关系动态到期'],
+        basis: ['不在当前地点'],
+        presenceHint: '仅在合理渠道成立时进入叙事。',
+        score: 90
+      }
+    ],
+    diagnostics: {
+      selectedActorIds: ['npc_ah_ling'],
+      selectedCandidateIds: ['relationshipHeartbeat:relationship_ah_ling:npc_ah_ling'],
+      omittedCandidateCount: 0,
+      missingActorRefs: []
+    }
+  };
+  return { state, context };
+}
+
 describe('npc simulation auxiliary API', () => {
   it('builds a compact package from an auxiliary NPC simulation client', async () => {
-    const state = createInitialRuntimeState();
-    const context = selectContext(state, '问问柜台是谁找我');
+    const { context } = createRoutedNpcSimulationContext('问问柜台是谁找我');
     const client = new FakeNpcSimulationClient();
 
     const result = await runNpcSimulation({
@@ -65,6 +108,10 @@ describe('npc simulation auxiliary API', () => {
     expect(result.package?.presentReactions[0]).toMatchObject({
       actorId: 'npc_sergeant_chan',
       actorName: '陈强'
+    });
+    expect(result.package?.remotePresence[0]).toMatchObject({
+      actorId: 'npc_ah_ling',
+      actorName: '阿玲'
     });
     expect(result.diagnostics).toContainEqual(
       expect.objectContaining({
@@ -85,8 +132,7 @@ describe('npc simulation auxiliary API', () => {
   });
 
   it('keeps only NPC advice allowed by the foreground contract', async () => {
-    const state = createInitialRuntimeState();
-    const context = selectContext(state, '继续处理眼前人物');
+    const { state, context } = createRoutedNpcSimulationContext('继续处理眼前人物');
     const client = new FakeNpcSimulationClient();
 
     const result = await runNpcSimulation({
@@ -117,6 +163,71 @@ describe('npc simulation auxiliary API', () => {
     expect(result.package?.remotePresence).toEqual([]);
     expect(client.prompt).toContain('本回合前台契约');
     expect(client.prompt).toContain('presentReactions 最多返回 1 名');
+  });
+
+  it('drops suggestions placed in the opposite deterministic presence route', async () => {
+    const { context } = createRoutedNpcSimulationContext('继续处理眼前人物');
+    const client: NarratorClient = {
+      async complete() {
+        return {
+          presentReactions: [
+            { actorId: 'npc_ah_ling', actorName: '阿玲', hint: '突然出现在现场。', basis: [] }
+          ],
+          remotePresence: [
+            { actorId: 'npc_sergeant_chan', actorName: '陈强', hint: '被错误放到远场。', basis: [] }
+          ],
+          notes: []
+        };
+      }
+    };
+
+    const result = await runNpcSimulation({ context, playerInput: '继续处理眼前人物', client });
+
+    expect(result.package).toBeUndefined();
+    expect(result.diagnostics.filter((issue) => issue.code === 'npc_simulation_presence_route_mismatch')).toHaveLength(2);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'npc_simulation_api_empty' }));
+  });
+
+  it('resolves exact unambiguous route names to stable actor IDs', async () => {
+    const { context } = createRoutedNpcSimulationContext('继续处理眼前人物');
+    const client: NarratorClient = {
+      async complete() {
+        return {
+          presentReactions: [{ actorName: '陈强', hint: '留意玩家的说法。', basis: [] }],
+          remotePresence: [{ actorName: '阿玲', hint: '继续留在远场。', basis: [] }],
+          notes: []
+        };
+      }
+    };
+
+    const result = await runNpcSimulation({ context, playerInput: '继续处理眼前人物', client });
+
+    expect(result.package?.presentReactions[0]?.actorId).toBe('npc_sergeant_chan');
+    expect(result.package?.remotePresence[0]?.actorId).toBe('npc_ah_ling');
+  });
+
+  it('does not guess an actor ID when a route contains duplicate exact names', async () => {
+    const { context } = createRoutedNpcSimulationContext('继续处理眼前人物');
+    context.presentActorReactionProjection.candidates.push({
+      ...context.presentActorReactionProjection.candidates[0],
+      actorId: 'npc_other_chan'
+    });
+    const client: NarratorClient = {
+      async complete() {
+        return {
+          presentReactions: [{ actorName: '陈强', hint: '无法确定是哪一个人。', basis: [] }],
+          remotePresence: [],
+          notes: []
+        };
+      }
+    };
+
+    const result = await runNpcSimulation({ context, playerInput: '继续处理眼前人物', client });
+
+    expect(result.package).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'npc_simulation_presence_route_mismatch' })
+    );
   });
 
   it('keeps the turn on fallback prompt simulation when the auxiliary API fails', async () => {

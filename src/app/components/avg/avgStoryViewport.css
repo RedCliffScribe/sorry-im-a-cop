@@ -10,6 +10,10 @@
   background: #090e12;
 }
 
+.story-presentation-pane--immersive {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .story-presentation-toolbar {
   z-index: 6;
   display: flex;
@@ -28,6 +32,13 @@
   border: 1px solid rgba(91, 113, 126, 0.68);
   border-radius: 4px;
   overflow: hidden;
+}
+
+.story-presentation-toolbar-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
 }
 
 .story-presentation-mode-toggle button {
@@ -50,6 +61,25 @@
   color: #f4d895;
   background: linear-gradient(180deg, rgba(200, 160, 82, 0.2), rgba(45, 34, 16, 0.62));
   box-shadow: inset 0 -2px 0 rgba(216, 173, 88, 0.75);
+}
+
+.story-presentation-immersive-button {
+  min-height: 30px;
+  border: 1px solid rgba(80, 146, 160, 0.7);
+  border-radius: 4px;
+  padding: 4px 10px;
+  color: #acd6df;
+  background: rgba(8, 24, 30, 0.78);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.story-presentation-immersive-button:hover,
+.story-presentation-immersive-button:focus-visible,
+.story-presentation-immersive-button.active {
+  border-color: rgba(137, 219, 230, 0.94);
+  color: #e8fcff;
+  background: rgba(15, 57, 66, 0.88);
 }
 
 .story-presentation-resource-status {
@@ -158,6 +188,44 @@
   padding: 1.5% 5% 0;
 }
 
+.avg-portrait-hitbox {
+  position: relative;
+  top: var(--avg-portrait-user-offset-y, 0%);
+  left: calc(4% + var(--avg-portrait-user-offset-x, 0%));
+  display: block;
+  width: min(72%, 600px);
+  height: 96%;
+  max-width: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  appearance: none;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  cursor: zoom-in;
+  pointer-events: auto;
+  transform: scale(var(--avg-portrait-user-scale, 1));
+  transform-origin: center bottom;
+  transition:
+    top 180ms ease,
+    left 180ms ease,
+    transform 220ms ease;
+}
+
+.avg-portrait-hitbox:hover,
+.avg-portrait-hitbox:focus-visible {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.avg-portrait-hitbox:focus-visible {
+  outline: 2px solid rgba(231, 199, 126, 0.82);
+  outline-offset: -2px;
+}
+
 .avg-environment-lighting-layer,
 .avg-weather-overlay-layer {
   position: absolute;
@@ -247,12 +315,10 @@
   }
 }
 
-.avg-portrait-layer img {
-  position: relative;
-  left: 4%;
+.avg-portrait-hitbox img {
   display: block;
-  width: min(72%, 600px);
-  height: 96%;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   object-fit: contain;
   object-position: center bottom;
@@ -272,6 +338,129 @@
 .avg-portrait-layer[data-portrait-stage='receded'] img {
   opacity: 0.58;
   transform: translate3d(16%, 2.5%, 0) scale(0.78);
+}
+
+.avg-portrait-viewer-backdrop {
+  position: fixed;
+  z-index: 2400;
+  inset: 0;
+  overflow: hidden;
+  background: rgba(1, 4, 6, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.avg-portrait-viewer-canvas {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(18px, 4vh, 48px) clamp(18px, 4vw, 64px) clamp(76px, 12vh, 118px);
+  touch-action: none;
+  user-select: none;
+}
+
+.avg-portrait-viewer-artwork {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(92vw, 1280px);
+  max-height: min(86dvh, 980px);
+  cursor: grab;
+  filter: drop-shadow(0 24px 34px rgba(0, 0, 0, 0.54));
+  transform-origin: center;
+  transition: transform 120ms ease-out;
+  user-select: none;
+}
+
+.avg-portrait-viewer-artwork:active {
+  cursor: grabbing;
+}
+
+.avg-portrait-viewer-close {
+  position: fixed;
+  z-index: 2;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(224, 232, 235, 0.52);
+  border-radius: 50%;
+  padding: 0 0 3px;
+  color: #f2f4f5;
+  background: rgba(7, 12, 15, 0.58);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
+  font-family: system-ui, sans-serif;
+  font-size: 34px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.avg-portrait-viewer-close:hover,
+.avg-portrait-viewer-close:focus-visible {
+  border-color: rgba(242, 215, 142, 0.92);
+  color: #ffe9ad;
+  background: rgba(25, 31, 34, 0.82);
+}
+
+.avg-portrait-viewer-zoom-controls {
+  position: fixed;
+  z-index: 2;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid rgba(213, 224, 228, 0.3);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: #e3e8ea;
+  background: rgba(7, 12, 15, 0.62);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.34);
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.avg-portrait-viewer-zoom-controls button {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: #f1d58e;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.avg-portrait-viewer-zoom-controls button:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
+.avg-portrait-viewer-zoom-controls input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  accent-color: #b38a45;
+}
+
+.avg-portrait-viewer-zoom-controls output {
+  min-width: 48px;
+  color: #dfbd70;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .avg-bottom-scrim {
@@ -982,8 +1171,17 @@
     padding-inline: 8px;
   }
 
-  .avg-portrait-layer img {
-    left: 2%;
+  .story-presentation-toolbar-controls {
+    gap: 4px;
+  }
+
+  .story-presentation-immersive-button {
+    min-height: 27px;
+    padding-inline: 7px;
+  }
+
+  .avg-portrait-hitbox {
+    left: calc(2% + var(--avg-portrait-user-offset-x, 0%));
     width: min(88%, 520px);
     height: 94%;
   }
@@ -1043,13 +1241,39 @@
     display: none;
   }
 
-  .avg-portrait-layer img {
+  .avg-portrait-hitbox {
     width: 96%;
+  }
+
+  .avg-portrait-viewer-backdrop {
+    backdrop-filter: blur(3px);
+  }
+
+  .avg-portrait-viewer-canvas {
+    padding: 60px 8px 84px;
+  }
+
+  .avg-portrait-viewer-artwork {
+    max-width: 96vw;
+    max-height: calc(100dvh - 138px);
+  }
+
+  .avg-portrait-viewer-close {
+    width: 42px;
+    height: 42px;
+    font-size: 31px;
+  }
+
+  .avg-portrait-viewer-zoom-controls {
+    width: calc(100vw - 20px);
+    padding: 6px 8px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .avg-portrait-hitbox,
   .avg-portrait-layer img,
+  .avg-portrait-viewer-artwork,
   .avg-weather-rain i,
   .avg-weather-fog i {
     animation: none;

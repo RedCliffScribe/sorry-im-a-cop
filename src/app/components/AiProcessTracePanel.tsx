@@ -42,6 +42,7 @@ const requestPurposeLabels: Record<NarratorRequestPurpose, string> = {
   main_turn_judgement_narrative_repair: '判定正文校正',
   main_turn_actor_writeback_repair: '人物建档修复',
   main_turn_case_lead_repair: '案件主办者修复',
+  main_turn_case_action_repair: '案件归档核验',
   main_turn_json_repair: '正文格式修复',
   save_actor_writeback_repair: '存档人物修复',
   auxiliary: '辅助规划'

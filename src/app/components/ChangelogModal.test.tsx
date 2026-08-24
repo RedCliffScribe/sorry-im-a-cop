@@ -10,13 +10,139 @@ describe('ChangelogModal', () => {
     const dialog = screen.getByRole('dialog', { name: '更新日志' });
     expect(
       within(dialog).getByRole('heading', {
+        name: '《警队晋升》官方 DLC 上线'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('22:46')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.20')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '人物往来度稳定性修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('17:05')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.19')).toBeInTheDocument();
+    expect(within(dialog).getByText('1 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '人物志与人脉写入稳定性修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('11:20')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.18')).toBeInTheDocument();
+    expect(within(dialog).getByText('2 / 30')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '案件归档精确绑定优化'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('18:25')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.17')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '多案件归档与结案记忆修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('15:04')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.16')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: 'AVG 首次相遇图像稳定性修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('12:32')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.15')).toBeInTheDocument();
+    expect(within(dialog).getByText('3 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '案件归档与重复证据修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('19:18')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.14')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: 'NPC在场与远场归属修复'
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '身份与岗位写回提示优化'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('10:00')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.12')).toBeInTheDocument();
+    expect(within(dialog).getByText('4 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '全屏沉浸式立绘查看修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('13:19')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.11')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '怀孕状态写回稳定性修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('12:18')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.9')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: 'AVG立绘布局与大图查看'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('10:57')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.8')).toBeInTheDocument();
+    expect(within(dialog).getByText('5 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '沉浸式剧情阅读模式'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('23:08')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.7')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '旺角冰室场景匹配修复'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('21:35')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.6')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('heading', {
+        name: '七日值班安排与界面优化'
+      })
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('10:04')).toBeInTheDocument();
+    expect(within(dialog).getByText('v2.0.5')).toBeInTheDocument();
+    expect(within(dialog).getByText('6 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
+
+    expect(
+      within(dialog).getByRole('heading', {
         name: '《空屋来电》防重复加固'
       })
     ).toBeInTheDocument();
     expect(within(dialog).getByText('21:22')).toBeInTheDocument();
     expect(within(dialog).getByText('v2.0.3')).toBeInTheDocument();
-    expect(within(dialog).getByText('1 / 24')).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: /较新一条/ })).toBeDisabled();
+    expect(within(dialog).getByText('7 / 30')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
     expect(
@@ -26,7 +152,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('00:01')).toBeInTheDocument();
     expect(within(dialog).getByText('v2.0.2')).toBeInTheDocument();
-    expect(within(dialog).getByText('2 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('8 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -51,7 +177,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('00:06')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.80')).toBeInTheDocument();
-    expect(within(dialog).getByText('3 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('9 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
     expect(
@@ -61,7 +187,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('23:32')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.79')).toBeInTheDocument();
-    expect(within(dialog).getByText('4 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('10 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -79,7 +205,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('19:42')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.77')).toBeInTheDocument();
-    expect(within(dialog).getByText('5 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('11 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -97,7 +223,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('00:39')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.75')).toBeInTheDocument();
-    expect(within(dialog).getByText('6 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('12 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -115,7 +241,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('11:17')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.73')).toBeInTheDocument();
-    expect(within(dialog).getByText('7 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('13 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -154,7 +280,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('20:30')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.68')).toBeInTheDocument();
-    expect(within(dialog).getByText('8 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('14 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -178,7 +304,7 @@ describe('ChangelogModal', () => {
     expect(within(dialog).getByText('v1.7.64')).toBeInTheDocument();
     expect(within(dialog).getByText('11:46')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.63')).toBeInTheDocument();
-    expect(within(dialog).getByText('9 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('15 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
@@ -223,7 +349,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('15:48')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.57')).toBeInTheDocument();
-    expect(within(dialog).getByText('10 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('16 / 30')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /较新一条/ })).not.toBeDisabled();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
@@ -297,7 +423,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('00:18')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.47')).toBeInTheDocument();
-    expect(within(dialog).getByText('11 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('17 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
 
     expect(
@@ -370,7 +496,7 @@ describe('ChangelogModal', () => {
     expect(within(dialog).getByText('v1.7.38')).toBeInTheDocument();
     expect(within(dialog).getByText('01:15')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.37')).toBeInTheDocument();
-    expect(within(dialog).getByText('12 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('18 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
       within(dialog).getByRole('heading', {
@@ -379,7 +505,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('22:24')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.36')).toBeInTheDocument();
-    expect(within(dialog).getByText('13 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('19 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
       within(dialog).getByRole('heading', {
@@ -388,7 +514,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('21:09')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.35')).toBeInTheDocument();
-    expect(within(dialog).getByText('14 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('20 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
       within(dialog).getByRole('heading', {
@@ -425,7 +551,7 @@ describe('ChangelogModal', () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByText('09:19')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.7.19')).toBeInTheDocument();
-    expect(within(dialog).getByText('15 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('21 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
       within(dialog).getByRole('heading', {
@@ -523,7 +649,7 @@ describe('ChangelogModal', () => {
     expect(within(dialog).getByText('v1.7.0')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.6.1')).toBeInTheDocument();
     expect(within(dialog).getAllByText('v1.6.0')).toHaveLength(3);
-    expect(within(dialog).getByText('17 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('23 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(
       within(dialog).getByRole('heading', { name: '自定义内容工坊、世界包入口与后台演化更新' })
@@ -534,23 +660,23 @@ describe('ChangelogModal', () => {
     expect(within(dialog).getByText('08:10')).toBeInTheDocument();
     expect(within(dialog).getByText('v1.5.9')).toBeInTheDocument();
     expect(within(dialog).getAllByText('v1.5.8')).toHaveLength(2);
-    expect(within(dialog).getByText('18 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('24 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(within(dialog).getByRole('heading', { name: '父系候选与怀孕档案修复' })).toBeInTheDocument();
-    expect(within(dialog).getByText('19 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('25 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(within(dialog).getByRole('heading', { name: '行动选项与输入栏布局优化' })).toBeInTheDocument();
-    expect(within(dialog).getByText('20 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('26 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(within(dialog).getByRole('heading', { name: '手机主界面与功能面板布局优化' })).toBeInTheDocument();
-    expect(within(dialog).getByText('21 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('27 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(within(dialog).getByRole('heading', { name: '见习督察开局路线修复' })).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: '警衔晋升同步修复' })).toBeInTheDocument();
-    expect(within(dialog).getByText('22 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('28 / 30')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '较早一条 →' }));
     expect(within(dialog).getByRole('heading', { name: '正文篇幅与演绎风格优化' })).toBeInTheDocument();
-    expect(within(dialog).getByText('23 / 24')).toBeInTheDocument();
+    expect(within(dialog).getByText('29 / 30')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('更新日志页码')).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭更新日志' }));

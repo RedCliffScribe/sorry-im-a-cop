@@ -19,7 +19,7 @@ describe('HomeScreen custom content entry', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'DLC剧情' }));
+    fireEvent.click(screen.getByRole('button', { name: '官方DLC' }));
 
     expect(onOfficialDlc).toHaveBeenCalledTimes(1);
     expect(onStart).not.toHaveBeenCalled();
